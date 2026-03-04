@@ -97,8 +97,8 @@ class ZebrafishPreyPredatorEnv(gym.Env):
 
         # Predator parameters (1.5x bigger)
         self.pred_size = 18        # 1.5x fish
-        self.pred_speed = 1.3      # slightly slower than max fish speed
-        self.pred_chase_radius = 200.0
+        self.pred_speed = 1.6      # fast enough to threaten fish (2.0)
+        self.pred_chase_radius = 280.0
         self.pred_catch_radius = 16.0
         self.pred_wander_turn = 0.03
 
@@ -109,6 +109,11 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self.pred_state_timer = 0
         self.pred_ambush_target = None  # (x,y) food cluster center
         self.pred_diag = {}        # diagnostics for monitoring
+
+        # Predator state gating (Step 22 curriculum support)
+        # When all 4 states are allowed, behavior is unchanged.
+        # Empty list → predator drifts harmlessly in PATROL with speed=0.
+        self._pred_allowed_states = ["PATROL", "STALK", "HUNT", "AMBUSH"]
 
         # Food parameters
         self.food_radius = 4.0
@@ -166,20 +171,25 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # Energy (Feature A)
         self.fish_energy = self.energy_max
 
-        # Predator state (start at random edge)
-        edge = self.np_random.integers(0, 4)
-        if edge == 0:  # top
-            self.pred_x = self.np_random.uniform(50, self.arena_w - 50)
-            self.pred_y = 50.0
-        elif edge == 1:  # bottom
-            self.pred_x = self.np_random.uniform(50, self.arena_w - 50)
-            self.pred_y = self.arena_h - 50.0
-        elif edge == 2:  # left
-            self.pred_x = 50.0
-            self.pred_y = self.np_random.uniform(50, self.arena_h - 50)
-        else:  # right
-            self.pred_x = self.arena_w - 50.0
-            self.pred_y = self.np_random.uniform(50, self.arena_h - 50)
+        # Predator state (start at ~1/3 arena distance from center)
+        center_x = self.arena_w * 0.5
+        center_y = self.arena_h * 0.5
+        for _ in range(20):
+            side_x = self.np_random.choice([-1, 1])
+            side_y = self.np_random.choice([-1, 1])
+            self.pred_x = center_x + side_x * self.arena_w * 0.35
+            self.pred_y = center_y + side_y * self.arena_h * 0.35
+            # Add small random jitter
+            self.pred_x += self.np_random.uniform(-30, 30)
+            self.pred_y += self.np_random.uniform(-30, 30)
+            # Clamp to arena
+            self.pred_x = float(np.clip(self.pred_x, 50, self.arena_w - 50))
+            self.pred_y = float(np.clip(self.pred_y, 50, self.arena_h - 50))
+            # Ensure min 100px from fish spawn (center)
+            ddx = self.pred_x - self.fish_x
+            ddy = self.pred_y - self.fish_y
+            if math.sqrt(ddx * ddx + ddy * ddy) >= 100:
+                break
         self.pred_heading = self.np_random.uniform(-math.pi, math.pi)
         self.pred_state = "PATROL"
         self.pred_hunger = 0.3
@@ -187,6 +197,9 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self.pred_state_timer = 0
         self.pred_ambush_target = None
         self.pred_diag = {}
+        # Preserve curriculum-set gating; default = all states allowed
+        if not hasattr(self, '_pred_allowed_states'):
+            self._pred_allowed_states = ["PATROL", "STALK", "HUNT", "AMBUSH"]
 
         # Rock formations — large mountain-like obstacles
         self.rock_formations = []
@@ -198,8 +211,27 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                           for r in self.rock_formations]
 
         # Food positions (after rocks, so spawning avoids them)
+        # First 60% must be hidden behind rocks (occluded from center)
+        n_hidden = int(self.n_food_init * 0.6)
+        n_visible = self.n_food_init - n_hidden
         self.foods = []
-        for _ in range(self.n_food_init):
+
+        # Hidden food: require rock occlusion from spawn (center)
+        for _ in range(n_hidden):
+            placed = False
+            for _attempt in range(100):
+                fx, fy = self._spawn_food_pos()
+                if self._has_rock_occlusion(fx, fy):
+                    self.foods.append([fx, fy])
+                    placed = True
+                    break
+            if not placed:
+                # Fallback: place normally if occlusion not achievable
+                fx, fy = self._spawn_food_pos()
+                self.foods.append([fx, fy])
+
+        # Remaining food: normal spawn (some reachable)
+        for _ in range(n_visible):
             fx, fy = self._spawn_food_pos()
             self.foods.append([fx, fy])
 
@@ -296,42 +328,63 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             self.rock_formations.append(rock)
 
     def _make_plankton_patches(self):
-        """Create 2-3 plankton patch descriptors based on rock positions.
+        """Create plankton patch descriptors based on rock positions.
+
+        Food is hidden behind rocks (away from fish spawn at arena center)
+        to create a foraging challenge requiring exploration.
 
         Patch types:
-            0 – near-rock shelter patch (high density, weight 0.65)
-            1 – open-water patch (medium density, weight 0.30)
-            2 – background sprinkling (arena-wide, weight 0.05)
+            0 – behind-rock shelter patch (high density, weight 0.50)
+            1 – second shelter patch behind rock[1] if available (weight 0.45)
+            2 – open-water patch (low density, weight 0.03)
+            3 – background sprinkling (arena-wide, weight 0.02)
         """
         patches = []
+        center_x = self.arena_w * 0.5
+        center_y = self.arena_h * 0.5
 
         if self.rock_formations:
-            # Patch 0: near first rock, offset by 1.8x base_r
+            # Patch 0: behind first rock — angle points away from fish spawn
             r0 = self.rock_formations[0]
-            angle = self.np_random.uniform(0, 2 * math.pi)
+            angle = math.atan2(r0["cy"] - center_y, r0["cx"] - center_x)
             offset = r0["base_r"] * 1.8
             p0_cx = r0["cx"] + offset * math.cos(angle)
             p0_cy = r0["cy"] + offset * math.sin(angle)
-            # Clamp to arena
             p0_cx = float(np.clip(p0_cx, 40, self.arena_w - 40))
             p0_cy = float(np.clip(p0_cy, 40, self.arena_h - 40))
             patches.append({
                 "cx": p0_cx, "cy": p0_cy,
                 "radius": r0["base_r"] * 1.2,
-                "weight": 0.65,
+                "weight": 0.50,
                 "label": "shelter",
             })
+
+            # Patch 1: behind second rock if available
+            if len(self.rock_formations) >= 2:
+                r1 = self.rock_formations[1]
+                angle1 = math.atan2(r1["cy"] - center_y, r1["cx"] - center_x)
+                offset1 = r1["base_r"] * 1.8
+                p1_cx = r1["cx"] + offset1 * math.cos(angle1)
+                p1_cy = r1["cy"] + offset1 * math.sin(angle1)
+                p1_cx = float(np.clip(p1_cx, 40, self.arena_w - 40))
+                p1_cy = float(np.clip(p1_cy, 40, self.arena_h - 40))
+                patches.append({
+                    "cx": p1_cx, "cy": p1_cy,
+                    "radius": r1["base_r"] * 1.2,
+                    "weight": 0.45,
+                    "label": "shelter",
+                })
         else:
             # Fallback: random location
             patches.append({
                 "cx": float(self.arena_w * 0.3),
                 "cy": float(self.arena_h * 0.4),
                 "radius": 80.0,
-                "weight": 0.65,
+                "weight": 0.50,
                 "label": "shelter",
             })
 
-        # Patch 1: open water — far from all rocks
+        # Open water patch — far from all rocks
         for _ in range(30):
             ox = float(self.np_random.uniform(60, self.arena_w - 60))
             oy = float(self.np_random.uniform(60, self.arena_h - 60))
@@ -346,20 +399,57 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         patches.append({
             "cx": ox, "cy": oy,
             "radius": 90.0,
-            "weight": 0.30,
+            "weight": 0.03,
             "label": "open_water",
         })
 
-        # Patch 2: arena-wide background
+        # Arena-wide background
         patches.append({
             "cx": float(self.arena_w * 0.5),
             "cy": float(self.arena_h * 0.5),
             "radius": float(max(self.arena_w, self.arena_h) * 0.5),
-            "weight": 0.05,
+            "weight": 0.02,
             "label": "background",
         })
 
         return patches
+
+    def _has_rock_occlusion(self, fx, fy):
+        """Check if any rock AABB blocks line-of-sight from fish spawn (center) to (fx,fy).
+
+        Uses AABB-line segment intersection test.
+        """
+        ox, oy = self.arena_w * 0.5, self.arena_h * 0.5
+        dx, dy = fx - ox, fy - oy
+
+        for rock in self.rock_formations:
+            for aabb in rock["aabbs"]:
+                # Translate to AABB-local coords
+                lx, ly = ox - aabb["x"], oy - aabb["y"]
+                hw, hh = aabb["hw"], aabb["hh"]
+
+                # Ray-AABB slab intersection
+                t_min, t_max = 0.0, 1.0
+                for axis_d, axis_l, half in [(dx, lx, hw), (dy, ly, hh)]:
+                    if abs(axis_d) < 1e-8:
+                        # Ray parallel to slab
+                        if abs(axis_l) > half:
+                            t_min = 2.0  # no intersection
+                            break
+                    else:
+                        inv_d = 1.0 / axis_d
+                        t1 = (-half - axis_l) * inv_d
+                        t2 = (half - axis_l) * inv_d
+                        if t1 > t2:
+                            t1, t2 = t2, t1
+                        t_min = max(t_min, t1)
+                        t_max = min(t_max, t2)
+                        if t_min > t_max:
+                            break
+
+                if t_min <= t_max:
+                    return True
+        return False
 
     def _spawn_food_pos(self):
         """Spawn food using patch-biased Gaussian sampling."""
@@ -618,13 +708,18 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self.pred_state_timer += 1
         prev_state = self.pred_state
 
+        # Allowed states for curriculum gating (Step 22)
+        allowed = self._pred_allowed_states
+
         if self.pred_state == "PATROL":
-            # Transition to STALK if fish is detected within chase radius
-            if dist < self.pred_chase_radius:
+            # Transition to STALK if fish detected and STALK is allowed
+            if (dist < self.pred_chase_radius
+                    and "STALK" in allowed):
                 self.pred_state = "STALK"
                 self.pred_state_timer = 0
-            # Transition to AMBUSH if hungry and food cluster found
-            elif self.pred_hunger > 0.5 and self.pred_state_timer > 60:
+            # Transition to AMBUSH if hungry and AMBUSH is allowed
+            elif (self.pred_hunger > 0.5 and self.pred_state_timer > 60
+                    and "AMBUSH" in allowed):
                 cluster = self._find_food_cluster()
                 if cluster is not None:
                     self.pred_ambush_target = cluster
@@ -632,40 +727,56 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                     self.pred_state_timer = 0
 
         elif self.pred_state == "STALK":
-            # Transition to HUNT if close enough and enough stamina
-            if dist < 80 and self.pred_stamina > 0.3:
+            # Transition to HUNT if close enough and HUNT is allowed
+            if (dist < 80 and self.pred_stamina > 0.2
+                    and "HUNT" in allowed):
                 self.pred_state = "HUNT"
                 self.pred_state_timer = 0
             # Lose interest if fish escapes far
             elif dist > self.pred_chase_radius * 1.3:
                 self.pred_state = "PATROL"
                 self.pred_state_timer = 0
+            # Fall back to PATROL if STALK no longer allowed
+            elif "STALK" not in allowed:
+                self.pred_state = "PATROL"
+                self.pred_state_timer = 0
 
         elif self.pred_state == "HUNT":
             # Active sprint — burns stamina
-            self.pred_stamina = max(0.0, self.pred_stamina - 0.008)
+            self.pred_stamina = max(0.0, self.pred_stamina - 0.005)
             # Give up if exhausted or fish too far
-            if self.pred_stamina < 0.05 or dist > self.pred_chase_radius:
+            if self.pred_stamina < 0.03 or dist > self.pred_chase_radius:
                 self.pred_state = "PATROL"
                 self.pred_state_timer = 0
             # Transition to stalk if fish gets far but still visible
             elif dist > 120 and self.pred_stamina < 0.4:
-                self.pred_state = "STALK"
+                if "STALK" in allowed:
+                    self.pred_state = "STALK"
+                else:
+                    self.pred_state = "PATROL"
+                self.pred_state_timer = 0
+            # Fall back to PATROL if HUNT no longer allowed
+            elif "HUNT" not in allowed:
+                self.pred_state = "PATROL"
                 self.pred_state_timer = 0
 
         elif self.pred_state == "AMBUSH":
             # Wait near food cluster, switch to hunt if fish approaches
-            if dist < 120:
+            if dist < 120 and "HUNT" in allowed:
                 self.pred_state = "HUNT"
                 self.pred_state_timer = 0
             # Give up ambush after timeout
             elif self.pred_state_timer > 200:
                 self.pred_state = "PATROL"
                 self.pred_state_timer = 0
+            # Fall back to PATROL if AMBUSH no longer allowed
+            elif "AMBUSH" not in allowed:
+                self.pred_state = "PATROL"
+                self.pred_state_timer = 0
 
         # --- Stamina recovery when not hunting ---
         if self.pred_state != "HUNT":
-            self.pred_stamina = min(1.0, self.pred_stamina + 0.003)
+            self.pred_stamina = min(1.0, self.pred_stamina + 0.005)
 
         # --- Movement based on state ---
         turn_rate_max = 0.08
@@ -679,7 +790,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             else:
                 self.pred_heading -= 0.02
             self.pred_heading += self.np_random.uniform(-0.01, 0.01)
-            speed = self.pred_speed * 0.4
+            speed = self.pred_speed * 0.55
             strategy_detail = "searching"
 
         elif self.pred_state == "STALK":
@@ -687,7 +798,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             angle_diff = angle_to_fish - self.pred_heading
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
             self.pred_heading += np.clip(angle_diff, -0.04, 0.04)
-            speed = self.pred_speed * 0.35
+            speed = self.pred_speed * 0.5
             strategy_detail = f"closing d={dist:.0f}"
 
         elif self.pred_state == "HUNT":
@@ -707,7 +818,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             angle_diff = angle_to_target - self.pred_heading
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
             # Faster turning during hunt
-            self.pred_heading += np.clip(angle_diff, -0.12, 0.12)
+            self.pred_heading += np.clip(angle_diff, -0.15, 0.15)
             # Sprint: faster when close, hunger-boosted
             hunger_boost = 1.0 + 0.2 * self.pred_hunger
             dist_factor = min(1.0, dist / 60.0 + 0.6)
