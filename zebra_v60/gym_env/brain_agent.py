@@ -23,6 +23,10 @@ from zebra_v60.brain.goal_policy_v60 import (
 from zebra_v60.brain.working_memory_v60 import WorkingMemory_v60
 from zebra_v60.brain.habit_network_v60 import HabitNetwork_v60
 from zebra_v60.brain.rl_critic_v60 import RLCritic_v60, EFEWeightAdapter
+from zebra_v60.brain.vae_world_model_v60 import VAEWorldModel
+from zebra_v60.brain.place_cell_v60 import PlaceCellNetwork
+from zebra_v60.brain.allostasis_v60 import AllostaticRegulator
+from zebra_v60.brain.sleep_wake_v60 import SleepWakeRegulator
 from zebra_v60.brain.device_util import get_device
 from zebra_v60.world.world_env import WorldEnv
 from zebra_v60.tests.step1_vision_pursuit import TurnSmoother
@@ -96,12 +100,28 @@ class BrainAgent:
 
     def __init__(self, device="auto", cls_weights_path=None,
                  base_turn_gain=0.15, swim_speed=1.5, use_habit=True,
-                 use_rl_critic=False):
+                 use_rl_critic=False, use_vae_planner=False,
+                 world_model="none", use_allostasis=False,
+                 use_sleep_cycle=False):
+        """
+        Args:
+            world_model: str — world model type for planning.
+                "none": no world model (default)
+                "vae": VAE latent space + transition model
+                "place_cell": hippocampal place cell approach (future)
+                Also accepts True/False for backwards compatibility
+                with use_vae_planner.
+        """
         self.device = get_device(device)
         self.base_turn_gain = base_turn_gain
         self.swim_speed = swim_speed
         self.use_habit = use_habit
         self.use_rl_critic = use_rl_critic
+
+        # Resolve world_model option (use_vae_planner for backwards compat)
+        if use_vae_planner and world_model == "none":
+            world_model = "vae"
+        self.world_model_type = world_model
 
         # SNN model
         self.model = ZebrafishSNN_v60(device=self.device)
@@ -148,6 +168,44 @@ class BrainAgent:
 
         # Patch memory: tracks food eaten per plankton patch
         self._patch_visit_counts = {}
+
+        # Novelty detection: temporal-difference of type channels
+        self._prev_typeL = None
+        self._prev_typeR = None
+        self._novelty_ema = 0.0
+
+        # Per-pixel habituation (non-associative learning)
+        self._habituation_L = np.zeros(400, dtype=np.float32)
+        self._habituation_R = np.zeros(400, dtype=np.float32)
+
+        # Allostasis (Step 18)
+        self.use_allostasis = use_allostasis
+        if use_allostasis:
+            self.allostasis = AllostaticRegulator()
+        else:
+            self.allostasis = None
+
+        # Sleep/wake cycle (Step 23)
+        self.use_sleep_cycle = use_sleep_cycle
+        if use_sleep_cycle:
+            self.sleep_regulator = SleepWakeRegulator()
+        else:
+            self.sleep_regulator = None
+
+        # World model (Step 16/17)
+        self._prev_z = None
+        self._prev_action_ctx = None
+        if self.world_model_type == "vae":
+            ctx_dim = 16 if use_allostasis else 13
+            self.vae_world = VAEWorldModel(
+                oF_dim=800, pool_dim=64, latent_dim=16,
+                state_ctx_dim=ctx_dim,
+                device=str(self.device))
+        elif self.world_model_type == "place_cell":
+            self.place_cells = PlaceCellNetwork(n_cells=128)
+            self.vae_world = None
+        else:
+            self.vae_world = None
 
         # Diagnostics (populated each step)
         self.last_diagnostics = {}
@@ -264,9 +322,32 @@ class BrainAgent:
             out = self.model.forward(fish_pos, effective_heading, world,
                                      depth_shading=True)
 
+        # Store SNN output for neural activity visualization
+        self._last_snn_out = out
+
         # 4. Classification
         cls_logits = out["cls"]
         cls_probs = F.softmax(cls_logits, dim=1)[0].cpu().numpy()
+
+        # 4b. Obstacle-aware correction: large rocks flood the type channel
+        #     with obstacle pixels (0.75), which the classifier may confuse
+        #     with enemy signal.  Count ground-truth type pixels to discount
+        #     false enemy classification when rocks dominate the retina.
+        typeL_raw = out["retL_full"][0, 400:].cpu().numpy()
+        typeR_raw = out["retR_full"][0, 400:].cpu().numpy()
+        OBSTACLE_TYPE_VAL = 0.75
+        ENEMY_TYPE_VAL_CHECK = 0.5
+        obs_px = (np.sum(np.abs(typeL_raw - OBSTACLE_TYPE_VAL) < 0.1)
+                  + np.sum(np.abs(typeR_raw - OBSTACLE_TYPE_VAL) < 0.1))
+        enemy_px = (np.sum(np.abs(typeL_raw - ENEMY_TYPE_VAL_CHECK) < 0.1)
+                    + np.sum(np.abs(typeR_raw - ENEMY_TYPE_VAL_CHECK) < 0.1))
+        if obs_px > 10 and enemy_px < 5:
+            # Heavy obstacle presence with few real enemy pixels → false alarm
+            discount = min(0.35, obs_px * 0.008)
+            cls_probs[2] = max(0.02, cls_probs[2] - discount)
+            cls_probs[4] += discount * 0.7   # shift mass to environment
+            cls_probs[0] += discount * 0.3   # rest to nothing
+            cls_probs /= cls_probs.sum() + 1e-8
 
         # 5. Free energy
         F_visual = self.model.compute_free_energy()
@@ -283,11 +364,112 @@ class BrainAgent:
             F_visual, oL_mean, oR_mean, eaten=self._eaten_buffer)
         self._eaten_buffer = 0  # consumed
 
+        # 7b. Allostatic interoception (Step 18)
+        energy = getattr(env, "fish_energy", 100.0)
+        prev_speed = self.last_diagnostics.get("speed", 0.5)
+        pred_dist_px = math.sqrt(
+            (env.fish_x - env.pred_x) ** 2 + (env.fish_y - env.pred_y) ** 2)
+        allo_state = None
+        if self.allostasis is not None:
+            allo_state = self.allostasis.step(energy, prev_speed, pred_dist_px)
+            self.dopa_sys.beta = self.allostasis.modulate_dopamine_gain(
+                self.dopa_sys.beta)
+
+        # 7c. Sleep/wake modulation (Step 23)
+        sleep_state = None
+        if self.sleep_regulator is not None:
+            fatigue = allo_state["fatigue"] if allo_state else 0.0
+            stress_val = allo_state["stress"] if allo_state else 0.0
+            pred_prox = max(0.0, 1.0 - pred_dist_px / 150.0)
+            sleep_state = self.sleep_regulator.step(
+                fatigue, stress_val, pred_prox)
+            if sleep_state["is_sleeping"]:
+                self.dopa_sys.beta *= sleep_state["dopa_beta_multiplier"]
+
         # 8. Working memory
         pi_OT = out["pi_OT"]
         pi_PC = out["pi_PC"]
         mem_state, alpha_eff, cls_summary = self.wm.step(
             cls_probs, self.goal_vec, dopa, cms, F_visual, pi_OT, pi_PC)
+
+        # 8.5 VAE world model: encode, train, plan (Step 16b)
+        if self.vae_world is not None:
+            # Build 13-dim multi-modal state context for belief state
+            _energy = getattr(env, "fish_energy", 100.0)
+            state_ctx = np.array([
+                fish_pos[0] / 200.0,           # proprioceptive: x [-1, 1]
+                fish_pos[1] / 150.0,           # proprioceptive: y [-1, 1]
+                world_heading / np.pi,          # proprioceptive: heading [-1, 1]
+                _energy / 100.0,                # interoceptive: energy [0, 1]
+                dopa,                           # neuromodulatory: dopamine [0, 1]
+                np.clip(rpe, -1, 1),            # neuromodulatory: RPE [-1, 1]
+                pi_OT,                          # precision: optic tectum [0, 1]
+                pi_PC,                          # precision: pred coding [0, 1]
+                cls_probs[1],                   # exteroceptive: p_food
+                cls_probs[2],                   # exteroceptive: p_enemy
+                cls_probs[4],                   # exteroceptive: p_environ
+                cms,                            # cognitive: cross-modal surprise
+                np.clip(F_visual, 0, 2) / 2,    # cognitive: visual free energy [0,1]
+            ], dtype=np.float32)
+
+            # Extend state_ctx with allostasis (13 → 16 dims)
+            if self.allostasis is not None:
+                state_ctx = np.concatenate([
+                    state_ctx,
+                    self.allostasis.get_state_ctx_extension()])
+
+            z_np, z_mu = self.vae_world.encode(out["oF"], state_ctx)
+            self.vae_world.train_step(out["oF"], state_ctx)
+
+            if self._prev_z is not None and self._prev_action_ctx is not None:
+                self.vae_world.update_transition(
+                    self._prev_z, self._prev_action_ctx, z_np)
+
+            last_act = np.array([
+                self.last_diagnostics.get("turn_rate", 0.0),
+                self.last_diagnostics.get("speed", 0.5)],
+                dtype=np.float32)
+            G_plan = self.vae_world.plan(z_np, last_act, dopa, cls_probs)
+            self.goal_policy.set_plan_bonus(G_plan)
+            self._prev_z = z_np
+
+        # 8.5b Enhanced VAE training during sleep (Step 23)
+        if (sleep_state is not None and sleep_state["is_sleeping"]
+                and self.vae_world is not None):
+            for _ in range(sleep_state["vae_train_multiplier"] - 1):
+                self.vae_world.train_from_buffer()
+
+        # 8.6 Place cell world model (Step 17)
+        if hasattr(self, 'place_cells'):
+            gym_pos = np.array([env.fish_x, env.fish_y], dtype=np.float32)
+            prev_turn = self.last_diagnostics.get("turn_rate", 0.0)
+            prev_spd = self.last_diagnostics.get("speed", 0.5)
+            self.place_cells.path_integrate(prev_turn, prev_spd)
+            self.place_cells.correct_path_integration(gym_pos)
+            if (self.place_cells._step_count > 0
+                    and self.place_cells._step_count
+                    % self.place_cells.replay_interval == 0):
+                self.place_cells.replay()
+            G_plan = self.place_cells.plan(
+                gym_pos, np.array([prev_turn, prev_spd]), dopa, cls_probs)
+            self.goal_policy.set_plan_bonus(G_plan)
+
+        # 8.6b Enhanced place cell replay during sleep (Step 23)
+        if (sleep_state is not None and sleep_state["is_sleeping"]
+                and hasattr(self, 'place_cells')):
+            for _ in range(sleep_state["replay_multiplier"]):
+                self.place_cells.replay_extended()
+
+        # 8.7 Allostatic bias on top of planning bonus (Step 18)
+        #     Note: read current bonus from VAE/place cell (set in 8.5/8.6).
+        #     If no world model is active, start from zero to avoid accumulation.
+        if self.allostasis is not None:
+            allo_bias = self.allostasis.get_goal_prior_bias()
+            if self.vae_world is not None or hasattr(self, 'place_cells'):
+                current_bonus = self.goal_policy._external_efe_bonus.copy()
+            else:
+                current_bonus = np.zeros(3, dtype=np.float64)
+            self.goal_policy.set_plan_bonus(current_bonus + allo_bias)
 
         # 9. Goal policy selection
         choice, self.goal_vec, posterior, confidence, efe_vec = \
@@ -297,8 +479,26 @@ class BrainAgent:
 
         # 10. Habit shortcut
         if self.use_habit:
+            # Sleep modulation: easier consolidation during sleep (Step 23)
+            _saved_habit_threshold = None
+            _saved_habit_decay = None
+            if sleep_state is not None and sleep_state["is_sleeping"]:
+                habit_mod = sleep_state["habit_modulation"]
+                _saved_habit_threshold = self.habit.habit_threshold
+                self.habit.habit_threshold = int(
+                    self.habit.habit_threshold * habit_mod["threshold_mult"])
+                if habit_mod["decay"] is not None:
+                    _saved_habit_decay = self.habit.decay
+                    self.habit.decay = habit_mod["decay"]
+
             effective_goal, shortcut_active = self.habit.step(
                 cls_probs, choice, confidence, rpe)
+
+            # Restore habit params after step
+            if _saved_habit_threshold is not None:
+                self.habit.habit_threshold = _saved_habit_threshold
+            if _saved_habit_decay is not None:
+                self.habit.decay = _saved_habit_decay
         else:
             effective_goal = choice
             shortcut_active = False
@@ -324,16 +524,54 @@ class BrainAgent:
         self.bg.noise = self.thal.modulate_bg_exploration() * explore_mod
         bg_gate = self.bg.step(valL_eff, valR_eff, dopa, rpe)
 
-        # 15. Eye position
-        eye_pos = self.ot.step(valL_eff, valR_eff, F_visual, bg_gate, dopa)
-
-        # 16. Set vision strip on env for rendering
-        # NOTE: SNN's retL = heading-offset = fish's RIGHT eye (computational label).
-        # Swap for display so the user sees anatomically correct L/R.
+        # 14b. Extract type channels and compute novelty (needed for eye position)
         retL_intensity = retL[0, :].cpu().numpy()
         retR_intensity = retR[0, :].cpu().numpy()
         typeL = out["retL_full"][0, 400:].cpu().numpy()
         typeR = out["retR_full"][0, 400:].cpu().numpy()
+
+        # Temporal-difference novelty with per-pixel habituation
+        novelty_L = 0.0
+        novelty_R = 0.0
+        if self._prev_typeL is not None:
+            type_diff_L = np.abs(typeL - self._prev_typeL)
+            type_diff_R = np.abs(typeR - self._prev_typeR)
+
+            # Habituation: unchanged pixels accumulate, changed pixels reset
+            changed_L = type_diff_L > 0.05
+            changed_R = type_diff_R > 0.05
+            self._habituation_L = np.where(
+                changed_L, 0.0, self._habituation_L + 1.0)
+            self._habituation_R = np.where(
+                changed_R, 0.0, self._habituation_R + 1.0)
+
+            # Suppression: 1/(1 + hab/tau), tau=5 → half at 5 frames
+            suppress_L = 1.0 / (1.0 + self._habituation_L / 5.0)
+            suppress_R = 1.0 / (1.0 + self._habituation_R / 5.0)
+
+            novelty_L = float(np.sum(type_diff_L * suppress_L))
+            novelty_R = float(np.sum(type_diff_R * suppress_R))
+
+        novelty_total = novelty_L + novelty_R
+        # EMA decay: persistent stimuli → novelty decays
+        self._novelty_ema = 0.3 * novelty_total + 0.7 * self._novelty_ema
+        novelty = self._novelty_ema
+
+        self._prev_typeL = typeL.copy()
+        self._prev_typeR = typeR.copy()
+
+        # 15. Eye position (with novelty-driven smooth bias)
+        # Directional novelty: bias eye toward novel side
+        if novelty > 1.0:
+            novelty_dir = (novelty_R - novelty_L) / (novelty_total + 1e-8)
+        else:
+            novelty_dir = 0.0
+        eye_pos = self.ot.step(valL_eff, valR_eff, F_visual, bg_gate, dopa,
+                               novelty_drive=novelty_dir * novelty)
+
+        # 16. Set vision strip on env for rendering
+        # NOTE: SNN's retL = heading-offset = fish's RIGHT eye (computational label).
+        # Swap for display so the user sees anatomically correct L/R.
         env.set_vision_strip(retR_intensity, retL_intensity, typeR, typeL)
 
         # 16b. Retinal alarm: count enemy-type pixels directly from type channel
@@ -342,6 +580,17 @@ class BrainAgent:
         enemy_pixels_R = np.sum(np.abs(typeR - ENEMY_TYPE_VAL) < 0.1)
         enemy_pixels_total = enemy_pixels_L + enemy_pixels_R
 
+        # 16c. Novelty-driven saccade (fires before enemy check, but enemy overrides)
+        NOVELTY_SACCADE_THRESH = 3.0  # ~3 pixels changed entity type
+        novelty_saccade_fired = False
+        if novelty > NOVELTY_SACCADE_THRESH and enemy_pixels_total < 3:
+            direction = 1.0 if novelty_R > novelty_L else -1.0
+            magnitude = min(0.4, novelty * 0.05)  # max 0.4 (weaker than enemy 0.6)
+            novelty_saccade_fired = self.ot.trigger_saccade(
+                direction, magnitude=magnitude)
+            if novelty_saccade_fired:
+                self._saccade_flash = 2  # short visual flash
+
         self._saccade_active = False
         if enemy_pixels_total >= 3:
             alarm_boost = min(0.5, enemy_pixels_total * 0.05)
@@ -349,7 +598,7 @@ class BrainAgent:
             total_p = cls_probs.sum() + 1e-8
             cls_probs /= total_p
 
-            # Saccade toward predator
+            # Saccade toward predator (higher priority, magnitude 0.6)
             enemy_dir = 1.0 if enemy_pixels_R > enemy_pixels_L else -1.0
             saccade_fired = self.ot.trigger_saccade(enemy_dir)
 
@@ -371,9 +620,12 @@ class BrainAgent:
         # Pass food prospects to env for target highlight rendering
         env._food_prospects = food_prospects
 
-        # 17. Precision update
+        # 17. Precision update (freeze gamma during sleep — Step 23)
         oF = out["oF"]
-        if self.prev_oF is not None:
+        _precision_frozen = (sleep_state is not None
+                             and sleep_state["is_sleeping"]
+                             and sleep_state["precision_freeze"])
+        if self.prev_oF is not None and not _precision_frozen:
             error_OT = oF - self.prev_oF
             self.model.prec_OT.update_precision(error_OT)
             self.model.prec_PC.update_precision(
@@ -429,7 +681,29 @@ class BrainAgent:
         if energy < 20:
             speed *= 0.5 + 0.5 * (energy / 20.0)
 
+        # Fatigue speed cap (Step 18)
+        if self.allostasis is not None:
+            speed = min(speed, self.allostasis.get_speed_cap())
+
+        # Sleep modulation: near-zero speed + fatigue recovery boost (Step 23)
+        if sleep_state is not None and sleep_state["is_sleeping"]:
+            speed *= sleep_state["speed_multiplier"]
+            # Boost fatigue recovery during sleep
+            if self.allostasis is not None:
+                boost = sleep_state["fatigue_recovery_multiplier"] - 1.0
+                self.allostasis.fatigue -= (
+                    self.allostasis.fatigue_recovery * boost)
+                self.allostasis.fatigue = max(0.0, self.allostasis.fatigue)
+
         action = np.array([turn_rate, speed], dtype=np.float32)
+
+        # Store action context for VAE transition training (Step 16)
+        if self.vae_world is not None:
+            goal_oh = np.zeros(3, dtype=np.float32)
+            goal_oh[effective_goal] = 1.0
+            self._prev_action_ctx = np.array([
+                float(turn_rate), float(speed), *goal_oh],
+                dtype=np.float32)
 
         # Populate diagnostics
         self.last_diagnostics = {
@@ -454,11 +728,36 @@ class BrainAgent:
             "retL_intensity": retL_intensity,
             "retR_intensity": retR_intensity,
             "saccade_active": self._saccade_active,
+            "novelty": novelty,
+            "novelty_L": novelty_L,
+            "novelty_R": novelty_R,
+            "novelty_saccade": novelty_saccade_fired,
             "food_prospects": food_prospects,
             "flee_burst": self._flee_burst_steps,
             "wall_urgency": wall_urgency,
             "patch_memory": dict(self._patch_visit_counts),
+            "habituation_mean": float(np.mean(np.concatenate([
+                self._habituation_L, self._habituation_R]))),
         }
+
+        # VAE diagnostics (Step 16)
+        if self.vae_world is not None:
+            self.last_diagnostics["vae"] = self.vae_world.get_diagnostics()
+
+        # Place cell diagnostics (Step 17)
+        if hasattr(self, 'place_cells'):
+            self.last_diagnostics["place_cells"] = \
+                self.place_cells.get_diagnostics()
+
+        # Allostasis diagnostics (Step 18)
+        if self.allostasis is not None:
+            self.last_diagnostics["allostasis"] = \
+                self.allostasis.get_diagnostics()
+
+        # Sleep diagnostics (Step 23)
+        if self.sleep_regulator is not None:
+            self.last_diagnostics["sleep"] = \
+                self.sleep_regulator.get_diagnostics()
 
         # Pass diagnostics to env for monitoring panel
         env.set_brain_diagnostics(self.last_diagnostics)
@@ -507,6 +806,29 @@ class BrainAgent:
                         self._patch_visit_counts.get(label, 0) + eaten)
                     break
 
+        # VAE memory update (Step 16)
+        if self.vae_world is not None and self._prev_z is not None and env is not None:
+            pred_dist = 150.0  # default safe distance
+            fish_x, fish_y = info.get("fish_pos", (0, 0))
+            pred_x = getattr(env, "pred_x", fish_x)
+            pred_y = getattr(env, "pred_y", fish_y)
+            dx = fish_x - pred_x
+            dy = fish_y - pred_y
+            pred_dist = math.sqrt(dx * dx + dy * dy)
+            self.vae_world.update_memory(self._prev_z, eaten, pred_dist)
+
+        # Place cell memory update (Step 17)
+        if hasattr(self, 'place_cells') and env is not None:
+            fish_x, fish_y = info.get("fish_pos", (0, 0))
+            gym_pos = np.array([fish_x, fish_y], dtype=np.float32)
+            pred_x = getattr(env, "pred_x", fish_x)
+            pred_y = getattr(env, "pred_y", fish_y)
+            dx = fish_x - pred_x
+            dy = fish_y - pred_y
+            pred_dist = math.sqrt(dx * dx + dy * dy)
+            risk_signal = max(0.0, 1.0 - pred_dist / 150.0)
+            self.place_cells.update(gym_pos, float(eaten), risk_signal)
+
         # Save reward/done for next act() call which pushes the transition
         if self.critic is not None:
             self._prev_reward = reward
@@ -533,8 +855,23 @@ class BrainAgent:
         self._saccade_active = False
         self._saccade_flash = 0
         self._patch_visit_counts = {}
+        self._prev_typeL = None
+        self._prev_typeR = None
+        self._novelty_ema = 0.0
+        self._habituation_L = np.zeros(400, dtype=np.float32)
+        self._habituation_R = np.zeros(400, dtype=np.float32)
         self.last_diagnostics = {}
         if self.critic is not None:
             self.critic.reset()
         if self.adapter is not None:
             self.adapter.reset()
+        if self.vae_world is not None:
+            self.vae_world.reset()
+            self._prev_z = None
+            self._prev_action_ctx = None
+        if hasattr(self, 'place_cells'):
+            self.place_cells.reset()
+        if self.allostasis is not None:
+            self.allostasis.reset()
+        if self.sleep_regulator is not None:
+            self.sleep_regulator.reset()
