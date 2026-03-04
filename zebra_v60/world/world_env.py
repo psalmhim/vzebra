@@ -2,35 +2,62 @@ import numpy as np
 
 
 # ======================================================================
-# WORLD ENVIRONMENT FOR ZEBRAFISH V55.1
+# WORLD ENVIRONMENT FOR ZEBRAFISH V60
+# Multi-entity: food, enemies, colleagues, obstacles, boundaries
+# Each entity type has distinct visual signature (intensity + radius)
 # ======================================================================
+
+# Entity type constants
+ENTITY_NONE = 0
+ENTITY_FOOD = 1
+ENTITY_ENEMY = 2
+ENTITY_COLLEAGUE = 3
+ENTITY_BOUNDARY = 4
+ENTITY_OBSTACLE = 5
+
+# Visual signatures: (intensity, detection_radius)
+ENTITY_VISUAL = {
+    ENTITY_FOOD:      (1.0,  15),   # bright, small prey
+    ENTITY_ENEMY:     (0.75, 35),   # dimmer, large predator (visible from far)
+    ENTITY_COLLEAGUE: (0.50, 18),   # moderate, same-size fish
+    ENTITY_BOUNDARY:  (0.30, None), # dull edge signal (detected by ray clipping)
+    ENTITY_OBSTACLE:  (0.60, 30),   # rock visible within 30px margin around AABB
+}
+
+BACKGROUND_INTENSITY = 0.05
+
 
 class WorldEnv:
     """
-    A very simple 2D environment:
-        - rect boundary
-        - food items placed at (x,y)
-        - ray sampling for retina
+    2D environment with multiple entity types:
+        - food: prey items the fish can eat
+        - enemies: predators to avoid
+        - colleagues: conspecifics (other fish)
+        - obstacles: static objects
+        - boundaries: rect boundary walls
+    Each entity type has a distinct visual intensity and detection radius.
     """
 
     def __init__(self,
                  xmin=-200, xmax=200,
                  ymin=-150, ymax=150,
-                 n_food=10):
+                 n_food=10, n_enemies=0, n_colleagues=0):
         self.xmin = xmin
         self.xmax = xmax
         self.ymin = ymin
         self.ymax = ymax
 
-        # food list
         self.foods = []
-        self.generate_food(n_food)
+        self.enemies = []
+        self.colleagues = []
+        self.obstacles = []   # list of dicts: {"x":..., "y":..., "hw":..., "hh":...}
 
-        # optional obstacles
-        self.obstacles = []   # list of dicts: {"x":..., "y":..., "r":...}
+        self.generate_food(n_food)
+        self.generate_enemies(n_enemies)
+        self.generate_colleagues(n_colleagues)
 
     # ==================================================================
-    # Random food generation
+    # Entity generation
     # ==================================================================
     def generate_food(self, n):
         for _ in range(n):
@@ -38,60 +65,154 @@ class WorldEnv:
             fy = np.random.uniform(self.ymin + 20, self.ymax - 20)
             self.foods.append((fx, fy))
 
-    # ==================================================================
-    # Add obstacle
-    # ==================================================================
-    def add_obstacle(self, x, y, r):
-        self.obstacles.append({"x": x, "y": y, "r": r})
+    def generate_enemies(self, n):
+        for _ in range(n):
+            ex = np.random.uniform(self.xmin + 30, self.xmax - 30)
+            ey = np.random.uniform(self.ymin + 30, self.ymax - 30)
+            self.enemies.append((ex, ey))
+
+    def generate_colleagues(self, n):
+        for _ in range(n):
+            cx = np.random.uniform(self.xmin + 20, self.xmax - 20)
+            cy = np.random.uniform(self.ymin + 20, self.ymax - 20)
+            self.colleagues.append((cx, cy))
+
+    def add_obstacle(self, x, y, hw, hh):
+        self.obstacles.append({"x": x, "y": y, "hw": hw, "hh": hh})
 
     # ==================================================================
-    # Ray sampling for retina
+    # Ray sampling — returns (intensity, entity_type)
     # ==================================================================
-    def sample_direction(self, origin, dx, dy, max_dist=200, step=4.0):
+    def sample_direction(self, origin, dx, dy, max_dist=200, step=3.0):
         """
-        Steps a ray forward until:
-            - hit food → strong signal
-            - hit obstacle → medium signal
-            - hit boundary → strong signal
-            - nothing → weak background
+        Cast ray, return (intensity, entity_type).
+        Checks all entity types with type-specific detection radii.
+        Returns the FIRST hit (closest entity).
         """
         ox, oy = origin
         t = 0.0
+
+        food_r2 = ENTITY_VISUAL[ENTITY_FOOD][1] ** 2
+        enemy_r2 = ENTITY_VISUAL[ENTITY_ENEMY][1] ** 2
+        colleague_r2 = ENTITY_VISUAL[ENTITY_COLLEAGUE][1] ** 2
+        _obs_margin = ENTITY_VISUAL[ENTITY_OBSTACLE][1]
 
         while t < max_dist:
             x = ox + dx * t
             y = oy + dy * t
 
-            # boundary detection
+            # Boundary detection
             if x < self.xmin or x > self.xmax or y < self.ymin or y > self.ymax:
-                return 1.0  # strong bright edge
+                return ENTITY_VISUAL[ENTITY_BOUNDARY][0], ENTITY_BOUNDARY
 
-            # food detection
+            # Food detection (closest first due to smaller radius)
             for (fx, fy) in self.foods:
-                if (x - fx)**2 + (y - fy)**2 < 8**2:
-                    return 1.0  # bright pixel
+                if (x - fx) ** 2 + (y - fy) ** 2 < food_r2:
+                    return ENTITY_VISUAL[ENTITY_FOOD][0], ENTITY_FOOD
 
-            # obstacle detection
+            # Enemy detection
+            for (ex, ey) in self.enemies:
+                if (x - ex) ** 2 + (y - ey) ** 2 < enemy_r2:
+                    return ENTITY_VISUAL[ENTITY_ENEMY][0], ENTITY_ENEMY
+
+            # Colleague detection
+            for (cx, cy) in self.colleagues:
+                if (x - cx) ** 2 + (y - cy) ** 2 < colleague_r2:
+                    return ENTITY_VISUAL[ENTITY_COLLEAGUE][0], ENTITY_COLLEAGUE
+
+            # Obstacle detection (axis-aligned rectangle + margin)
             for obs in self.obstacles:
-                if (x - obs["x"])**2 + (y - obs["y"])**2 < obs["r"]**2:
-                    return 0.6
+                if (abs(x - obs["x"]) < obs["hw"] + _obs_margin
+                        and abs(y - obs["y"]) < obs["hh"] + _obs_margin):
+                    return ENTITY_VISUAL[ENTITY_OBSTACLE][0], ENTITY_OBSTACLE
 
             t += step
 
-        return 0.05  # background darkness
-
+        return BACKGROUND_INTENSITY, ENTITY_NONE
 
     # ==================================================================
-    # Eat food if fish is close enough
+    # Ray sampling with depth — returns (intensity, entity_type, distance)
     # ==================================================================
-    def try_eat(self, fish_x, fish_y):
+    def sample_direction_with_depth(self, origin, dx, dy, max_dist=200, step=3.0):
+        """
+        Cast ray, return (intensity, entity_type, hit_distance).
+        Same as sample_direction() but also returns the distance t at first hit.
+        No-hit returns (BACKGROUND_INTENSITY, ENTITY_NONE, max_dist).
+        """
+        ox, oy = origin
+        t = 0.0
+
+        food_r2 = ENTITY_VISUAL[ENTITY_FOOD][1] ** 2
+        enemy_r2 = ENTITY_VISUAL[ENTITY_ENEMY][1] ** 2
+        colleague_r2 = ENTITY_VISUAL[ENTITY_COLLEAGUE][1] ** 2
+        _obs_margin = ENTITY_VISUAL[ENTITY_OBSTACLE][1]
+
+        while t < max_dist:
+            x = ox + dx * t
+            y = oy + dy * t
+
+            # Boundary detection
+            if x < self.xmin or x > self.xmax or y < self.ymin or y > self.ymax:
+                return ENTITY_VISUAL[ENTITY_BOUNDARY][0], ENTITY_BOUNDARY, t
+
+            # Food detection
+            for (fx, fy) in self.foods:
+                if (x - fx) ** 2 + (y - fy) ** 2 < food_r2:
+                    return ENTITY_VISUAL[ENTITY_FOOD][0], ENTITY_FOOD, t
+
+            # Enemy detection
+            for (ex, ey) in self.enemies:
+                if (x - ex) ** 2 + (y - ey) ** 2 < enemy_r2:
+                    return ENTITY_VISUAL[ENTITY_ENEMY][0], ENTITY_ENEMY, t
+
+            # Colleague detection
+            for (cx, cy) in self.colleagues:
+                if (x - cx) ** 2 + (y - cy) ** 2 < colleague_r2:
+                    return ENTITY_VISUAL[ENTITY_COLLEAGUE][0], ENTITY_COLLEAGUE, t
+
+            # Obstacle detection (axis-aligned rectangle + margin)
+            for obs in self.obstacles:
+                if (abs(x - obs["x"]) < obs["hw"] + _obs_margin
+                        and abs(y - obs["y"]) < obs["hh"] + _obs_margin):
+                    return ENTITY_VISUAL[ENTITY_OBSTACLE][0], ENTITY_OBSTACLE, t
+
+            t += step
+
+        return BACKGROUND_INTENSITY, ENTITY_NONE, max_dist
+
+    # ==================================================================
+    # Backward-compatible: return intensity only
+    # ==================================================================
+    def sample_direction_intensity(self, origin, dx, dy, max_dist=200, step=3.0):
+        """Return only intensity (for backward compatibility)."""
+        intensity, _ = self.sample_direction(origin, dx, dy, max_dist, step)
+        return intensity
+
+    # ==================================================================
+    # Eat food if fish is close enough (radius aligned with visibility)
+    # ==================================================================
+    def try_eat(self, fish_x, fish_y, eat_radius=18):
         new_foods = []
         eaten = 0
+        r2 = eat_radius ** 2
         for (fx, fy) in self.foods:
-            if (fish_x - fx)**2 + (fish_y - fy)**2 < 20**2:
+            if (fish_x - fx) ** 2 + (fish_y - fy) ** 2 < r2:
                 eaten += 1
                 continue
             new_foods.append((fx, fy))
         self.foods = new_foods
         return eaten
 
+    # ==================================================================
+    # Flee from enemy (check proximity)
+    # ==================================================================
+    def check_enemy_proximity(self, fish_x, fish_y, danger_radius=30):
+        """Return distance to nearest enemy, or None."""
+        min_dist = float('inf')
+        for (ex, ey) in self.enemies:
+            d2 = (fish_x - ex) ** 2 + (fish_y - ey) ** 2
+            if d2 < min_dist:
+                min_dist = d2
+        if min_dist < danger_radius ** 2:
+            return min_dist ** 0.5
+        return None
