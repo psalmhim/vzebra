@@ -515,6 +515,16 @@ class BrainAgent:
         total = retR_sum + retL_sum + 1e-8
         raw_turn = (retR_sum - retL_sum) / total
 
+        # 12b. Obstacle repulsion — steer away from rock-heavy side
+        typeL_t = out["retL_full"][0, 400:].cpu().numpy()
+        typeR_t = out["retR_full"][0, 400:].cpu().numpy()
+        obs_px_L = float(np.sum(np.abs(typeL_t - 0.75) < 0.1))
+        obs_px_R = float(np.sum(np.abs(typeR_t - 0.75) < 0.1))
+        obs_total = obs_px_L + obs_px_R
+        if obs_total > 5:
+            obs_repulsion = -0.6 * (obs_px_R - obs_px_L) / obs_total
+            raw_turn = raw_turn + obs_repulsion
+
         # 13. Smoothed turn
         turn = self.smoother.step(raw_turn * approach_gain)
 
