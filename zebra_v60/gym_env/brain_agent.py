@@ -537,8 +537,8 @@ class BrainAgent:
         # 14b. Extract type channels and compute novelty (needed for eye position)
         retL_intensity = retL[0, :].cpu().numpy()
         retR_intensity = retR[0, :].cpu().numpy()
-        typeL = out["retL_full"][0, 400:].cpu().numpy()
-        typeR = out["retR_full"][0, 400:].cpu().numpy()
+        typeL = typeL_t
+        typeR = typeR_t
 
         # Temporal-difference novelty with per-pixel habituation
         novelty_L = 0.0
