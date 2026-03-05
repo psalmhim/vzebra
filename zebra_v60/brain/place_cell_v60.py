@@ -369,6 +369,42 @@ class PlaceCellNetwork:
             "trajectory_len": len(self._trajectory),
         }
 
+    def get_saveable_state(self):
+        """Return learned place fields for checkpoint."""
+        n = self.n_allocated
+        return {
+            "centroids": self.centroids[:n].copy(),
+            "sigma": self.sigma[:n].copy(),
+            "food_rate": self.food_rate[:n].copy(),
+            "risk": self.risk[:n].copy(),
+            "visit_count": self.visit_count[:n].copy(),
+            "n_allocated": n,
+        }
+
+    def load_saveable_state(self, state):
+        """Restore learned place fields."""
+        n = state["n_allocated"]
+        self.centroids[:] = 0.0
+        self.sigma[:] = self.sigma_init
+        self.food_rate[:] = 0.0
+        self.risk[:] = 0.0
+        self.visit_count[:] = 0.0
+        self.centroids[:n] = state["centroids"]
+        self.sigma[:n] = state["sigma"]
+        self.food_rate[:n] = state["food_rate"]
+        self.risk[:n] = state["risk"]
+        self.visit_count[:n] = state["visit_count"]
+        self.n_allocated = n
+
+    def reset_episode(self):
+        """Clear transient state but keep learned place fields."""
+        self._pi_pos = np.array([400.0, 300.0], dtype=np.float32)
+        self._pi_heading = 0.0
+        self._trajectory = []
+        self._step_count = 0
+        self._last_pi_error = 0.0
+        self._last_G_plan = np.zeros(3, dtype=np.float32)
+
     def reset(self):
         """Clear all state."""
         self.centroids[:] = 0.0

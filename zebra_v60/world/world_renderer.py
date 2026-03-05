@@ -55,8 +55,9 @@ class WorldRenderer(QtWidgets.QGraphicsView):
 
         # obstacles
         for obs in self.world.obstacles:
-            x, y, r = obs["x"], obs["y"], obs["r"]
-            item = QtWidgets.QGraphicsEllipseItem(-r, -r, 2*r, 2*r)
+            x, y = obs["x"], obs["y"]
+            hw, hh = obs["hw"], obs["hh"]
+            item = QtWidgets.QGraphicsRectItem(-hw, -hh, 2*hw, 2*hh)
             item.setBrush(QtGui.QColor(80, 80, 80))
             item.setPos(x * self.scale_factor, -y * self.scale_factor)
             self.scene.addItem(item)

@@ -93,7 +93,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self.fish_size = 12        # triangle half-length
         self.fish_speed_base = 2.0
         self.fish_turn_max = 0.15  # radians per step
-        self.eat_radius = 15.0
+        self.eat_radius = 22.0
 
         # Predator parameters (1.5x bigger)
         self.pred_size = 18        # 1.5x fish
@@ -172,21 +172,16 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # Energy (Feature A)
         self.fish_energy = self.energy_max
 
-        # Predator state (start at ~1/3 arena distance from center)
-        center_x = self.arena_w * 0.5
-        center_y = self.arena_h * 0.5
+        # Predator state (start beyond chase radius: 300–400px away)
         for _ in range(20):
-            side_x = self.np_random.choice([-1, 1])
-            side_y = self.np_random.choice([-1, 1])
-            self.pred_x = center_x + side_x * self.arena_w * 0.35
-            self.pred_y = center_y + side_y * self.arena_h * 0.35
-            # Add small random jitter
-            self.pred_x += self.np_random.uniform(-30, 30)
-            self.pred_y += self.np_random.uniform(-30, 30)
+            angle = self.np_random.uniform(-math.pi, math.pi)
+            dist = self.np_random.uniform(300, 400)
+            self.pred_x = self.fish_x + dist * math.cos(angle)
+            self.pred_y = self.fish_y + dist * math.sin(angle)
             # Clamp to arena
             self.pred_x = float(np.clip(self.pred_x, 50, self.arena_w - 50))
             self.pred_y = float(np.clip(self.pred_y, 50, self.arena_h - 50))
-            # Ensure min 100px from fish spawn (center)
+            # Verify distance after clamping
             ddx = self.pred_x - self.fish_x
             ddy = self.pred_y - self.fish_y
             if math.sqrt(ddx * ddx + ddy * ddy) >= 100:
@@ -212,8 +207,8 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                           for r in self.rock_formations]
 
         # Food positions (after rocks, so spawning avoids them)
-        # First 60% must be hidden behind rocks (occluded from center)
-        n_hidden = int(self.n_food_init * 0.6)
+        # 40% hidden behind rocks, 60% in reachable locations
+        n_hidden = int(self.n_food_init * 0.4)
         n_visible = self.n_food_init - n_hidden
         self.foods = []
 
@@ -231,9 +226,9 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                 fx, fy = self._spawn_food_pos()
                 self.foods.append([fx, fy])
 
-        # Remaining food: normal spawn (some reachable)
+        # Remaining food: spawn in open water (reachable without rock navigation)
         for _ in range(n_visible):
-            fx, fy = self._spawn_food_pos()
+            fx, fy = self._spawn_food_open()
             self.foods.append([fx, fy])
 
         self.step_count = 0
@@ -336,10 +331,10 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         to create a foraging challenge requiring exploration.
 
         Patch types:
-            0 – behind-rock shelter patch (high density, weight 0.50)
-            1 – second shelter patch behind rock[1] if available (weight 0.45)
-            2 – open-water patch (low density, weight 0.03)
-            3 – background sprinkling (arena-wide, weight 0.02)
+            0 – behind-rock shelter patch (high density, weight 0.30)
+            1 – second shelter patch behind rock[1] if available (weight 0.25)
+            2 – open-water patch (moderate density, weight 0.30)
+            3 – background sprinkling (arena-wide, weight 0.15)
         """
         patches = []
         center_x = self.arena_w * 0.5
@@ -357,7 +352,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             patches.append({
                 "cx": p0_cx, "cy": p0_cy,
                 "radius": r0["base_r"] * 1.2,
-                "weight": 0.50,
+                "weight": 0.30,
                 "label": "shelter",
             })
 
@@ -373,7 +368,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                 patches.append({
                     "cx": p1_cx, "cy": p1_cy,
                     "radius": r1["base_r"] * 1.2,
-                    "weight": 0.45,
+                    "weight": 0.25,
                     "label": "shelter",
                 })
         else:
@@ -401,7 +396,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         patches.append({
             "cx": ox, "cy": oy,
             "radius": 90.0,
-            "weight": 0.03,
+            "weight": 0.30,
             "label": "open_water",
         })
 
@@ -410,7 +405,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             "cx": float(self.arena_w * 0.5),
             "cy": float(self.arena_h * 0.5),
             "radius": float(max(self.arena_w, self.arena_h) * 0.5),
-            "weight": 0.02,
+            "weight": 0.15,
             "label": "background",
         })
 
@@ -497,6 +492,32 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             return fx, fy
 
         # Fallback
+        return self._spawn_food_pos_uniform()
+
+    def _spawn_food_open(self):
+        """Spawn food in open water — far from rocks, clear line-of-sight."""
+        for _ in range(100):
+            fx = float(self.np_random.uniform(60, self.arena_w - 60))
+            fy = float(self.np_random.uniform(60, self.arena_h - 60))
+
+            # Must be far from all rock AABBs (>60px margin)
+            too_close = False
+            for rock in getattr(self, 'rock_formations', []):
+                rdx = fx - rock["cx"]
+                rdy = fy - rock["cy"]
+                if math.sqrt(rdx * rdx + rdy * rdy) < rock["base_r"] * 2.0:
+                    too_close = True
+                    break
+            if too_close:
+                continue
+
+            # Must not be occluded from fish spawn (center)
+            if self._has_rock_occlusion(fx, fy):
+                continue
+
+            return fx, fy
+
+        # Fallback: uniform spawn
         return self._spawn_food_pos_uniform()
 
     def _spawn_food_pos_uniform(self):
@@ -1070,17 +1091,39 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                 surface, self.fish_x, self.fish_y, self.fish_heading,
                 self.fish_size, (30, 60, 220))
 
-            # Saccade visual indicator: yellow gaze line when saccade fires
+            # Saccadic eye indicator: draw a slit line through each eye,
+            # perpendicular to the gaze direction. Rotates as eye_pos
+            # changes, making saccadic sweeps clearly visible.
+            eye_pos = getattr(self, '_saccade_eye_pos', 0.0)
             saccade_active = getattr(self, '_saccade_active', False)
-            if saccade_active:
-                eye_pos = getattr(self, '_saccade_eye_pos', 0.0)
-                gaze_angle = self.fish_heading + eye_pos * 0.5
-                gaze_len = self.fish_size * 3.0
-                gx = self.fish_x + gaze_len * math.cos(gaze_angle)
-                gy = self.fish_y + gaze_len * math.sin(gaze_angle)
-                pygame.draw.line(surface, (255, 255, 0),
-                                 (int(self.fish_x), int(self.fish_y)),
-                                 (int(gx), int(gy)), 2)
+            gaze_angle = self.fish_heading + eye_pos * 0.5
+            # Perpendicular to gaze = the "iris slit" direction
+            perp_dx = -math.sin(gaze_angle)
+            perp_dy = math.cos(gaze_angle)
+            # Compute eye positions (same as _draw_zebrafish)
+            spread = 0.55
+            eye_off = 0.3
+            sz = self.fish_size
+            bl_x = self.fish_x + sz * math.cos(self.fish_heading + spread)
+            bl_y = self.fish_y + sz * math.sin(self.fish_heading + spread)
+            br_x = self.fish_x + sz * math.cos(self.fish_heading - spread)
+            br_y = self.fish_y + sz * math.sin(self.fish_heading - spread)
+            el_x = bl_x + sz * eye_off * math.cos(self.fish_heading)
+            el_y = bl_y + sz * eye_off * math.sin(self.fish_heading)
+            er_x = br_x + sz * eye_off * math.cos(self.fish_heading)
+            er_y = br_y + sz * eye_off * math.sin(self.fish_heading)
+            eye_r = max(3, int(sz * 0.4))
+            slit_len = eye_r * 1.3  # extend slightly past eye edge
+            color = (255, 255, 0) if saccade_active else (20, 20, 20)
+            w = 2 if saccade_active else 2
+            for ex, ey in [(el_x, el_y), (er_x, er_y)]:
+                pygame.draw.line(
+                    surface, color,
+                    (int(ex + perp_dx * slit_len),
+                     int(ey + perp_dy * slit_len)),
+                    (int(ex - perp_dx * slit_len),
+                     int(ey - perp_dy * slit_len)),
+                    w)
 
         # Draw predator (red, base=head with mouth, point=tail)
         self._draw_predator(
@@ -1611,7 +1654,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         pygame.draw.polygon(surface, (20, 40, 150), points, 2)  # outline
 
         # Eyes — circles at base corners
-        eye_r = max(2, int(size * 0.25))
+        eye_r = max(3, int(size * 0.4))
         # Offset eyes slightly forward from the base corners
         eye_off = 0.3
         eye_l_x = base_l_x + size * eye_off * math.cos(heading)
