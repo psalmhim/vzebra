@@ -20,8 +20,8 @@ import torch.nn as nn
 class RLCritic_v60(nn.Module):
     """TD(0) value critic over working-memory state (16-dim)."""
 
-    def __init__(self, state_dim=16, hidden=32, gamma=0.99, lr=3e-3,
-                 buffer_size=256, batch_size=32, grad_clip=1.0,
+    def __init__(self, state_dim=16, hidden=32, gamma=0.98, lr=5e-3,
+                 buffer_size=512, batch_size=32, grad_clip=1.0,
                  device="cpu"):
         super().__init__()
         self.gamma = gamma
@@ -114,6 +114,38 @@ class RLCritic_v60(nn.Module):
             "last_td_error": self._last_td_error,
             "buffer_size": n,
         }
+
+    def get_saveable_state(self):
+        """Return learned weights, optimizer, and replay buffer for checkpoint."""
+        n = self.buffer_size if self._buf_full else (self._buf_idx % self.buffer_size)
+        return {
+            "net": self.net.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "buf_s": self._buf_s[:n].copy(),
+            "buf_r": self._buf_r[:n].copy(),
+            "buf_ns": self._buf_ns[:n].copy(),
+            "buf_done": self._buf_done[:n].copy(),
+            "buf_idx": self._buf_idx,
+            "buf_full": self._buf_full,
+            "update_count": self._update_count,
+        }
+
+    def load_saveable_state(self, state):
+        """Restore learned weights, optimizer, and replay buffer."""
+        self.net.load_state_dict(state["net"])
+        self.optimizer.load_state_dict(state["optimizer"])
+        n = len(state["buf_s"])
+        self._buf_s[:n] = state["buf_s"]
+        self._buf_r[:n] = state["buf_r"]
+        self._buf_ns[:n] = state["buf_ns"]
+        self._buf_done[:n] = state["buf_done"]
+        self._buf_idx = state["buf_idx"]
+        self._buf_full = state["buf_full"]
+        self._update_count = state["update_count"]
+
+    def reset_episode(self):
+        """Clear episodic counters but keep learned weights and replay buffer."""
+        self._last_td_error = 0.0
 
     def reset(self):
         """Clear replay buffer but keep learned weights."""
@@ -222,14 +254,13 @@ class EFEWeightAdapter:
         if self._step_count < self._warmup_steps:
             return
 
-        # Gate: only adapt when AIF is not fully confident
-        if confidence > 0.95:
-            return
+        # Soft gate: scale learning rate by uncertainty (always allow some drift)
+        conf_scale = max(0.05, 1.0 - confidence)
 
         if self._phi_forage is None:
             return
 
-        eta = self.eta_w
+        eta = self.eta_w * conf_scale
         lam = self.lambda_reg
         dmax = self.delta_max
 
@@ -272,6 +303,28 @@ class EFEWeightAdapter:
             np.abs(self.dw_flee).max(),
             np.abs(self.dw_explore).max(),
         )
+
+    def get_saveable_state(self):
+        """Return learned perturbation weights for checkpoint."""
+        return {
+            "dw_forage": self.dw_forage.copy(),
+            "dw_flee": self.dw_flee.copy(),
+            "dw_explore": self.dw_explore.copy(),
+            "step_count": self._step_count,
+        }
+
+    def load_saveable_state(self, state):
+        """Restore learned perturbation weights."""
+        self.dw_forage = state["dw_forage"].copy()
+        self.dw_flee = state["dw_flee"].copy()
+        self.dw_explore = state["dw_explore"].copy()
+        self._step_count = state["step_count"]
+
+    def reset_episode(self):
+        """Clear cached features but keep learned perturbations."""
+        self._phi_forage = None
+        self._phi_flee = None
+        self._phi_explore = None
 
     def reset(self):
         """Reset perturbations to zero (pure AIF)."""

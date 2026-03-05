@@ -193,6 +193,29 @@ class AssociativeMemory:
             self.centroids[idx] += self.drift_rate * (z - self.centroids[idx])
             self.visit_count[idx] += 1.0
 
+    def get_saveable_state(self):
+        """Return learned memory nodes for checkpoint."""
+        return {
+            "centroids": self.centroids[:self.n_allocated].copy(),
+            "food_rate": self.food_rate[:self.n_allocated].copy(),
+            "risk": self.risk[:self.n_allocated].copy(),
+            "visit_count": self.visit_count[:self.n_allocated].copy(),
+            "n_allocated": self.n_allocated,
+        }
+
+    def load_saveable_state(self, state):
+        """Restore learned memory nodes."""
+        n = state["n_allocated"]
+        self.centroids[:] = 0.0
+        self.food_rate[:] = 0.0
+        self.risk[:] = 0.0
+        self.visit_count[:] = 0.0
+        self.centroids[:n] = state["centroids"]
+        self.food_rate[:n] = state["food_rate"]
+        self.risk[:n] = state["risk"]
+        self.visit_count[:n] = state["visit_count"]
+        self.n_allocated = n
+
     def reset(self):
         self.centroids[:] = 0.0
         self.food_rate[:] = 0.0
@@ -630,6 +653,41 @@ class VAEWorldModel:
             "step": self._step,
             "buffer_count": self._buf_count,
         }
+
+    def get_saveable_state(self):
+        """Return all learned NN weights, optimizers, and associative memory."""
+        return {
+            "pool": self.pool.state_dict(),
+            "encoder": self.encoder.state_dict(),
+            "decoder": self.decoder.state_dict(),
+            "transition": self.transition.state_dict(),
+            "vae_optimizer": self.vae_optimizer.state_dict(),
+            "trans_optimizer": self.trans_optimizer.state_dict(),
+            "memory": self.memory.get_saveable_state(),
+            "step": self._step,
+        }
+
+    def load_saveable_state(self, state):
+        """Restore all learned NN weights, optimizers, and associative memory."""
+        self.pool.load_state_dict(state["pool"])
+        self.encoder.load_state_dict(state["encoder"])
+        self.decoder.load_state_dict(state["decoder"])
+        self.transition.load_state_dict(state["transition"])
+        self.vae_optimizer.load_state_dict(state["vae_optimizer"])
+        self.trans_optimizer.load_state_dict(state["trans_optimizer"])
+        self.memory.load_saveable_state(state["memory"])
+        self._step = state["step"]
+
+    def reset_episode(self):
+        """Clear transient buffers but keep learned weights and memory."""
+        self._buffer[:] = 0.0
+        self._buf_ptr = 0
+        self._buf_count = 0
+        self._last_vae_loss = 0.0
+        self._last_trans_loss = 0.0
+        self._last_z_mean = np.zeros(self.latent_dim, dtype=np.float32)
+        self._last_G_plan = np.zeros(3, dtype=np.float32)
+        self._last_epistemic = np.zeros(3, dtype=np.float32)
 
     def reset(self):
         """Clear memory and buffers, keep learned weights."""

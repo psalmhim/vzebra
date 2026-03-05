@@ -10,11 +10,13 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from zebra_v60.brain.zebrafish_snn_v60 import ZebrafishSNN_v60
+from zebra_v60.brain.device_util import get_device
 from zebra_v60.world.world_env import WorldEnv
 
 def run_test():
+    device = get_device()
     world = WorldEnv(xmin=-200, xmax=200, ymin=-150, ymax=150, n_food=0)
-    model = ZebrafishSNN_v60(device="cpu")
+    model = ZebrafishSNN_v60(device=device)
 
     headings = [
         ("Left_far", (-60, -20)),
@@ -32,7 +34,7 @@ def run_test():
     passed = 0
 
     for name, food in headings:
-        world.food = [tuple(food)]
+        world.foods = [tuple(food)]
         model.reset()
         out = model.forward(pos, heading, world)
         turn = float(out["motor"][0,:100].sigmoid().mean() - out["motor"][0,100:].sigmoid().mean())

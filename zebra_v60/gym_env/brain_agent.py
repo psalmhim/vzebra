@@ -7,6 +7,7 @@ then runs the full deliberative loop to produce actions.
 """
 import os
 import math
+import datetime
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -216,6 +217,35 @@ class BrainAgent:
         # Diagnostics (populated each step)
         self.last_diagnostics = {}
 
+    def _compute_experience(self):
+        """Compute normalized experience level (0=newbie, 1=expert).
+
+        Combines three signals that grow with experience:
+        - Place cell coverage (spatial knowledge)
+        - VAE world model maturity (predictive model quality)
+        - Habit repertoire size (behavioral learning)
+
+        Weights are renormalized when a module is absent.
+        """
+        total_weight = 0.0
+        experience = 0.0
+        if hasattr(self, 'place_cells'):
+            coverage = self.place_cells.n_allocated / self.place_cells.n_cells
+            experience += 0.5 * coverage
+            total_weight += 0.5
+        if self.vae_world is not None:
+            vae_maturity = self.vae_world._step / (self.vae_world._step + 300.0)
+            experience += 0.3 * vae_maturity
+            total_weight += 0.3
+        if self.use_habit:
+            n_habits = len(self.habit.habit_table)
+            habit_maturity = n_habits / (n_habits + 5.0)
+            experience += 0.2 * habit_maturity
+            total_weight += 0.2
+        if total_weight > 0:
+            experience /= total_weight
+        return float(experience)
+
     def _evaluate_food_prospects(self, env, fish_pos, world):
         """Active inference food prospection: evaluate cost-benefit per food.
 
@@ -276,15 +306,59 @@ class BrainAgent:
                     patch_bonus = min(0.15, count * 0.02)
                     break
 
+            # Reachability: penalize food occluded by rocks (requires detour)
+            occluded = 0.0
+            if hasattr(env, '_has_rock_occlusion'):
+                fish_gx, fish_gy = env.fish_x, env.fish_y
+                # Check line-of-sight from CURRENT fish position (not spawn)
+                _orig_center = (env.arena_w * 0.5, env.arena_h * 0.5)
+                # Temporarily check from fish position
+                for rock in getattr(env, 'rock_formations', []):
+                    for aabb in rock["aabbs"]:
+                        # Simple line-AABB intersection check
+                        dx_f = fx - fish_gx
+                        dy_f = fy - fish_gy
+                        seg_len = math.sqrt(dx_f * dx_f + dy_f * dy_f)
+                        if seg_len < 1e-6:
+                            continue
+                        # Check if AABB blocks the path
+                        cx_a, cy_a = aabb["x"], aabb["y"]
+                        hw_a, hh_a = aabb["hw"] + 8, aabb["hh"] + 8
+                        # Parametric intersection with expanded AABB
+                        t_min, t_max = 0.0, 1.0
+                        for dim_f, dim_a, dim_hw in [
+                            (fish_gx, cx_a, hw_a), (fish_gy, cy_a, hh_a)
+                        ]:
+                            d_val = (fx - fish_gx) if dim_f == fish_gx else (fy - fish_gy)
+                            if abs(d_val) < 1e-6:
+                                if abs(dim_f - dim_a) >= dim_hw:
+                                    t_min = 2.0  # no intersection
+                                    break
+                            else:
+                                t1 = (dim_a - dim_hw - dim_f) / d_val
+                                t2 = (dim_a + dim_hw - dim_f) / d_val
+                                if t1 > t2:
+                                    t1, t2 = t2, t1
+                                t_min = max(t_min, t1)
+                                t_max = min(t_max, t2)
+                                if t_min > t_max:
+                                    break
+                        if t_min <= t_max:
+                            occluded = 1.5  # strong penalty for unreachable food
+                            break
+                    if occluded > 0:
+                        break
+
             # EFE-style prospect score (lower = better)
             # cost term: metabolic cost weighted by energy state
             cost_weight = 0.3 + 0.5 * urgency  # more urgent → accept higher cost
-            risk_weight = 0.8 - 0.3 * urgency  # more urgent → accept more risk
+            risk_weight = 0.4 - 0.2 * urgency  # reduced: foraging requires risk tolerance
             gain_weight = 0.6 + 0.4 * urgency  # more urgent → value gain more
 
             prospect_score = (
                 cost_weight * (metabolic_cost / 20.0)  # normalized
                 + risk_weight * risk
+                + occluded  # penalty for food behind rocks
                 - gain_weight * (gain / 20.0) * affordable
                 - patch_bonus  # productive patches are preferred
             )
@@ -314,6 +388,7 @@ class BrainAgent:
         Returns:
             action: np.array [2] — [turn_rate, speed_mod]
         """
+        self._step_count = getattr(self, '_step_count', 0) + 1
         # 1. Build world from gym state
         world, fish_pos, world_heading = self.bridge.build_world(env)
 
@@ -505,6 +580,16 @@ class BrainAgent:
                 current_bonus = np.zeros(3, dtype=np.float64)
             self.goal_policy.set_plan_bonus(current_bonus + allo_bias)
 
+        # 8.8 Experience-based exploration bonus (explore first, exploit later)
+        experience = self._compute_experience()
+        explore_bonus = -0.15 * (1.0 - experience)
+        if self.vae_world is not None or hasattr(self, 'place_cells') or self.allostasis is not None:
+            current_bonus = self.goal_policy._external_efe_bonus.copy()
+        else:
+            current_bonus = np.zeros(3, dtype=np.float64)
+        current_bonus[GOAL_EXPLORE] += explore_bonus
+        self.goal_policy.set_plan_bonus(current_bonus)
+
         # 9. Goal policy selection
         _hunger = self.allostasis.hunger if self.allostasis else 0.0
         _hunger_err = self.allostasis.hunger_error if self.allostasis else 0.0
@@ -557,10 +642,77 @@ class BrainAgent:
         typeR_t = out["retR_full"][0, 400:].cpu().numpy()
         obs_px_L = float(np.sum(np.abs(typeL_t - 0.75) < 0.1))
         obs_px_R = float(np.sum(np.abs(typeR_t - 0.75) < 0.1))
+        food_px_L = float(np.sum(np.abs(typeL_t - 1.0) < 0.1))
+        food_px_R = float(np.sum(np.abs(typeR_t - 1.0) < 0.1))
+        food_px_total = food_px_L + food_px_R
         obs_total = obs_px_L + obs_px_R
         if obs_total > 5:
             obs_repulsion = -0.6 * (obs_px_R - obs_px_L) / obs_total
             raw_turn = raw_turn + obs_repulsion
+
+        # 12c. FORAGE without food on retina → food-seeking navigation
+        #      When no food pixels are visible, reduce approach_gain so the
+        #      fish doesn't charge into rocks, and increase exploration noise.
+        #      The olfactory heading cue is applied after the smoother (step 18b)
+        #      so it bypasses the approach_gain damping.
+        _olfactory_turn = 0.0
+        _near_food = False  # True when close to a known food prospect
+        _nearest_food_gym_dist = 999.0
+        if food_prospects:
+            best = food_prospects[0]
+            fdx = best["gym_pos"][0] - env.fish_x
+            fdy = best["gym_pos"][1] - env.fish_y
+            _nearest_food_gym_dist = math.sqrt(fdx * fdx + fdy * fdy)
+            _near_food = _nearest_food_gym_dist < 120  # within approach range
+
+        if effective_goal == GOAL_FORAGE and food_px_total < 3:
+            if _near_food:
+                # Close to food but it dropped off retina — keep speed up,
+                # steer hard toward it via olfactory cue
+                approach_gain *= 0.5  # moderate damping, not severe
+                fx, fy = food_prospects[0]["gym_pos"]
+                food_angle = math.atan2(fy - env.fish_y, fx - env.fish_x)
+                angle_diff = food_angle - env.fish_heading
+                angle_diff = math.atan2(
+                    math.sin(angle_diff), math.cos(angle_diff))
+                # Stronger turn when closer (0.5 at 120px, 0.8 at 0px)
+                olf_strength = 0.5 + 0.3 * max(
+                    0, 1.0 - _nearest_food_gym_dist / 120.0)
+                _olfactory_turn = olf_strength * np.clip(
+                    angle_diff, -1.0, 1.0)
+            else:
+                # Far from food — wander and explore
+                approach_gain *= 0.2
+                explore_mod = max(explore_mod, 1.5)
+                if food_prospects:
+                    best = food_prospects[0]
+                    fx, fy = best["gym_pos"]
+                    food_angle = math.atan2(
+                        fy - env.fish_y, fx - env.fish_x)
+                    angle_diff = food_angle - env.fish_heading
+                    angle_diff = math.atan2(
+                        math.sin(angle_diff), math.cos(angle_diff))
+                    _olfactory_turn = 0.3 * np.clip(
+                        angle_diff, -1.0, 1.0)
+
+        # 12d. Obstacle braking — when rocks densely cover both eyes, the
+        #      directional repulsion cancels out. Add a forward-facing escape
+        #      turn and reduce speed to prevent running into rock walls.
+        #      Suppress braking/escape when foraging toward a known food target.
+        obs_frac = obs_total / 800.0  # fraction of retina covered by rocks
+        _foraging_with_target = (effective_goal == GOAL_FORAGE
+                                 and abs(_olfactory_turn) > 0.05)
+        if obs_frac > 0.5:
+            if _foraging_with_target:
+                # Foraging with olfactory target: minimal braking, no escape turn
+                speed_mod_brain *= max(0.7, 1.0 - 0.2 * obs_frac)
+            else:
+                # No food target: full braking + escape turn
+                speed_mod_brain *= max(0.3, 1.0 - obs_frac)
+                if obs_px_L > obs_px_R:
+                    raw_turn += 0.4 * obs_frac
+                else:
+                    raw_turn -= 0.4 * obs_frac
 
         # 13. Smoothed turn
         turn = self.smoother.step(raw_turn * approach_gain)
@@ -677,7 +829,7 @@ class BrainAgent:
 
         # 18. Compute gym action
         # Negate turn: brain computes in world coords (y-up), gym uses y-down
-        brain_turn = turn + 0.03 * bg_gate + 0.02 * eye_pos
+        brain_turn = turn + 0.03 * bg_gate + 0.02 * eye_pos + _olfactory_turn
 
         # Boundary avoidance: steer toward center when near walls
         margin = 80
@@ -782,6 +934,8 @@ class BrainAgent:
             "patch_memory": dict(self._patch_visit_counts),
             "habituation_mean": float(np.mean(np.concatenate([
                 self._habituation_L, self._habituation_R]))),
+            "experience": experience,
+            "explore_bonus": explore_bonus,
         }
 
         # VAE diagnostics (Step 16)
@@ -884,18 +1038,22 @@ class BrainAgent:
             self._prev_done = done
 
     def reset(self):
-        """Reset all brain modules."""
+        """Reset brain for a new episode, preserving learned state."""
+        # SNN: reset activation voltages only (weights preserved)
         self.model.reset()
+        # Transient modules: full reset (no learned state)
         self.dopa_sys.reset()
         self.bg.reset()
         self.ot.reset()
         self.thal.reset()
         self.goal_policy.reset()
         self.wm.reset()
-        self.habit.reset()
+        # Learned modules: episode reset (preserve learned state)
+        self.habit.reset_episode()
         self.smoother.smoothed = 0.0
         self.goal_vec = np.array([0.0, 0.0, 1.0])
         self.prev_oF = None
+        self._step_count = 0
         self._eaten_buffer = 0
         self._prev_wm_state = None
         self._prev_reward = 0.0
@@ -914,18 +1072,68 @@ class BrainAgent:
         self._habituation_R = np.zeros(400, dtype=np.float32)
         self.last_diagnostics = {}
         if self.critic is not None:
-            self.critic.reset()
+            self.critic.reset_episode()
         if self.adapter is not None:
-            self.adapter.reset()
+            self.adapter.reset_episode()
         if self.vae_world is not None:
-            self.vae_world.reset()
+            self.vae_world.reset_episode()
             self._prev_z = None
             self._prev_action_ctx = None
         if hasattr(self, 'place_cells'):
-            self.place_cells.reset()
+            self.place_cells.reset_episode()
         if self.allostasis is not None:
             self.allostasis.reset()
         if self.amygdala is not None:
             self.amygdala.reset()
         if self.sleep_regulator is not None:
             self.sleep_regulator.reset()
+
+    def save_checkpoint(self, path):
+        """Save all learned parameters to a single checkpoint file.
+
+        Args:
+            path: file path for the checkpoint (.pt)
+        """
+        checkpoint = {
+            "version": 1,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "snn": self.model.get_saveable_state(),
+            "habit": self.habit.get_saveable_state(),
+        }
+        if self.critic is not None:
+            checkpoint["critic"] = self.critic.get_saveable_state()
+        if self.adapter is not None:
+            checkpoint["adapter"] = self.adapter.get_saveable_state()
+        if self.vae_world is not None:
+            checkpoint["vae_world"] = self.vae_world.get_saveable_state()
+        if hasattr(self, 'place_cells'):
+            checkpoint["place_cells"] = self.place_cells.get_saveable_state()
+
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        torch.save(checkpoint, path)
+        print(f"[checkpoint] Saved to {path}")
+
+    def load_checkpoint(self, path):
+        """Load learned parameters from a checkpoint file.
+
+        Args:
+            path: file path to the checkpoint (.pt)
+        """
+        checkpoint = torch.load(path, map_location=self.device,
+                                weights_only=False)
+        version = checkpoint.get("version", 0)
+        print(f"[checkpoint] Loading v{version} from {path} "
+              f"(saved {checkpoint.get('timestamp', 'unknown')})")
+
+        self.model.load_saveable_state(checkpoint["snn"])
+        self.habit.load_saveable_state(checkpoint["habit"])
+
+        if "critic" in checkpoint and self.critic is not None:
+            self.critic.load_saveable_state(checkpoint["critic"])
+        if "adapter" in checkpoint and self.adapter is not None:
+            self.adapter.load_saveable_state(checkpoint["adapter"])
+        if "vae_world" in checkpoint and self.vae_world is not None:
+            self.vae_world.load_saveable_state(checkpoint["vae_world"])
+        if "place_cells" in checkpoint and hasattr(self, 'place_cells'):
+            self.place_cells.load_saveable_state(checkpoint["place_cells"])
+        print("[checkpoint] Loaded successfully")
