@@ -26,6 +26,7 @@ from zebra_v60.brain.rl_critic_v60 import RLCritic_v60, EFEWeightAdapter
 from zebra_v60.brain.vae_world_model_v60 import VAEWorldModel
 from zebra_v60.brain.place_cell_v60 import PlaceCellNetwork
 from zebra_v60.brain.allostasis_v60 import AllostaticRegulator
+from zebra_v60.brain.amygdala_v60 import Amygdala
 from zebra_v60.brain.sleep_wake_v60 import SleepWakeRegulator
 from zebra_v60.brain.device_util import get_device
 from zebra_v60.world.world_env import WorldEnv
@@ -185,8 +186,10 @@ class BrainAgent:
         self.use_allostasis = use_allostasis
         if use_allostasis:
             self.allostasis = AllostaticRegulator()
+            self.amygdala = Amygdala()
         else:
             self.allostasis = None
+            self.amygdala = None
 
         # Sleep/wake cycle (Step 23)
         self.use_sleep_cycle = use_sleep_cycle
@@ -391,6 +394,21 @@ class BrainAgent:
             self.dopa_sys.beta = self.allostasis.modulate_dopamine_gain(
                 self.dopa_sys.beta)
 
+        # 7b2. Amygdala fear response — threat arousal from retinal + proximity
+        threat_arousal = 0.0
+        if self.amygdala is not None:
+            stress_val = allo_state["stress"] if allo_state else 0.0
+            threat_arousal = self.amygdala.step(
+                self._enemy_pixels_total, pred_dist_px, stress_val)
+            # Boost classifier p_enemy by threat arousal
+            if threat_arousal > 0.05:
+                cls_probs[2] = min(1.0, cls_probs[2] + 0.3 * threat_arousal)
+                cls_probs /= cls_probs.sum() + 1e-8
+            # Feed arousal back into allostatic stress
+            if self.allostasis is not None:
+                self.allostasis.stress = min(
+                    1.0, self.allostasis.stress + 0.1 * threat_arousal)
+
         # 7c. Sleep/wake modulation (Step 23)
         sleep_state = None
         if self.sleep_regulator is not None:
@@ -488,10 +506,13 @@ class BrainAgent:
             self.goal_policy.set_plan_bonus(current_bonus + allo_bias)
 
         # 9. Goal policy selection
+        _hunger = self.allostasis.hunger if self.allostasis else 0.0
+        _hunger_err = self.allostasis.hunger_error if self.allostasis else 0.0
         choice, self.goal_vec, posterior, confidence, efe_vec = \
             self.goal_policy.step(
                 cls_probs, pi_OT, pi_PC, dopa, rpe, cms, F_visual,
-                self.wm.get_mean())
+                self.wm.get_mean(),
+                hunger=_hunger, hunger_error=_hunger_err)
 
         # 10. Habit shortcut
         if self.use_habit:
@@ -622,7 +643,7 @@ class BrainAgent:
             saccade_fired = self.ot.trigger_saccade(enemy_dir)
 
             if saccade_fired:
-                self._flee_burst_steps = 5
+                self._flee_burst_steps = 5 + int(5 * threat_arousal)
                 # Only flash visual indicator for strong detections
                 if enemy_pixels_total >= 15:
                     self._saccade_flash = 3
@@ -692,7 +713,7 @@ class BrainAgent:
 
         # Flee burst: temporary speed boost after saccade detection
         if self._flee_burst_steps > 0:
-            speed = min(1.0, speed * 1.5)
+            speed = min(1.3, speed * 1.5)
             self._flee_burst_steps -= 1
 
         # Reduce speed when low energy
@@ -713,6 +734,10 @@ class BrainAgent:
                 self.allostasis.fatigue -= (
                     self.allostasis.fatigue_recovery * boost)
                 self.allostasis.fatigue = max(0.0, self.allostasis.fatigue)
+
+        # Signal flee state to env for energy cost multiplier
+        env.set_flee_active(
+            effective_goal == GOAL_FLEE or self._flee_burst_steps > 0)
 
         action = np.array([turn_rate, speed], dtype=np.float32)
 
@@ -772,6 +797,11 @@ class BrainAgent:
         if self.allostasis is not None:
             self.last_diagnostics["allostasis"] = \
                 self.allostasis.get_diagnostics()
+
+        # Amygdala diagnostics
+        if self.amygdala is not None:
+            self.last_diagnostics["amygdala"] = \
+                self.amygdala.get_diagnostics()
 
         # Sleep diagnostics (Step 23)
         if self.sleep_regulator is not None:
@@ -895,5 +925,7 @@ class BrainAgent:
             self.place_cells.reset()
         if self.allostasis is not None:
             self.allostasis.reset()
+        if self.amygdala is not None:
+            self.amygdala.reset()
         if self.sleep_regulator is not None:
             self.sleep_regulator.reset()

@@ -156,6 +156,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self.vision_type_R = None
         self._brain_diag = {}
         self._food_prospects = []
+        self._flee_active = False
 
         self.reset()
 
@@ -247,6 +248,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self.vision_type_R = None
         self._brain_diag = {}
         self._food_prospects = []
+        self._flee_active = False
 
         obs = self._get_obs()
         info = self._get_info()
@@ -535,6 +537,10 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         """Set brain diagnostics dict for monitoring panel rendering."""
         self._brain_diag = diag
 
+    def set_flee_active(self, active):
+        """Signal whether the fish is currently fleeing (higher energy cost)."""
+        self._flee_active = bool(active)
+
     def step(self, action):
         action = np.clip(action, self.action_space.low, self.action_space.high)
         turn_rate = float(action[0])
@@ -587,8 +593,10 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             self.foods.append([fx, fy])
 
         # === Energy drain (Feature A) ===
+        # Flee multiplier: escape bursts cost 2.5x the speed-dependent drain
+        flee_mult = 2.5 if self._flee_active else 1.0
         self.fish_energy -= (self.energy_drain_base
-                             + self.energy_drain_speed * speed_mod)
+                             + self.energy_drain_speed * speed_mod * flee_mult)
         self.fish_energy = max(0.0, self.fish_energy)
 
         # === Check predator catch ===
