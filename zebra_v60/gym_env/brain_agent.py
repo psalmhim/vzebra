@@ -165,6 +165,9 @@ class BrainAgent:
         self._flee_burst_steps = 0
         self._saccade_active = False
         self._saccade_flash = 0
+        self._enemy_pixels_total = 0
+        self._enemy_pixels_L = 0
+        self._enemy_pixels_R = 0
 
         # Patch memory: tracks food eaten per plankton patch
         self._patch_visit_counts = {}
@@ -347,6 +350,19 @@ class BrainAgent:
             cls_probs[2] = max(0.02, cls_probs[2] - discount)
             cls_probs[4] += discount * 0.7   # shift mass to environment
             cls_probs[0] += discount * 0.3   # rest to nothing
+            cls_probs /= cls_probs.sum() + 1e-8
+
+        # 4c. Retinal alarm: boost enemy probability from direct pixel evidence
+        #     (must run BEFORE goal selection at step 9 so FLEE can trigger)
+        ENEMY_TYPE_VAL = 0.5
+        enemy_px_L = np.sum(np.abs(typeL_raw - ENEMY_TYPE_VAL) < 0.1)
+        enemy_px_R = np.sum(np.abs(typeR_raw - ENEMY_TYPE_VAL) < 0.1)
+        self._enemy_pixels_total = int(enemy_px_L + enemy_px_R)
+        self._enemy_pixels_L = int(enemy_px_L)
+        self._enemy_pixels_R = int(enemy_px_R)
+        if self._enemy_pixels_total >= 3:
+            alarm_boost = min(0.5, self._enemy_pixels_total * 0.05)
+            cls_probs[2] = min(1.0, cls_probs[2] + alarm_boost)
             cls_probs /= cls_probs.sum() + 1e-8
 
         # 5. Free energy
@@ -584,11 +600,8 @@ class BrainAgent:
         # Swap for display so the user sees anatomically correct L/R.
         env.set_vision_strip(retR_intensity, retL_intensity, typeR, typeL)
 
-        # 16b. Retinal alarm: count enemy-type pixels directly from type channel
-        ENEMY_TYPE_VAL = 0.5
-        enemy_pixels_L = np.sum(np.abs(typeL - ENEMY_TYPE_VAL) < 0.1)
-        enemy_pixels_R = np.sum(np.abs(typeR - ENEMY_TYPE_VAL) < 0.1)
-        enemy_pixels_total = enemy_pixels_L + enemy_pixels_R
+        # 16b. Enemy saccade response (alarm boost already applied at step 4c)
+        enemy_pixels_total = self._enemy_pixels_total
 
         # 16c. Novelty-driven saccade (fires before enemy check, but enemy overrides)
         NOVELTY_SACCADE_THRESH = 3.0  # ~3 pixels changed entity type
@@ -603,13 +616,9 @@ class BrainAgent:
 
         self._saccade_active = False
         if enemy_pixels_total >= 3:
-            alarm_boost = min(0.5, enemy_pixels_total * 0.05)
-            cls_probs[2] = min(1.0, cls_probs[2] + alarm_boost)
-            total_p = cls_probs.sum() + 1e-8
-            cls_probs /= total_p
-
             # Saccade toward predator (higher priority, magnitude 0.6)
-            enemy_dir = 1.0 if enemy_pixels_R > enemy_pixels_L else -1.0
+            enemy_dir = (1.0 if self._enemy_pixels_R > self._enemy_pixels_L
+                         else -1.0)
             saccade_fired = self.ot.trigger_saccade(enemy_dir)
 
             if saccade_fired:
@@ -864,6 +873,9 @@ class BrainAgent:
         self._flee_burst_steps = 0
         self._saccade_active = False
         self._saccade_flash = 0
+        self._enemy_pixels_total = 0
+        self._enemy_pixels_L = 0
+        self._enemy_pixels_R = 0
         self._patch_visit_counts = {}
         self._prev_typeL = None
         self._prev_typeR = None
