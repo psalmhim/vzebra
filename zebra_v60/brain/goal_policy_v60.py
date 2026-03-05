@@ -87,7 +87,7 @@ class GoalPolicy_v60:
         return np.array([g_forage, g_flee, g_explore])
 
     def step(self, cls_probs, pi_OT, pi_PC, dopa, rpe, cms, F_visual,
-             mem_mean):
+             mem_mean, hunger=0.0, hunger_error=0.0):
         """Select goal by minimizing smoothed EFE.
 
         Returns:
@@ -122,6 +122,11 @@ class GoalPolicy_v60:
         p_food = cls_probs[1]
         if p_enemy > 0.5:
             choice = GOAL_FLEE
+            self.last_choice = choice
+            self.timer = 0
+        # Emergency FORAGE: critically low energy with declining trend
+        elif hunger > 0.7 and hunger_error > 0.3:
+            choice = GOAL_FORAGE
             self.last_choice = choice
             self.timer = 0
         elif (self.last_choice == GOAL_FLEE and p_enemy < 0.15
