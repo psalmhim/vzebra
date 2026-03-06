@@ -215,7 +215,6 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
     mon = None
     combined_screen = None
     clock = None
-    ARENA_W, ARENA_H = 800, 600
     frames = []  # for video recording
 
     if monitor and render:
@@ -223,13 +222,16 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
         from zebra_v60.viz.neural_monitor import NeuralMonitor
 
         env = ZebrafishPreyPredatorEnv(
-            render_mode="rgb_array", n_food=15, max_steps=T)
+            render_mode="rgb_array", n_food=15, max_steps=T,
+            side_panels=True)
         mon = NeuralMonitor()
         MON_W = mon.WIDTH  # 500
+        RENDER_W = env.render_width
+        RENDER_H = env.render_height
 
         pygame.init()
         combined_screen = pygame.display.set_mode(
-            (ARENA_W + MON_W, ARENA_H))
+            (RENDER_W + MON_W, RENDER_H))
         pygame.display.set_caption(
             "Zebrafish Brain Agent + Neural Monitor")
         clock = pygame.time.Clock()
@@ -238,10 +240,13 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
         # Env-only window (standard human mode)
         env = ZebrafishPreyPredatorEnv(
             render_mode="human" if not record else "rgb_array",
-            n_food=15, max_steps=T)
+            n_food=15, max_steps=T, side_panels=True)
+        RENDER_W = env.render_width
+        RENDER_H = env.render_height
         if record:
             pygame.init()
-            combined_screen = pygame.display.set_mode((ARENA_W, ARENA_H))
+            combined_screen = pygame.display.set_mode(
+                (RENDER_W, RENDER_H))
             pygame.display.set_caption("Zebrafish Brain Agent")
             clock = pygame.time.Clock()
 
@@ -253,9 +258,12 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
             render_mode=None, n_food=15, max_steps=T)
         mon = NeuralMonitor()
         MON_W = mon.WIDTH
+        RENDER_W = MON_W
+        RENDER_H = env.render_height
 
         pygame.init()
-        combined_screen = pygame.display.set_mode((MON_W, ARENA_H))
+        combined_screen = pygame.display.set_mode(
+            (RENDER_W, RENDER_H))
         pygame.display.set_caption("Zebrafish Neural Monitor")
         clock = pygame.time.Clock()
 
@@ -263,6 +271,8 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
         # Headless
         env = ZebrafishPreyPredatorEnv(
             render_mode=None, n_food=15, max_steps=T)
+        RENDER_W = env.render_width
+        RENDER_H = env.render_height
 
     agent = BrainAgent(device="auto", world_model="vae",
                        use_allostasis=True)
@@ -314,7 +324,7 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
                     mon.update(
                         agent._last_snn_out, agent.last_diagnostics)
                     mon.render()
-                    mon_x = ARENA_W if render else 0
+                    mon_x = RENDER_W if render else 0
                     combined_screen.blit(mon.get_surface(), (mon_x, 0))
 
                 pygame.display.flip()

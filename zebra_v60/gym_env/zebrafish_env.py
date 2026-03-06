@@ -80,7 +80,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
     }
 
     def __init__(self, render_mode=None, arena_size=800, n_food=15,
-                 max_steps=2000, n_colleagues=3):
+                 max_steps=2000, n_colleagues=3, side_panels=False):
         super().__init__()
 
         self.arena_w = arena_size
@@ -90,11 +90,16 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self.render_mode = render_mode
         self.n_colleagues = n_colleagues
 
+        # Side panels: move brain/predator monitors outside the arena
+        self._side_panels = side_panels
+        self._panel_l = 180 if side_panels else 0   # left margin
+        self._panel_r = 200 if side_panels else 0   # right margin
+
         # Fish parameters
         self.fish_size = 12        # triangle half-length
         self.fish_speed_base = 2.0
         self.fish_turn_max = 0.15  # radians per step
-        self.eat_radius = 22.0
+        self.eat_radius = 28.0
 
         # Predator parameters (1.5x bigger)
         self.pred_size = 18        # 1.5x fish
@@ -161,6 +166,16 @@ class ZebrafishPreyPredatorEnv(gym.Env):
 
         self.reset()
 
+    @property
+    def render_width(self):
+        """Full render surface width (arena + side panel margins)."""
+        return self._panel_l + self.arena_w + self._panel_r
+
+    @property
+    def render_height(self):
+        """Full render surface height."""
+        return self.arena_h
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
@@ -173,10 +188,10 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # Energy (Feature A)
         self.fish_energy = self.energy_max
 
-        # Predator state (start beyond chase radius: 300–400px away)
+        # Predator state (start visible but gives foraging room: 200–300px)
         for _ in range(20):
             angle = self.np_random.uniform(-math.pi, math.pi)
-            dist = self.np_random.uniform(300, 400)
+            dist = self.np_random.uniform(200, 300)
             self.pred_x = self.fish_x + dist * math.cos(angle)
             self.pred_y = self.fish_y + dist * math.sin(angle)
             # Clamp to arena
@@ -1129,18 +1144,25 @@ class ZebrafishPreyPredatorEnv(gym.Env):
 
         if self._screen is None:
             pygame.init()
+            rw, rh = self.render_width, self.render_height
             if self.render_mode == "human":
-                self._screen = pygame.display.set_mode(
-                    (self.arena_w, self.arena_h))
+                self._screen = pygame.display.set_mode((rw, rh))
                 pygame.display.set_caption("Zebrafish Predator-Prey")
             else:
-                self._screen = pygame.Surface(
-                    (self.arena_w, self.arena_h))
+                self._screen = pygame.Surface((rw, rh))
             self._clock = pygame.time.Clock()
             self._font = pygame.font.SysFont(None, 18)
             self._font_big = pygame.font.SysFont(None, 48)
 
-        surface = self._screen
+        main_surf = self._screen
+
+        # Side-panel mode: dark background for margins, arena is a subsurface
+        if self._side_panels:
+            main_surf.fill((25, 28, 35))
+            surface = main_surf.subsurface(
+                (self._panel_l, 0, self.arena_w, self.arena_h))
+        else:
+            surface = main_surf
 
         # Background — light water blue
         surface.fill((220, 232, 240))
@@ -1198,14 +1220,16 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                 surface, self.fish_x, self.fish_y, self.fish_heading,
                 self.fish_size, (30, 60, 220))
 
-            # Gaze direction indicator: draw a short line from each eye
-            # center pointing in the gaze direction, so we can see where
-            # the eyes are looking. The line extends outward from the eye.
+            # Eye anatomy indicator: perpendicular bisecting line divides
+            # each eye into lens (front, toward gaze) and retina (back).
+            # Each eye has its own outward gaze direction (left eye looks
+            # left, right eye looks right) modulated by saccade eye_pos.
             eye_pos = getattr(self, '_saccade_eye_pos', 0.0)
             saccade_active = getattr(self, '_saccade_active', False)
-            gaze_angle = self.fish_heading + eye_pos * 0.5
-            gaze_dx = math.cos(gaze_angle)
-            gaze_dy = math.sin(gaze_angle)
+            eye_outward = 0.4  # base outward angle from heading
+            left_gaze = self.fish_heading + eye_outward + eye_pos * 0.3
+            right_gaze = self.fish_heading - eye_outward + eye_pos * 0.3
+
             # Compute eye positions (same as _draw_zebrafish)
             spread = 0.55
             eye_off = 0.3
@@ -1219,16 +1243,34 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             er_x = br_x + sz * eye_off * math.cos(self.fish_heading)
             er_y = br_y + sz * eye_off * math.sin(self.fish_heading)
             eye_r = max(3, int(sz * 0.4))
-            gaze_len = eye_r * 2.0  # line extends beyond eye
-            color = (255, 255, 0) if saccade_active else (20, 20, 20)
-            w = 2
-            for ex, ey in [(el_x, el_y), (er_x, er_y)]:
+
+            # Draw retina semicircle + bisecting line per eye
+            retina_color = (140, 140, 140)
+            line_color = (255, 255, 0) if saccade_active else (20, 20, 20)
+            n_arc = 10
+            for ex, ey, gaze in [
+                (el_x, el_y, left_gaze),
+                (er_x, er_y, right_gaze),
+            ]:
+                # Retina semicircle (back half of eye)
+                pts = [(int(ex), int(ey))]
+                for i in range(n_arc + 1):
+                    a = gaze + math.pi / 2 + math.pi * i / n_arc
+                    pts.append((int(ex + eye_r * math.cos(a)),
+                                int(ey + eye_r * math.sin(a))))
+                if len(pts) >= 3:
+                    pygame.draw.polygon(surface, retina_color, pts)
+
+                # Perpendicular bisecting line
+                perp_dx = -math.sin(gaze)
+                perp_dy = math.cos(gaze)
                 pygame.draw.line(
-                    surface, color,
-                    (int(ex), int(ey)),
-                    (int(ex + gaze_dx * gaze_len),
-                     int(ey + gaze_dy * gaze_len)),
-                    w)
+                    surface, line_color,
+                    (int(ex + perp_dx * eye_r),
+                     int(ey + perp_dy * eye_r)),
+                    (int(ex - perp_dx * eye_r),
+                     int(ey - perp_dy * eye_r)),
+                    2)
 
         # Draw colleagues (teal triangles, Step 20)
         for c in getattr(self, 'colleagues', []):
@@ -1252,9 +1294,17 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # Vision strip overlay (Feature C) — with L/R labels
         self._draw_vision_strip(surface)
 
-        # Brain monitoring panel (right side) + Predator panel (left side)
-        self._draw_brain_monitor(surface)
-        self._draw_predator_monitor(surface)
+        # Brain monitoring panel + Predator panel
+        if self._side_panels:
+            # Panels in side margins (on main_surf, outside arena)
+            brain_x = self._panel_l + self.arena_w + 3
+            self._draw_brain_monitor(main_surf, panel_x=brain_x, panel_y=10)
+            self._draw_predator_monitor(
+                main_surf, panel_x=3, panel_y=10, arena_surface=surface)
+        else:
+            # Overlay panels on the arena (legacy)
+            self._draw_brain_monitor(surface)
+            self._draw_predator_monitor(surface)
 
         # HUD — bottom panel
         self._draw_hud(surface)
@@ -1277,8 +1327,9 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                                        pygame.K_KP_MINUS):
                         self._sim_speed = max(1, self._sim_speed // 2)
         else:
+            # Return full surface (including side panels if enabled)
             return np.transpose(
-                np.array(pygame.surfarray.pixels3d(surface)),
+                np.array(pygame.surfarray.pixels3d(main_surf)),
                 axes=(1, 0, 2))
 
     def _draw_hud(self, surface):
@@ -1432,8 +1483,8 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             rank_txt = self._font.render(str(rank + 1), True, ring_color)
             surface.blit(rank_txt, (int(fx) + radius + 2, int(fy) - 6))
 
-    def _draw_brain_monitor(self, surface):
-        """Draw comprehensive brain state monitoring panel on right side."""
+    def _draw_brain_monitor(self, surface, panel_x=None, panel_y=None):
+        """Draw comprehensive brain state monitoring panel."""
         import pygame
 
         diag = getattr(self, '_brain_diag', {})
@@ -1442,24 +1493,30 @@ class ZebrafishPreyPredatorEnv(gym.Env):
 
         # Panel position and dimensions
         panel_w = 195
-        panel_x = self.arena_w - panel_w - 5
-        panel_y = 52  # below vision strip
+        if panel_x is None:
+            panel_x = self.arena_w - panel_w - 5
+        if panel_y is None:
+            panel_y = 52  # below vision strip
         line_h = 14
         y = panel_y
 
         # Semi-transparent background
-        bg_surf = pygame.Surface((panel_w, 310), pygame.SRCALPHA)
+        bg_h = 360 if self._side_panels else 310
+        bg_surf = pygame.Surface((panel_w, bg_h), pygame.SRCALPHA)
         bg_surf.fill((0, 0, 0, 160))
         surface.blit(bg_surf, (panel_x, panel_y))
 
         font = self._font
 
         # --- Goal state ---
-        goal_names = ["FORAGE", "FLEE", "EXPLORE"]
-        goal_colors = [(40, 200, 40), (220, 40, 40), (80, 140, 255)]
+        goal_names = ["FORAGE", "FLEE", "EXPLORE", "SOCIAL"]
+        goal_colors = [(40, 200, 40), (220, 40, 40), (80, 140, 255),
+                       (0, 180, 170)]
         goal = diag.get("goal", 2)
-        goal_name = goal_names[goal] if goal < 3 else "?"
-        goal_color = goal_colors[goal] if goal < 3 else (180, 180, 180)
+        goal_name = (goal_names[goal] if goal < len(goal_names)
+                     else "?")
+        goal_color = (goal_colors[goal] if goal < len(goal_colors)
+                      else (180, 180, 180))
 
         # Large goal label
         goal_txt = font.render(f"GOAL: {goal_name}", True, goal_color)
@@ -1575,8 +1632,16 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                              (panel_x + 4, y))
                 y += line_h
 
-    def _draw_predator_monitor(self, surface):
-        """Draw predator state monitoring panel on left side."""
+    def _draw_predator_monitor(self, surface, panel_x=None, panel_y=None,
+                               arena_surface=None):
+        """Draw predator state monitoring panel.
+
+        Args:
+            surface: surface to draw the panel text/bars on.
+            panel_x, panel_y: override position (used for side-panel mode).
+            arena_surface: if given, arena overlays (ambush circle, hunt line)
+                are drawn here instead of on *surface*.
+        """
         import pygame
 
         diag = getattr(self, 'pred_diag', {})
@@ -1584,13 +1649,15 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             return
 
         panel_w = 175
-        panel_x = 5
-        panel_y = 52
+        if panel_x is None:
+            panel_x = 5
+        if panel_y is None:
+            panel_y = 52
         line_h = 14
         y = panel_y
 
         # Semi-transparent background
-        bg_surf = pygame.Surface((panel_w, 185), pygame.SRCALPHA)
+        bg_surf = pygame.Surface((panel_w, 210), pygame.SRCALPHA)
         bg_surf.fill((0, 0, 0, 160))
         surface.blit(bg_surf, (panel_x, panel_y))
 
@@ -1664,7 +1731,9 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                                  (140, 140, 160)), (panel_x + 4, y))
         y += line_h
 
-        # --- Ambush target indicator ---
+        # --- Arena overlays (ambush circle, hunt line) ---
+        overlay = arena_surface if arena_surface is not None else surface
+
         ambush = diag.get("ambush_target", None)
         if ambush is not None and state == "AMBUSH":
             surface.blit(font.render(
@@ -1672,19 +1741,17 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                 (180, 100, 220)), (panel_x + 4, y))
             y += line_h
 
-            # Draw ambush target circle on arena
             ax, ay = int(ambush[0]), int(ambush[1])
-            pygame.draw.circle(surface, (180, 100, 220), (ax, ay), 25, 2)
-            pygame.draw.circle(surface, (180, 100, 220), (ax, ay), 4)
+            pygame.draw.circle(overlay, (180, 100, 220), (ax, ay), 25, 2)
+            pygame.draw.circle(overlay, (180, 100, 220), (ax, ay), 4)
 
-        # --- Hunt state: draw intercept line ---
         if state == "HUNT":
-            # Show predator's pursuit line
             px, py = int(self.pred_x), int(self.pred_y)
             gaze_len = 40
             gx = px + int(gaze_len * math.cos(self.pred_heading))
             gy = py + int(gaze_len * math.sin(self.pred_heading))
-            pygame.draw.line(surface, (255, 80, 80), (px, py), (gx, gy), 2)
+            pygame.draw.line(overlay, (255, 80, 80),
+                             (px, py), (gx, gy), 2)
 
     def _draw_receptive_fields(self, surface):
         """Draw semi-transparent receptive field cones for L and R eyes."""
