@@ -1,8 +1,8 @@
 """
 Active Inference Policy Selection via Expected Free Energy (EFE).
 
-Maintains three goal states (FORAGE, FLEE, EXPLORE) and selects between
-them by minimizing EFE. Persistence timer prevents goal flickering.
+Maintains four goal states (FORAGE, FLEE, EXPLORE, SOCIAL) and selects
+between them by minimizing EFE. Persistence timer prevents goal flickering.
 Emergency override for high-confidence enemy detection.
 
 Pure numpy — no torch dependency.
@@ -12,13 +12,14 @@ import numpy as np
 GOAL_FORAGE = 0
 GOAL_FLEE = 1
 GOAL_EXPLORE = 2
-GOAL_NAMES = ["FORAGE", "FLEE", "EXPLORE"]
+GOAL_SOCIAL = 3
+GOAL_NAMES = ["FORAGE", "FLEE", "EXPLORE", "SOCIAL"]
 
 
 class GoalPolicy_v60:
     """EFE-based policy selection with persistence and emergency override."""
 
-    def __init__(self, n_goals=3, beta=2.0, persist_steps=8,
+    def __init__(self, n_goals=4, beta=2.0, persist_steps=8,
                  weight_adapter=None):
         self.n_goals = n_goals
         self.beta = beta
@@ -32,8 +33,14 @@ class GoalPolicy_v60:
         self._external_efe_bonus = np.zeros(n_goals)
 
     def set_plan_bonus(self, bonus):
-        """Set external EFE bonus from VAE planner (Step 16)."""
-        self._external_efe_bonus = np.asarray(bonus, dtype=np.float64)
+        """Set external EFE bonus from VAE planner (Step 16).
+
+        Automatically pads shorter arrays to n_goals with zeros.
+        """
+        bonus = np.asarray(bonus, dtype=np.float64)
+        if len(bonus) < self.n_goals:
+            bonus = np.pad(bonus, (0, self.n_goals - len(bonus)))
+        self._external_efe_bonus = bonus
 
     def compute_efe(self, cls_probs, pi_OT, pi_PC, dopa, rpe, cms, F_visual,
                     mem_mean):
@@ -51,18 +58,24 @@ class GoalPolicy_v60:
             mem_mean: float — working memory mean activation
 
         Returns:
-            efe: array [3] — EFE per goal (lower = preferred)
+            efe: array [n_goals] — EFE per goal (lower = preferred)
         """
         # Delegate to weight adapter if present (Step 15 RL critic)
         if self.weight_adapter is not None:
-            return self.weight_adapter.compute_efe(
+            efe_3 = self.weight_adapter.compute_efe(
                 cls_probs, pi_OT, pi_PC, dopa, cms,
                 rpe=rpe, F_visual=F_visual, mem_mean=mem_mean)
+            # Pad to n_goals if adapter returns fewer dims
+            if len(efe_3) < self.n_goals:
+                efe_3 = np.pad(efe_3, (0, self.n_goals - len(efe_3)),
+                               constant_values=0.3)
+            return efe_3
 
         p_nothing = cls_probs[0]
         p_food = cls_probs[1]
         p_enemy = cls_probs[2]
-        p_environ = cls_probs[4]
+        p_colleague = cls_probs[3] if len(cls_probs) > 3 else 0.0
+        p_environ = cls_probs[4] if len(cls_probs) > 4 else 0.0
 
         uncertainty = 1.0 - 0.5 * (pi_OT + pi_PC)
 
@@ -84,7 +97,13 @@ class GoalPolicy_v60:
                      + 0.1 * cms
                      + 0.2)
 
-        return np.array([g_forage, g_flee, g_explore])
+        # SOCIAL: attractive when colleagues visible, aversive when enemy near
+        g_social = (0.2 * uncertainty
+                    - 0.6 * p_colleague
+                    + 0.15 * p_enemy
+                    + 0.25)
+
+        return np.array([g_forage, g_flee, g_explore, g_social])
 
     def step(self, cls_probs, pi_OT, pi_PC, dopa, rpe, cms, F_visual,
              mem_mean, hunger=0.0, hunger_error=0.0):
@@ -92,13 +111,18 @@ class GoalPolicy_v60:
 
         Returns:
             choice: int — selected goal index
-            goal_vec: array [3] — one-hot goal vector
-            posterior: array [3] — policy posterior probabilities
+            goal_vec: array [n_goals] — one-hot goal vector
+            posterior: array [n_goals] — policy posterior probabilities
             confidence: float — entropy-based meta-precision (0–1)
-            efe_vec: array [3] — raw EFE values
+            efe_vec: array [n_goals] — raw EFE values
         """
         efe_raw = self.compute_efe(cls_probs, pi_OT, pi_PC, dopa, rpe, cms,
                                    F_visual, mem_mean)
+
+        # Ensure efe_raw matches n_goals (pad if adapter returned fewer)
+        if len(efe_raw) < self.n_goals:
+            efe_raw = np.pad(efe_raw, (0, self.n_goals - len(efe_raw)),
+                             constant_values=0.3)
 
         # Apply external planning bonus (Step 16 VAE planner)
         efe_raw = efe_raw + self._external_efe_bonus
@@ -117,10 +141,11 @@ class GoalPolicy_v60:
         exp_logits = np.exp(logits)
         posterior = exp_logits / (exp_logits.sum() + 1e-12)
 
-        # Emergency override: if p_enemy > 0.5, force FLEE
+        # Emergency override: if p_enemy > 0.35, force FLEE
         p_enemy = cls_probs[2]
         p_food = cls_probs[1]
-        if p_enemy > 0.5:
+        p_colleague = cls_probs[3] if len(cls_probs) > 3 else 0.0
+        if p_enemy > 0.35:
             choice = GOAL_FLEE
             self.last_choice = choice
             self.timer = 0
@@ -138,6 +163,12 @@ class GoalPolicy_v60:
         elif (self.last_choice == GOAL_FORAGE and p_food < 0.15
               and self.timer >= 4):
             # Early exit from FORAGE when no food detected
+            choice = int(np.argmax(posterior))
+            self.last_choice = choice
+            self.timer = 0
+        elif (self.last_choice == GOAL_SOCIAL and p_colleague < 0.1
+              and self.timer >= 3):
+            # Early exit from SOCIAL when no colleagues detected
             choice = int(np.argmax(posterior))
             self.last_choice = choice
             self.timer = 0
@@ -173,9 +204,9 @@ def goal_to_behavior(active_goal, cls_probs, posterior, confidence):
     """Convert active goal to behavioral modulation parameters.
 
     Args:
-        active_goal: int — GOAL_FORAGE, GOAL_FLEE, or GOAL_EXPLORE
+        active_goal: int — GOAL_FORAGE, GOAL_FLEE, GOAL_EXPLORE, or GOAL_SOCIAL
         cls_probs: array [5] — classifier probabilities
-        posterior: array [3] — goal posterior
+        posterior: array [n_goals] — goal posterior
         confidence: float — meta-precision (0–1)
 
     Returns:
@@ -198,6 +229,12 @@ def goal_to_behavior(active_goal, cls_probs, posterior, confidence):
         speed_mod = 1.3 + 0.4 * p_enemy
         explore_mod = 0.3
         turn_strategy = "flee-avoid"
+
+    elif active_goal == GOAL_SOCIAL:
+        approach_gain = 0.6
+        speed_mod = 0.8
+        explore_mod = 0.4
+        turn_strategy = "social-shoal"
 
     else:  # GOAL_EXPLORE
         approach_gain = 0.3

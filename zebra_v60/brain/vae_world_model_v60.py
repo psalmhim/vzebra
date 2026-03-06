@@ -240,7 +240,7 @@ class VAEWorldModel:
     """
 
     def __init__(self, oF_dim=800, pool_dim=64, state_ctx_dim=13,
-                 latent_dim=16,
+                 latent_dim=16, act_dim=5,
                  lr=1e-3, kl_beta=0.1, buffer_size=256, batch_size=16,
                  warmup_steps=200, blend_ramp=100, max_blend=0.3,
                  plan_horizon=3, device="cpu"):
@@ -268,7 +268,8 @@ class VAEWorldModel:
         self.decoder = VAEDecoder(latent_dim, 48, pool_dim).to(device)
 
         # Transition model
-        self.transition = TransitionModel(latent_dim, act_dim=5, hidden=24).to(device)
+        self.transition = TransitionModel(
+            latent_dim, act_dim=act_dim, hidden=24).to(device)
 
         # Associative memory (numpy)
         self.memory = AssociativeMemory(
@@ -599,19 +600,26 @@ class VAEWorldModel:
         """Generate stereotyped action sequences for 3 goals.
 
         Returns:
-            list of 3 lists, each with plan_horizon action_ctx arrays [5].
+            list of 3 lists, each with plan_horizon action_ctx arrays.
+            Goal one-hot size matches transition model act_dim.
         """
         turn = last_action[0] if len(last_action) > 0 else 0.0
         speed = last_action[1] if len(last_action) > 1 else 0.5
         H = self.plan_horizon
+        # Infer n_goals from transition model act_dim (act_dim = 2 + n_goals)
+        n_goals = self.transition.fc1.in_features - self.latent_dim - 2
         seqs = []
+
+        def _goal_oh(idx):
+            oh = np.zeros(n_goals, dtype=np.float32)
+            oh[idx] = 1.0
+            return oh
 
         # FORAGE: continue forward, moderate speed
         forage_seq = []
         for s in range(H):
-            oh = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-            act = np.array([turn * 0.3, min(1.0, speed * 1.1), *oh],
-                           dtype=np.float32)
+            act = np.array([turn * 0.3, min(1.0, speed * 1.1),
+                            *_goal_oh(0)], dtype=np.float32)
             forage_seq.append(act)
         seqs.append(forage_seq)
 
@@ -619,9 +627,8 @@ class VAEWorldModel:
         flee_seq = []
         flee_dir = 0.8 if turn >= 0 else -0.8
         for s in range(H):
-            oh = np.array([0.0, 1.0, 0.0], dtype=np.float32)
-            act = np.array([flee_dir, min(1.0, speed * 1.4), *oh],
-                           dtype=np.float32)
+            act = np.array([flee_dir, min(1.0, speed * 1.4),
+                            *_goal_oh(1)], dtype=np.float32)
             flee_seq.append(act)
         seqs.append(flee_seq)
 
@@ -629,8 +636,7 @@ class VAEWorldModel:
         explore_seq = []
         for s in range(H):
             weave = 0.3 * ((-1) ** s)
-            oh = np.array([0.0, 0.0, 1.0], dtype=np.float32)
-            act = np.array([weave, 0.6, *oh], dtype=np.float32)
+            act = np.array([weave, 0.6, *_goal_oh(2)], dtype=np.float32)
             explore_seq.append(act)
         seqs.append(explore_seq)
 

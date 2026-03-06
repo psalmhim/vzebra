@@ -79,13 +79,14 @@ class AllostaticRegulator:
     # Step
     # ------------------------------------------------------------------
 
-    def step(self, energy, speed, pred_dist):
+    def step(self, energy, speed, pred_dist, p_colleague=0.0):
         """Update all 3 allostatic variables and compute errors.
 
         Args:
             energy: float — current energy level [0, 100]
             speed: float — current movement speed [0, 1]
             pred_dist: float — distance to predator in pixels
+            p_colleague: float — colleague detection probability [0, 1]
 
         Returns:
             dict with all variables, errors, and urgency
@@ -111,7 +112,9 @@ class AllostaticRegulator:
         if pred_dist < self.stress_pred_threshold:
             proximity = max(0.0, 1.0 - pred_dist / self.stress_pred_threshold)
             self.stress += self.stress_gain * proximity
-        self.stress *= self.stress_decay
+        # Social comfort: colleague presence reduces stress by up to 10%
+        social_comfort = min(0.10, p_colleague * 0.15)
+        self.stress *= (self.stress_decay - social_comfort)
         self.stress = max(0.0, min(1.0, self.stress))
         self.stress_predicted += self.hunger_trend_alpha * (
             self.stress - self.stress_predicted)
@@ -141,10 +144,10 @@ class AllostaticRegulator:
     # ------------------------------------------------------------------
 
     def get_goal_prior_bias(self):
-        """Compute additive EFE bias from allostatic errors → numpy[3].
+        """Compute additive EFE bias from allostatic errors → numpy[4].
 
         Returns:
-            bias: numpy [3] — [FORAGE_bias, FLEE_bias, EXPLORE_bias]
+            bias: numpy [4] — [FORAGE_bias, FLEE_bias, EXPLORE_bias, SOCIAL_bias]
                 Lower value = more attractive (EFE convention)
         """
         strength = self.prior_strength
@@ -158,8 +161,10 @@ class AllostaticRegulator:
         flee_bias = -strength * max(0.0, self.stress_error)
         # Fatigue → bias EXPLORE (slow exploration = rest)
         explore_bias = -strength * max(0.0, self.fatigue_error)
+        # Low stress + low fatigue → bias SOCIAL (safe to socialize)
+        social_bias = -strength * max(0.0, 0.3 - self.stress - self.fatigue)
 
-        return np.array([forage_bias, flee_bias, explore_bias],
+        return np.array([forage_bias, flee_bias, explore_bias, social_bias],
                         dtype=np.float32)
 
     # ------------------------------------------------------------------

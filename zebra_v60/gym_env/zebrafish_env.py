@@ -80,7 +80,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
     }
 
     def __init__(self, render_mode=None, arena_size=800, n_food=15,
-                 max_steps=2000):
+                 max_steps=2000, n_colleagues=3):
         super().__init__()
 
         self.arena_w = arena_size
@@ -88,6 +88,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self.n_food_init = n_food
         self.max_steps = max_steps
         self.render_mode = render_mode
+        self.n_colleagues = n_colleagues
 
         # Fish parameters
         self.fish_size = 12        # triangle half-length
@@ -235,6 +236,11 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self.total_eaten = 0
         self.food_eaten_this_step = 0
         self.alive = True
+
+        # Colleagues (Step 20: social shoaling)
+        self.colleagues = []
+        for _ in range(self.n_colleagues):
+            self.colleagues.append(self._spawn_colleague())
 
         # Reset vision strip and diagnostics
         self.vision_strip_L = None
@@ -542,6 +548,103 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         return (float(self.np_random.uniform(30, self.arena_w - 30)),
                 float(self.np_random.uniform(30, self.arena_h - 30)))
 
+    # ------------------------------------------------------------------
+    # Colleague helpers (Step 20)
+    # ------------------------------------------------------------------
+
+    def _spawn_colleague(self):
+        """Spawn a colleague fish at a random position away from predator."""
+        for _ in range(30):
+            cx = float(self.np_random.uniform(60, self.arena_w - 60))
+            cy = float(self.np_random.uniform(60, self.arena_h - 60))
+            # Avoid predator
+            dx = cx - self.pred_x
+            dy = cy - self.pred_y
+            if dx * dx + dy * dy < 80 ** 2:
+                continue
+            # Avoid rocks
+            inside = False
+            for rock in getattr(self, 'rock_formations', []):
+                rdx = cx - rock["cx"]
+                rdy = cy - rock["cy"]
+                if math.sqrt(rdx * rdx + rdy * rdy) < rock["base_r"] * 1.2:
+                    inside = True
+                    break
+            if inside:
+                continue
+            return {
+                "x": cx, "y": cy,
+                "heading": float(self.np_random.uniform(-math.pi, math.pi)),
+                "speed": float(self.np_random.uniform(0.8, 1.2)),
+            }
+        # Fallback
+        return {
+            "x": float(self.arena_w * 0.5 + self.np_random.uniform(-50, 50)),
+            "y": float(self.arena_h * 0.5 + self.np_random.uniform(-50, 50)),
+            "heading": float(self.np_random.uniform(-math.pi, math.pi)),
+            "speed": 1.0,
+        }
+
+    def _update_colleagues(self):
+        """Move colleagues: gentle random walk + cohesion + wall avoidance."""
+        if not self.colleagues:
+            return
+
+        # Compute group centroid
+        cx_sum = sum(c["x"] for c in self.colleagues) + self.fish_x
+        cy_sum = sum(c["y"] for c in self.colleagues) + self.fish_y
+        n = len(self.colleagues) + 1
+        centroid_x = cx_sum / n
+        centroid_y = cy_sum / n
+
+        for c in self.colleagues:
+            # Cohesion toward group centroid
+            dx = centroid_x - c["x"]
+            dy = centroid_y - c["y"]
+            dist_to_centroid = math.sqrt(dx * dx + dy * dy) + 1e-8
+            coh_angle = math.atan2(dy, dx)
+            angle_diff = coh_angle - c["heading"]
+            angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
+            # Stronger cohesion when far from group
+            coh_strength = min(0.06, dist_to_centroid * 0.0003)
+            c["heading"] += coh_strength * angle_diff
+
+            # Random walk noise
+            c["heading"] += float(self.np_random.uniform(-0.08, 0.08))
+
+            # Flee from predator if close
+            pdx = c["x"] - self.pred_x
+            pdy = c["y"] - self.pred_y
+            pred_dist = math.sqrt(pdx * pdx + pdy * pdy) + 1e-8
+            if pred_dist < 100:
+                flee_angle = math.atan2(pdy, pdx)
+                flee_diff = flee_angle - c["heading"]
+                flee_diff = math.atan2(math.sin(flee_diff), math.cos(flee_diff))
+                c["heading"] += 0.15 * flee_diff
+
+            # Wall avoidance
+            margin = 40
+            if c["x"] < margin:
+                c["heading"] += 0.1
+            elif c["x"] > self.arena_w - margin:
+                c["heading"] -= 0.1
+            if c["y"] < margin:
+                c["heading"] += 0.1 * math.copysign(1, math.cos(c["heading"]))
+            elif c["y"] > self.arena_h - margin:
+                c["heading"] -= 0.1 * math.copysign(1, math.cos(c["heading"]))
+
+            c["heading"] = math.atan2(
+                math.sin(c["heading"]), math.cos(c["heading"]))
+
+            # Move
+            spd = c["speed"] * 1.2
+            c["x"] += spd * math.cos(c["heading"])
+            c["y"] += spd * math.sin(c["heading"])
+
+            # Clamp to arena
+            c["x"] = float(np.clip(c["x"], 10, self.arena_w - 10))
+            c["y"] = float(np.clip(c["y"], 10, self.arena_h - 10))
+
     def set_vision_strip(self, retL, retR, typeL, typeR):
         """Set the vision strip buffers for rendering (Feature C).
 
@@ -589,6 +692,9 @@ class ZebrafishPreyPredatorEnv(gym.Env):
 
         # === Predator AI ===
         self._update_predator()
+
+        # === Colleague movement (Step 20) ===
+        self._update_colleagues()
 
         # === Food eating ===
         eaten = 0
@@ -1004,6 +1110,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                 {"cx": r["cx"], "cy": r["cy"], "base_r": r["base_r"]}
                 for r in getattr(self, 'rock_formations', [])
             ],
+            "colleagues": getattr(self, 'colleagues', []),
         }
 
     def render(self):
@@ -1124,6 +1231,12 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                     (int(ex - perp_dx * slit_len),
                      int(ey - perp_dy * slit_len)),
                     w)
+
+        # Draw colleagues (teal triangles, Step 20)
+        for c in getattr(self, 'colleagues', []):
+            self._draw_zebrafish(
+                surface, c["x"], c["y"], c["heading"],
+                self.fish_size * 0.85, (0, 180, 170))
 
         # Draw predator (red, base=head with mouth, point=tail)
         self._draw_predator(
