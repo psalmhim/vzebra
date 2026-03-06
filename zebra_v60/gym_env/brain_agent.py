@@ -678,50 +678,64 @@ class BrainAgent:
             obs_repulsion = -0.6 * (obs_px_R - obs_px_L) / obs_total
             raw_turn = raw_turn + obs_repulsion
 
-        # 12c. FORAGE without food on retina → food-seeking navigation
-        #      When no food pixels are visible, reduce approach_gain so the
-        #      fish doesn't charge into rocks, and increase exploration noise.
-        #      The olfactory heading cue is applied after the smoother (step 18b)
-        #      so it bypasses the approach_gain damping.
+        # 12c. Food-directed navigation (FORAGE mode)
+        #      Three regimes:
+        #        a) Food on retina (food_px >= 3): steer toward food pixels
+        #        b) Near a prospect but no retinal food: olfactory approach
+        #        c) Far from prospects: wander + weak olfactory bias
+        #      Olfactory turn is injected after the smoother (step 18)
+        #      so it bypasses approach_gain damping.
         _olfactory_turn = 0.0
-        _near_food = False  # True when close to a known food prospect
+        _near_food = False
         _nearest_food_gym_dist = 999.0
         if food_prospects:
             best = food_prospects[0]
             fdx = best["gym_pos"][0] - env.fish_x
             fdy = best["gym_pos"][1] - env.fish_y
             _nearest_food_gym_dist = math.sqrt(fdx * fdx + fdy * fdy)
-            _near_food = _nearest_food_gym_dist < 120  # within approach range
+            _near_food = _nearest_food_gym_dist < 120
 
-        if effective_goal == GOAL_FORAGE and food_px_total < 3:
-            if _near_food:
-                # Close to food but it dropped off retina — keep speed up,
-                # steer hard toward it via olfactory cue
-                approach_gain *= 0.5  # moderate damping, not severe
+        if effective_goal == GOAL_FORAGE:
+            # Compute olfactory heading cue toward best food prospect.
+            # Uses angle_diff * 2 for sharper turn response (saturates at
+            # ±1 so there's no overshoot).
+            # Compute olfactory angle diff in gym coords.
+            # SIGN: brain_turn is negated to produce gym turn_rate
+            # (y-up→y-down), so the olfactory cue must also be negated
+            # to steer correctly in the gym coordinate system.
+            if food_prospects:
                 fx, fy = food_prospects[0]["gym_pos"]
-                food_angle = math.atan2(fy - env.fish_y, fx - env.fish_x)
+                food_angle = math.atan2(fy - env.fish_y,
+                                        fx - env.fish_x)
                 angle_diff = food_angle - env.fish_heading
                 angle_diff = math.atan2(
                     math.sin(angle_diff), math.cos(angle_diff))
-                # Stronger turn when closer (0.5 at 120px, 0.8 at 0px)
-                olf_strength = 0.5 + 0.3 * max(
-                    0, 1.0 - _nearest_food_gym_dist / 120.0)
-                _olfactory_turn = olf_strength * np.clip(
-                    angle_diff, -1.0, 1.0)
+                _scaled_diff = np.clip(-angle_diff * 2.0, -1.0, 1.0)
             else:
-                # Far from food — wander and explore
+                angle_diff = 0.0
+                _scaled_diff = 0.0
+
+            if food_px_total >= 3:
+                # (a) Food visible — use food-pixel direction + strong
+                #     olfactory cue.  Retinal food_turn helps when food
+                #     is off-axis; olfactory cue dominates when ahead.
+                food_turn = (food_px_R - food_px_L) / (food_px_total + 1e-8)
+                raw_turn = raw_turn * 0.3 + food_turn * 0.7
+                approach_gain = max(approach_gain, 1.2)
+                _olfactory_turn = 0.7 * _scaled_diff
+                # Keep decent speed near food — don't slow too much
+                if _nearest_food_gym_dist < 50:
+                    speed_mod_brain *= max(
+                        0.6, _nearest_food_gym_dist / 50.0)
+            elif _near_food:
+                # (b) Food prospect nearby but off retina — strong olfactory
+                approach_gain *= 0.5
+                _olfactory_turn = 0.9 * _scaled_diff
+            else:
+                # (c) No nearby food — wander with moderate olfactory pull
                 approach_gain *= 0.2
                 explore_mod = max(explore_mod, 1.5)
-                if food_prospects:
-                    best = food_prospects[0]
-                    fx, fy = best["gym_pos"]
-                    food_angle = math.atan2(
-                        fy - env.fish_y, fx - env.fish_x)
-                    angle_diff = food_angle - env.fish_heading
-                    angle_diff = math.atan2(
-                        math.sin(angle_diff), math.cos(angle_diff))
-                    _olfactory_turn = 0.3 * np.clip(
-                        angle_diff, -1.0, 1.0)
+                _olfactory_turn = 0.5 * _scaled_diff
 
         # 12d. Obstacle braking — when rocks densely cover both eyes, the
         #      directional repulsion cancels out. Add a forward-facing escape
