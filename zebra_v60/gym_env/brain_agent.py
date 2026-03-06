@@ -19,8 +19,9 @@ from zebra_v60.brain.optic_tectum_v60 import OpticTectum_v60
 from zebra_v60.brain.thalamus_v60 import ThalamusRelay_v60
 from zebra_v60.brain.goal_policy_v60 import (
     GoalPolicy_v60, goal_to_behavior,
-    GOAL_FORAGE, GOAL_FLEE, GOAL_EXPLORE,
+    GOAL_FORAGE, GOAL_FLEE, GOAL_EXPLORE, GOAL_SOCIAL,
 )
+from zebra_v60.brain.shoaling_v60 import ShoalingModule
 from zebra_v60.brain.working_memory_v60 import WorkingMemory_v60
 from zebra_v60.brain.habit_network_v60 import HabitNetwork_v60
 from zebra_v60.brain.rl_critic_v60 import RLCritic_v60, EFEWeightAdapter
@@ -136,7 +137,8 @@ class BrainAgent:
 
         # RL critic (Step 15) — must be created before goal_policy
         if use_rl_critic:
-            self.critic = RLCritic_v60(device=str(self.device))
+            self.critic = RLCritic_v60(
+                state_dim=18, device=str(self.device))
             self.adapter = EFEWeightAdapter()
         else:
             self.critic = None
@@ -148,9 +150,9 @@ class BrainAgent:
         self.ot = OpticTectum_v60()
         self.thal = ThalamusRelay_v60()
         self.goal_policy = GoalPolicy_v60(
-            n_goals=3, beta=2.0, persist_steps=8,
+            n_goals=4, beta=2.0, persist_steps=8,
             weight_adapter=self.adapter)
-        self.wm = WorkingMemory_v60(n_latent=16, n_goals=3, buffer_len=20)
+        self.wm = WorkingMemory_v60(n_goals=4, buffer_len=20)
         self.habit = HabitNetwork_v60()
         self.smoother = TurnSmoother(alpha=0.35)
 
@@ -158,7 +160,7 @@ class BrainAgent:
         self.bridge = GymWorldBridge()
 
         # State
-        self.goal_vec = np.array([0.0, 0.0, 1.0])  # start EXPLORE
+        self.goal_vec = np.array([0.0, 0.0, 1.0, 0.0])  # start EXPLORE
         self.prev_oF = None
         self._eaten_buffer = 0
         self._prev_wm_state = None
@@ -182,6 +184,9 @@ class BrainAgent:
         # Per-pixel habituation (non-associative learning)
         self._habituation_L = np.zeros(400, dtype=np.float32)
         self._habituation_R = np.zeros(400, dtype=np.float32)
+
+        # Shoaling (Step 20: social behavior)
+        self.shoaling = ShoalingModule()
 
         # Allostasis (Step 18)
         self.use_allostasis = use_allostasis
@@ -207,6 +212,7 @@ class BrainAgent:
             self.vae_world = VAEWorldModel(
                 oF_dim=800, pool_dim=64, latent_dim=16,
                 state_ctx_dim=ctx_dim,
+                act_dim=6,  # 2 (turn, speed) + 4 (goal one-hot)
                 device=str(self.device))
         elif self.world_model_type == "place_cell":
             self.place_cells = PlaceCellNetwork(n_cells=128)
@@ -392,6 +398,11 @@ class BrainAgent:
         # 1. Build world from gym state
         world, fish_pos, world_heading = self.bridge.build_world(env)
 
+        # 1a. Sync colleagues into world (Step 20)
+        for c in getattr(env, 'colleagues', []):
+            wx, wy = self.bridge.gym_to_world_pos(c["x"], c["y"])
+            world.colleagues.append((wx, wy))
+
         # 1b. Active inference food prospection
         food_prospects = self._evaluate_food_prospects(env, fish_pos, world)
 
@@ -438,8 +449,8 @@ class BrainAgent:
         self._enemy_pixels_total = int(enemy_px_L + enemy_px_R)
         self._enemy_pixels_L = int(enemy_px_L)
         self._enemy_pixels_R = int(enemy_px_R)
-        if self._enemy_pixels_total >= 3:
-            alarm_boost = min(0.5, self._enemy_pixels_total * 0.05)
+        if self._enemy_pixels_total >= 2:
+            alarm_boost = min(0.6, self._enemy_pixels_total * 0.08)
             cls_probs[2] = min(1.0, cls_probs[2] + alarm_boost)
             cls_probs /= cls_probs.sum() + 1e-8
 
@@ -465,7 +476,9 @@ class BrainAgent:
             (env.fish_x - env.pred_x) ** 2 + (env.fish_y - env.pred_y) ** 2)
         allo_state = None
         if self.allostasis is not None:
-            allo_state = self.allostasis.step(energy, prev_speed, pred_dist_px)
+            p_colleague = cls_probs[3] if len(cls_probs) > 3 else 0.0
+            allo_state = self.allostasis.step(
+                energy, prev_speed, pred_dist_px, p_colleague=p_colleague)
             self.dopa_sys.beta = self.allostasis.modulate_dopamine_gain(
                 self.dopa_sys.beta)
 
@@ -577,7 +590,10 @@ class BrainAgent:
             if self.vae_world is not None or hasattr(self, 'place_cells'):
                 current_bonus = self.goal_policy._external_efe_bonus.copy()
             else:
-                current_bonus = np.zeros(3, dtype=np.float64)
+                current_bonus = np.zeros(self.goal_policy.n_goals, dtype=np.float64)
+            # Pad allo_bias to match n_goals if needed
+            if len(allo_bias) < self.goal_policy.n_goals:
+                allo_bias = np.pad(allo_bias, (0, self.goal_policy.n_goals - len(allo_bias)))
             self.goal_policy.set_plan_bonus(current_bonus + allo_bias)
 
         # 8.8 Experience-based exploration bonus (explore first, exploit later)
@@ -586,8 +602,10 @@ class BrainAgent:
         if self.vae_world is not None or hasattr(self, 'place_cells') or self.allostasis is not None:
             current_bonus = self.goal_policy._external_efe_bonus.copy()
         else:
-            current_bonus = np.zeros(3, dtype=np.float64)
+            current_bonus = np.zeros(self.goal_policy.n_goals, dtype=np.float64)
         current_bonus[GOAL_EXPLORE] += explore_bonus
+        # Mirror partial bonus to FLEE so exploration doesn't suppress survival
+        current_bonus[GOAL_FLEE] += explore_bonus * 0.5
         self.goal_policy.set_plan_bonus(current_bonus)
 
         # 9. Goal policy selection
@@ -628,6 +646,16 @@ class BrainAgent:
         # 11. Goal-conditioned behavior
         approach_gain, speed_mod_brain, explore_mod, turn_strategy = \
             goal_to_behavior(effective_goal, cls_probs, posterior, confidence)
+
+        # 11b. Shoaling integration (Step 20: social behavior)
+        _shoal_diag = {}
+        if effective_goal == GOAL_SOCIAL:
+            colleagues = getattr(env, 'colleagues', [])
+            shoal_turn, shoal_speed, _shoal_diag = self.shoaling.step(
+                env.fish_x, env.fish_y, env.fish_heading, colleagues)
+            # Blend shoaling turn into approach_gain direction
+            approach_gain += shoal_turn * 0.5
+            speed_mod_brain *= shoal_speed
 
         # 12. Retinal turn signal
         retL = out["retL"]
@@ -895,8 +923,8 @@ class BrainAgent:
 
         # Store action context for VAE transition training (Step 16)
         if self.vae_world is not None:
-            goal_oh = np.zeros(3, dtype=np.float32)
-            goal_oh[effective_goal] = 1.0
+            goal_oh = np.zeros(self.goal_policy.n_goals, dtype=np.float32)
+            goal_oh[min(effective_goal, len(goal_oh) - 1)] = 1.0
             self._prev_action_ctx = np.array([
                 float(turn_rate), float(speed), *goal_oh],
                 dtype=np.float32)
@@ -956,6 +984,10 @@ class BrainAgent:
         if self.amygdala is not None:
             self.last_diagnostics["amygdala"] = \
                 self.amygdala.get_diagnostics()
+
+        # Shoaling diagnostics (Step 20)
+        if _shoal_diag:
+            self.last_diagnostics["shoaling"] = _shoal_diag
 
         # Sleep diagnostics (Step 23)
         if self.sleep_regulator is not None:
@@ -1051,7 +1083,8 @@ class BrainAgent:
         # Learned modules: episode reset (preserve learned state)
         self.habit.reset_episode()
         self.smoother.smoothed = 0.0
-        self.goal_vec = np.array([0.0, 0.0, 1.0])
+        self.goal_vec = np.zeros(self.goal_policy.n_goals)
+        self.goal_vec[GOAL_EXPLORE] = 1.0
         self.prev_oF = None
         self._step_count = 0
         self._eaten_buffer = 0
