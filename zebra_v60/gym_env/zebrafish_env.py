@@ -1198,15 +1198,14 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                 surface, self.fish_x, self.fish_y, self.fish_heading,
                 self.fish_size, (30, 60, 220))
 
-            # Saccadic eye indicator: draw a slit line through each eye,
-            # perpendicular to the gaze direction. Rotates as eye_pos
-            # changes, making saccadic sweeps clearly visible.
+            # Gaze direction indicator: draw a short line from each eye
+            # center pointing in the gaze direction, so we can see where
+            # the eyes are looking. The line extends outward from the eye.
             eye_pos = getattr(self, '_saccade_eye_pos', 0.0)
             saccade_active = getattr(self, '_saccade_active', False)
             gaze_angle = self.fish_heading + eye_pos * 0.5
-            # Perpendicular to gaze = the "iris slit" direction
-            perp_dx = -math.sin(gaze_angle)
-            perp_dy = math.cos(gaze_angle)
+            gaze_dx = math.cos(gaze_angle)
+            gaze_dy = math.sin(gaze_angle)
             # Compute eye positions (same as _draw_zebrafish)
             spread = 0.55
             eye_off = 0.3
@@ -1220,16 +1219,15 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             er_x = br_x + sz * eye_off * math.cos(self.fish_heading)
             er_y = br_y + sz * eye_off * math.sin(self.fish_heading)
             eye_r = max(3, int(sz * 0.4))
-            slit_len = eye_r * 1.3  # extend slightly past eye edge
+            gaze_len = eye_r * 2.0  # line extends beyond eye
             color = (255, 255, 0) if saccade_active else (20, 20, 20)
-            w = 2 if saccade_active else 2
+            w = 2
             for ex, ey in [(el_x, el_y), (er_x, er_y)]:
                 pygame.draw.line(
                     surface, color,
-                    (int(ex + perp_dx * slit_len),
-                     int(ey + perp_dy * slit_len)),
-                    (int(ex - perp_dx * slit_len),
-                     int(ey - perp_dy * slit_len)),
+                    (int(ex), int(ey)),
+                    (int(ex + gaze_dx * gaze_len),
+                     int(ey + gaze_dy * gaze_len)),
                     w)
 
         # Draw colleagues (teal triangles, Step 20)
