@@ -93,6 +93,36 @@ class TransitionModel(nn.Module):
         return z + self.RESIDUAL_SCALE * delta
 
 
+class ThreatDecoder(nn.Module):
+    """Decode latent z → threat assessment [4].
+
+    Output channels (with activation):
+        [0] proximity:    sigmoid → [0,1] (inverse distance to predator)
+        [1] lateral_pos:  tanh → [-1,1] (left/right bearing)
+        [2] approach_rate: sigmoid → [0,1] (closing speed)
+        [3] facing_score: sigmoid → [0,1] (angular width proxy)
+
+    Self-supervised targets from retinal features (NOT env ground truth).
+    ~508 parameters.
+    """
+
+    def __init__(self, latent=16, hidden=24, out_dim=4):
+        super().__init__()
+        self.fc1 = nn.Linear(latent, hidden)
+        self.fc_out = nn.Linear(hidden, out_dim)
+
+    def forward(self, z):
+        """z: [B, 16] → threat: [B, 4]."""
+        h = F.relu(self.fc1(z))
+        raw = self.fc_out(h)
+        return torch.cat([
+            torch.sigmoid(raw[:, 0:1]),   # proximity
+            torch.tanh(raw[:, 1:2]),      # lateral_pos
+            torch.sigmoid(raw[:, 2:3]),   # approach_rate
+            torch.sigmoid(raw[:, 3:4]),   # facing_score
+        ], dim=-1)
+
+
 # ---------------------------------------------------------------------------
 # Associative memory (pure numpy — no gradients)
 # ---------------------------------------------------------------------------
@@ -292,12 +322,25 @@ class VAEWorldModel:
         self._buf_ptr = 0
         self._buf_count = 0
 
+        # Threat decoder (active inference: z → threat assessment)
+        self.threat_decoder = ThreatDecoder(
+            latent=latent_dim, hidden=24, out_dim=4).to(device)
+        self.threat_optimizer = torch.optim.Adam(
+            self.threat_decoder.parameters(), lr=lr)
+
+        # Threat decoder ring buffer (stores z + target[4])
+        self._threat_buf = np.zeros(
+            (buffer_size, latent_dim + 4), dtype=np.float32)
+        self._threat_ptr = 0
+        self._threat_count = 0
+
         # Step counter for warmup/blend scheduling
         self._step = 0
 
         # Diagnostics
         self._last_vae_loss = 0.0
         self._last_trans_loss = 0.0
+        self._last_threat_loss = 0.0
         self._last_z_mean = np.zeros(latent_dim, dtype=np.float32)
         self._last_G_plan = np.zeros(3, dtype=np.float32)
         self._last_epistemic = np.zeros(3, dtype=np.float32)
@@ -471,6 +514,77 @@ class VAEWorldModel:
         # Risk inversely proportional to predator distance
         risk_signal = float(max(0.0, 1.0 - pred_dist / 150.0))
         self.memory.update(z, food_signal, risk_signal)
+
+    # -------------------------------------------------------------------
+    # Threat decoder (active inference)
+    # -------------------------------------------------------------------
+
+    def encode_threat(self, z):
+        """Decode threat assessment from latent z.
+
+        Args:
+            z: numpy [16] — current latent state
+
+        Returns:
+            threat: numpy [4] — [proximity, lateral, approach, facing]
+        """
+        with torch.no_grad():
+            z_t = torch.tensor(
+                z[np.newaxis], dtype=torch.float32, device=self.device)
+            threat = self.threat_decoder(z_t)
+        return threat[0].cpu().numpy().astype(np.float32)
+
+    def update_threat_decoder(self, z, retinal_features):
+        """Push retinal-derived threat targets and train decoder.
+
+        Self-supervised: targets come from retinal pixel statistics,
+        NOT from ground-truth environment state.
+
+        Args:
+            z: numpy [16] — current latent state
+            retinal_features: dict with keys:
+                enemy_px_total, enemy_lateral_bias,
+                enemy_growth_rate, enemy_spread
+        """
+        # Build target [4] from retinal features
+        proximity_target = min(1.0, retinal_features["enemy_px_total"] / 50.0)
+        lateral_target = retinal_features["enemy_lateral_bias"]
+        approach_raw = np.clip(
+            retinal_features["enemy_growth_rate"] * 5.0, -20.0, 20.0)
+        approach_target = 1.0 / (1.0 + np.exp(-approach_raw))  # sigmoid
+        facing_target = min(1.0, retinal_features["enemy_spread"] / 15.0)
+
+        target = np.array(
+            [proximity_target, lateral_target, approach_target, facing_target],
+            dtype=np.float32)
+
+        # Push to ring buffer
+        entry = np.concatenate([z, target])
+        self._threat_buf[self._threat_ptr] = entry
+        self._threat_ptr = (self._threat_ptr + 1) % self.buffer_size
+        self._threat_count = min(self._threat_count + 1, self.buffer_size)
+
+        if self._threat_count < self.batch_size * 2:
+            return
+
+        # Mini-batch MSE training
+        indices = np.random.choice(
+            self._threat_count, self.batch_size, replace=False)
+        batch = torch.tensor(
+            self._threat_buf[indices], device=self.device)
+        batch_z = batch[:, :self.latent_dim]
+        batch_target = batch[:, self.latent_dim:]
+
+        pred = self.threat_decoder(batch_z)
+        loss = F.mse_loss(pred, batch_target)
+
+        self.threat_optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            self.threat_decoder.parameters(), 1.0)
+        self.threat_optimizer.step()
+
+        self._last_threat_loss = float(loss.item())
 
     # -------------------------------------------------------------------
     # Planning
@@ -651,6 +765,7 @@ class VAEWorldModel:
         return {
             "vae_loss": self._last_vae_loss,
             "trans_loss": self._last_trans_loss,
+            "threat_loss": self._last_threat_loss,
             "z_mean": self._last_z_mean.copy(),
             "blend_weight": self.get_blend_weight(),
             "memory_nodes": self.memory.n_allocated,
@@ -667,8 +782,10 @@ class VAEWorldModel:
             "encoder": self.encoder.state_dict(),
             "decoder": self.decoder.state_dict(),
             "transition": self.transition.state_dict(),
+            "threat_decoder": self.threat_decoder.state_dict(),
             "vae_optimizer": self.vae_optimizer.state_dict(),
             "trans_optimizer": self.trans_optimizer.state_dict(),
+            "threat_optimizer": self.threat_optimizer.state_dict(),
             "memory": self.memory.get_saveable_state(),
             "step": self._step,
         }
@@ -679,6 +796,10 @@ class VAEWorldModel:
         self.encoder.load_state_dict(state["encoder"])
         self.decoder.load_state_dict(state["decoder"])
         self.transition.load_state_dict(state["transition"])
+        if "threat_decoder" in state:
+            self.threat_decoder.load_state_dict(state["threat_decoder"])
+        if "threat_optimizer" in state:
+            self.threat_optimizer.load_state_dict(state["threat_optimizer"])
         self.vae_optimizer.load_state_dict(state["vae_optimizer"])
         self.trans_optimizer.load_state_dict(state["trans_optimizer"])
         self.memory.load_saveable_state(state["memory"])
@@ -689,8 +810,12 @@ class VAEWorldModel:
         self._buffer[:] = 0.0
         self._buf_ptr = 0
         self._buf_count = 0
+        self._threat_buf[:] = 0.0
+        self._threat_ptr = 0
+        self._threat_count = 0
         self._last_vae_loss = 0.0
         self._last_trans_loss = 0.0
+        self._last_threat_loss = 0.0
         self._last_z_mean = np.zeros(self.latent_dim, dtype=np.float32)
         self._last_G_plan = np.zeros(3, dtype=np.float32)
         self._last_epistemic = np.zeros(3, dtype=np.float32)
@@ -701,9 +826,13 @@ class VAEWorldModel:
         self._buffer[:] = 0.0
         self._buf_ptr = 0
         self._buf_count = 0
+        self._threat_buf[:] = 0.0
+        self._threat_ptr = 0
+        self._threat_count = 0
         self._step = 0
         self._last_vae_loss = 0.0
         self._last_trans_loss = 0.0
+        self._last_threat_loss = 0.0
         self._last_z_mean = np.zeros(self.latent_dim, dtype=np.float32)
         self._last_G_plan = np.zeros(3, dtype=np.float32)
         self._last_epistemic = np.zeros(3, dtype=np.float32)
