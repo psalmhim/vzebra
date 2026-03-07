@@ -98,6 +98,62 @@ class GymWorldBridge:
         return world, fish_pos, world_heading
 
 
+class InteroceptiveEnergyModel:
+    """Bayesian energy belief from motor efference + noisy interoception.
+
+    The agent does not read env.fish_energy directly. Instead it:
+      1. Predicts energy change from motor commands (speed → drain, eating → gain)
+      2. Receives a noisy interoceptive observation (true energy + Gaussian noise)
+      3. Blends prediction and observation via a fixed gain (w=0.2)
+
+    The prediction error (|predicted - observed|) drives hunger urgency
+    in the allostatic regulator.
+    """
+
+    def __init__(self, initial_energy=100.0, noise_std=3.0,
+                 observation_weight=0.2,
+                 drain_per_speed=0.08, gain_per_food=15.0):
+        self.noise_std = noise_std
+        self.observation_weight = observation_weight
+        self.drain_per_speed = drain_per_speed
+        self.gain_per_food = gain_per_food
+        self._belief = initial_energy
+        self._prediction = initial_energy
+        self.prediction_error = 0.0
+
+    def predict(self, speed, eaten):
+        """Predict energy from motor efference copy.
+
+        Args:
+            speed: float — current movement speed [0, 1]
+            eaten: int — food items eaten this step
+        """
+        delta = -self.drain_per_speed * speed + self.gain_per_food * eaten
+        self._prediction = max(0.0, min(100.0, self._belief + delta))
+
+    def observe(self, raw_energy):
+        """Bayesian update with noisy interoceptive signal.
+
+        Args:
+            raw_energy: float — true energy from env (will be noised)
+        """
+        noisy = raw_energy + np.random.normal(0, self.noise_std)
+        noisy = max(0.0, min(100.0, noisy))
+        w = self.observation_weight
+        self._belief = (1 - w) * self._prediction + w * noisy
+        self._belief = max(0.0, min(100.0, self._belief))
+        self.prediction_error = abs(self._prediction - noisy)
+
+    def get_energy(self):
+        """Return current energy belief."""
+        return self._belief
+
+    def reset(self, initial_energy=100.0):
+        self._belief = initial_energy
+        self._prediction = initial_energy
+        self.prediction_error = 0.0
+
+
 class BrainAgent:
     """Wraps the full brain pipeline as a gym-compatible agent."""
 
@@ -105,7 +161,7 @@ class BrainAgent:
                  base_turn_gain=0.15, swim_speed=1.5, use_habit=True,
                  use_rl_critic=False, use_vae_planner=False,
                  world_model="none", use_allostasis=False,
-                 use_sleep_cycle=False):
+                 use_sleep_cycle=False, use_active_inference=False):
         """
         Args:
             world_model: str — world model type for planning.
@@ -204,6 +260,16 @@ class BrainAgent:
         else:
             self.sleep_regulator = None
 
+        # Active inference mode (all state inferred through generative models)
+        self.use_active_inference = use_active_inference
+        if use_active_inference:
+            self.interoceptive = InteroceptiveEnergyModel()
+            self._prev_enemy_px_total = 0.0
+            self._prev_enemy_intensity_mean = 0.0
+            self._retinal_features = {}
+        else:
+            self.interoceptive = None
+
         # World model (Step 16/17)
         self._prev_z = None
         self._prev_action_ctx = None
@@ -251,6 +317,345 @@ class BrainAgent:
         if total_weight > 0:
             experience /= total_weight
         return float(experience)
+
+    def _extract_retinal_features(self, out):
+        """Extract structured features from SNN retinal type channels.
+
+        Pure observation — no env access. Extracts enemy, food, boundary,
+        and obstacle pixel statistics from left/right type channels.
+
+        Args:
+            out: dict from SNN forward pass
+
+        Returns:
+            dict with retinal feature keys
+        """
+        typeL = out["retL_full"][0, 400:].cpu().numpy()
+        typeR = out["retR_full"][0, 400:].cpu().numpy()
+        intL = out["retL_full"][0, :400].cpu().numpy()
+        intR = out["retR_full"][0, :400].cpu().numpy()
+
+        # --- Enemy pixels (type ≈ 0.5) ---
+        enemy_mask_L = np.abs(typeL - 0.5) < 0.1
+        enemy_mask_R = np.abs(typeR - 0.5) < 0.1
+        enemy_px_L = float(np.sum(enemy_mask_L))
+        enemy_px_R = float(np.sum(enemy_mask_R))
+        enemy_px_total = enemy_px_L + enemy_px_R
+
+        # Enemy intensity (distance proxy: intensity = exp(-d/80))
+        enemy_int_vals = np.concatenate([
+            intL[enemy_mask_L], intR[enemy_mask_R]])
+        enemy_intensity_mean = (
+            float(np.mean(enemy_int_vals)) if len(enemy_int_vals) > 0 else 0.0)
+
+        # Lateral bias: (R - L) / (total + 1)
+        enemy_lateral_bias = (enemy_px_R - enemy_px_L) / (enemy_px_total + 1)
+
+        # Angular spread: reshape 400→20×20, find az range of enemy pixels
+        enemy_spread = 0.0
+        for mask in [enemy_mask_L, enemy_mask_R]:
+            if np.sum(mask) > 0:
+                grid = mask.reshape(20, 20)  # 20 azimuth × 20 elevation
+                az_proj = np.any(grid, axis=1)
+                az_indices = np.where(az_proj)[0]
+                if len(az_indices) > 0:
+                    spread = float(az_indices[-1] - az_indices[0])
+                    enemy_spread = max(enemy_spread, spread)
+
+        # Temporal dynamics (growth rate, intensity change)
+        enemy_growth_rate = enemy_px_total - self._prev_enemy_px_total
+        enemy_intensity_change = (
+            enemy_intensity_mean - self._prev_enemy_intensity_mean)
+        self._prev_enemy_px_total = enemy_px_total
+        self._prev_enemy_intensity_mean = enemy_intensity_mean
+
+        # --- Food pixels (type ≈ 1.0) ---
+        food_mask_L = np.abs(typeL - 1.0) < 0.1
+        food_mask_R = np.abs(typeR - 1.0) < 0.1
+        food_px_L = float(np.sum(food_mask_L))
+        food_px_R = float(np.sum(food_mask_R))
+        food_px_total = food_px_L + food_px_R
+        food_lateral_bias = (food_px_R - food_px_L) / (food_px_total + 1)
+        food_int_vals = np.concatenate([
+            intL[food_mask_L], intR[food_mask_R]])
+        food_intensity_mean = (
+            float(np.mean(food_int_vals)) if len(food_int_vals) > 0 else 0.0)
+
+        # --- Boundary pixels (type ≈ 0.12) ---
+        boundary_mask_L = np.abs(typeL - 0.12) < 0.08
+        boundary_mask_R = np.abs(typeR - 0.12) < 0.08
+        boundary_px_L = float(np.sum(boundary_mask_L))
+        boundary_px_R = float(np.sum(boundary_mask_R))
+        boundary_intensity_L = (
+            float(np.mean(intL[boundary_mask_L]))
+            if np.sum(boundary_mask_L) > 0 else 0.0)
+        boundary_intensity_R = (
+            float(np.mean(intR[boundary_mask_R]))
+            if np.sum(boundary_mask_R) > 0 else 0.0)
+
+        # --- Obstacle pixels (type ≈ 0.75) ---
+        obs_mask_L = np.abs(typeL - 0.75) < 0.1
+        obs_mask_R = np.abs(typeR - 0.75) < 0.1
+        obstacle_px_L = float(np.sum(obs_mask_L))
+        obstacle_px_R = float(np.sum(obs_mask_R))
+
+        # --- Colleague pixels (type ≈ 0.25) ---
+        coll_mask_L = np.abs(typeL - 0.25) < 0.1
+        coll_mask_R = np.abs(typeR - 0.25) < 0.1
+        colleague_px_L = float(np.sum(coll_mask_L))
+        colleague_px_R = float(np.sum(coll_mask_R))
+
+        return {
+            "enemy_px_total": enemy_px_total,
+            "enemy_px_L": enemy_px_L,
+            "enemy_px_R": enemy_px_R,
+            "enemy_intensity_mean": enemy_intensity_mean,
+            "enemy_lateral_bias": enemy_lateral_bias,
+            "enemy_spread": enemy_spread,
+            "enemy_growth_rate": enemy_growth_rate,
+            "enemy_intensity_change": enemy_intensity_change,
+            "food_px_total": food_px_total,
+            "food_px_L": food_px_L,
+            "food_px_R": food_px_R,
+            "food_lateral_bias": food_lateral_bias,
+            "food_intensity_mean": food_intensity_mean,
+            "boundary_px_L": boundary_px_L,
+            "boundary_px_R": boundary_px_R,
+            "boundary_intensity_L": boundary_intensity_L,
+            "boundary_intensity_R": boundary_intensity_R,
+            "obstacle_px_L": obstacle_px_L,
+            "obstacle_px_R": obstacle_px_R,
+            "colleague_px_L": colleague_px_L,
+            "colleague_px_R": colleague_px_R,
+        }
+
+    def _infer_threat_from_belief(self, retinal_features, vae_threat=None):
+        """Infer threat assessment from retinal features + VAE decoded threat.
+
+        No env access. Blends raw retinal features with VAE-decoded
+        threat assessment (when available and warmed up).
+
+        Args:
+            retinal_features: dict from _extract_retinal_features()
+            vae_threat: numpy [4] or None — from VAEWorldModel.encode_threat()
+
+        Returns:
+            dict matching _compute_threat_assessment() interface
+        """
+        rf = retinal_features
+
+        # Raw retinal estimates
+        proximity_ret = min(1.0, rf["enemy_px_total"] / 50.0)
+        lateral_ret = rf["enemy_lateral_bias"]
+        growth = rf["enemy_growth_rate"]
+        _exp_arg = max(-20.0, min(20.0, -growth * 5.0))
+        approach_ret = 1.0 / (1.0 + math.exp(_exp_arg))
+        facing_ret = min(1.0, rf["enemy_spread"] / 15.0)
+
+        # Blend with VAE decoded threat if available
+        if vae_threat is not None and self.vae_world is not None:
+            w = self.vae_world.get_blend_weight()
+        else:
+            w = 0.0
+
+        proximity = (1 - w) * proximity_ret + w * float(vae_threat[0]) if vae_threat is not None else proximity_ret
+        lateral = (1 - w) * lateral_ret + w * float(vae_threat[1]) if vae_threat is not None else lateral_ret
+        approach_rate = (1 - w) * approach_ret + w * float(vae_threat[2]) if vae_threat is not None else approach_ret
+        facing_score = (1 - w) * facing_ret + w * float(vae_threat[3]) if vae_threat is not None else facing_ret
+
+        # Derived quantities (same formulas as ground-truth version)
+        pred_facing_fish = facing_score > 0.4
+
+        # TTC from approach rate: approach_rate=0.5 means neutral
+        closing_speed = max(0.0, (approach_rate - 0.5) * 2.0)
+        headroom = max(0.0, 1.0 - proximity)
+        if closing_speed > 0.05:
+            ttc = (headroom / closing_speed) * 40.0
+        else:
+            ttc = 999.0
+
+        # Panic level
+        panic_level = 0.0
+        if pred_facing_fish and ttc < 40:
+            panic_level = facing_score * max(0.0, 1.0 - ttc / 40.0)
+        elif ttc < 20:
+            panic_level = 0.5 * max(0.0, 1.0 - ttc / 20.0)
+        panic_level = min(1.0, panic_level)
+
+        return {
+            "pred_facing_score": facing_score,
+            "pred_facing_fish": pred_facing_fish,
+            "ttc": ttc,
+            "closing_speed": closing_speed,
+            "panic_level": panic_level,
+            "cover_target": None,
+            # Extra fields for active inference diagnostics
+            "proximity": proximity,
+            "lateral": lateral,
+            "approach_rate": approach_rate,
+        }
+
+    def _estimate_position_from_retina(self, retinal_features, pi_pos, heading):
+        """Estimate position correction from boundary pixel intensity.
+
+        Uses boundary pixels as wall-distance proxy: intensity ≈ exp(-d/80).
+        When boundary signal is strong, directly constrains position so the
+        estimated wall distance is consistent with arena edges.
+
+        Also uses total boundary pixel count on L vs R as a coarse bearing
+        to the nearest wall, providing heading-independent triangulation.
+
+        Args:
+            retinal_features: dict from _extract_retinal_features()
+            pi_pos: numpy [2] — current path-integrated position
+            heading: float — current heading estimate
+
+        Returns:
+            corrected_pos: numpy [2] — corrected position estimate
+        """
+        rf = retinal_features
+        corrected = pi_pos.copy()
+        arena_w, arena_h = 800.0, 600.0
+
+        # Direct wall-distance constraint: for each visible boundary side,
+        # estimate distance to that wall and correct position accordingly.
+        total_bnd = rf["boundary_px_L"] + rf["boundary_px_R"]
+
+        for side, bnd_int, bnd_px in [
+            ("L", rf["boundary_intensity_L"], rf["boundary_px_L"]),
+            ("R", rf["boundary_intensity_R"], rf["boundary_px_R"]),
+        ]:
+            if bnd_px < 2 or bnd_int < 0.01:
+                continue
+
+            # Estimated distance to wall (gym px)
+            est_dist = -80.0 * math.log(max(0.01, bnd_int)) * 2.0
+            est_dist = max(5.0, min(400.0, est_dist))
+
+            # Confidence: more pixels → more reliable
+            confidence = min(1.0, bnd_px / 15.0) * 0.3
+
+            # Wall direction in gym frame
+            if side == "L":
+                wall_angle = heading + math.pi / 2
+            else:
+                wall_angle = heading - math.pi / 2
+
+            # Which arena wall is closest along this direction?
+            cos_a = math.cos(wall_angle)
+            sin_a = math.sin(wall_angle)
+
+            # Project: how far to each wall along wall_angle
+            best_wall_dist = 999.0
+            wall_pos = None
+            if abs(cos_a) > 0.1:
+                if cos_a < 0:  # heading toward left wall (x=0)
+                    d = pi_pos[0] / (-cos_a + 1e-8)
+                else:  # heading toward right wall (x=800)
+                    d = (arena_w - pi_pos[0]) / (cos_a + 1e-8)
+                if 0 < d < best_wall_dist:
+                    best_wall_dist = d
+            if abs(sin_a) > 0.1:
+                if sin_a < 0:  # heading toward top wall (y=0)
+                    d = pi_pos[1] / (-sin_a + 1e-8)
+                else:  # heading toward bottom wall (y=600)
+                    d = (arena_h - pi_pos[1]) / (sin_a + 1e-8)
+                if 0 < d < best_wall_dist:
+                    best_wall_dist = d
+
+            if best_wall_dist < 500:
+                # Error = estimated wall distance - actual wall distance
+                error = est_dist - best_wall_dist
+                # Pull position along opposite direction to reduce error
+                corrected[0] -= error * cos_a * confidence
+                corrected[1] -= error * sin_a * confidence
+
+        # Very strong walls: when boundary pixels are bright, clamp position
+        # to be near the arena edge
+        for bnd_int, bnd_px, dim_idx, dim_max in [
+            (rf["boundary_intensity_L"], rf["boundary_px_L"], 0, arena_w),
+            (rf["boundary_intensity_R"], rf["boundary_px_R"], 0, arena_w),
+            (rf["boundary_intensity_L"], rf["boundary_px_L"], 1, arena_h),
+            (rf["boundary_intensity_R"], rf["boundary_px_R"], 1, arena_h),
+        ]:
+            if bnd_int > 0.5 and bnd_px > 10:
+                # Very close to a wall — estimate which edge
+                est_d = -80.0 * math.log(max(0.01, bnd_int)) * 2.0
+                if corrected[dim_idx] < dim_max * 0.3:
+                    # Near low edge
+                    target = max(5.0, est_d)
+                    corrected[dim_idx] += 0.1 * (target - corrected[dim_idx])
+                elif corrected[dim_idx] > dim_max * 0.7:
+                    # Near high edge
+                    target = min(dim_max - 5.0, dim_max - est_d)
+                    corrected[dim_idx] += 0.1 * (target - corrected[dim_idx])
+
+        # Clamp to arena
+        corrected[0] = np.clip(corrected[0], 5, arena_w - 5)
+        corrected[1] = np.clip(corrected[1], 5, arena_h - 5)
+
+        return corrected
+
+    def _compute_threat_assessment(self, env):
+        """Compute predator gaze-awareness and time-to-contact.
+
+        Returns:
+            dict with keys:
+                pred_facing_score: float [0, 1] — 1=facing fish dead-on
+                pred_facing_fish: bool — |facing_diff| < 0.5 rad (~28 deg)
+                ttc: float — time-to-contact in steps (999 if retreating)
+                closing_speed: float — net closing speed (px/step)
+                panic_level: float [0, 1] — high when facing + TTC low
+                cover_target: None (populated later by cover-seeking)
+        """
+        dx = env.fish_x - env.pred_x
+        dy = env.fish_y - env.pred_y
+        dist = math.sqrt(dx * dx + dy * dy) + 1e-8
+
+        # Angle from predator to fish
+        angle_pred_to_fish = math.atan2(dy, dx)
+
+        # How aligned is predator heading with direction to fish
+        facing_diff = env.pred_heading - angle_pred_to_fish
+        facing_diff = math.atan2(math.sin(facing_diff), math.cos(facing_diff))
+        pred_facing_score = max(0.0, 1.0 - abs(facing_diff) / math.pi)
+        pred_facing_fish = abs(facing_diff) < 0.5
+
+        # Closing speed: predator velocity projected onto pred→fish axis
+        pred_speed = getattr(env, 'pred_speed_current', 0.0)
+        pred_vx = pred_speed * math.cos(env.pred_heading)
+        pred_vy = pred_speed * math.sin(env.pred_heading)
+        ux = dx / dist
+        uy = dy / dist
+        closing_speed = -(pred_vx * ux + pred_vy * uy)
+
+        # Subtract fish retreat speed
+        fish_retreat = env.fish_speed * max(0.0, math.cos(
+            env.fish_heading - math.atan2(-dy, -dx)))
+        net_closing = closing_speed - fish_retreat
+
+        # TTC
+        if net_closing > 0.1:
+            ttc = dist / net_closing
+        else:
+            ttc = 999.0
+
+        # Panic level: ramps up when predator faces fish AND TTC is short
+        panic_level = 0.0
+        if pred_facing_fish and ttc < 40:
+            panic_level = pred_facing_score * max(0.0, 1.0 - ttc / 40.0)
+        elif ttc < 20:
+            panic_level = 0.5 * max(0.0, 1.0 - ttc / 20.0)
+        panic_level = min(1.0, panic_level)
+
+        return {
+            "pred_facing_score": pred_facing_score,
+            "pred_facing_fish": pred_facing_fish,
+            "ttc": ttc,
+            "closing_speed": net_closing,
+            "panic_level": panic_level,
+            "cover_target": None,
+        }
 
     def _evaluate_food_prospects(self, env, fish_pos, world):
         """Active inference food prospection: evaluate cost-benefit per food.
@@ -454,6 +859,10 @@ class BrainAgent:
             cls_probs[2] = min(1.0, cls_probs[2] + alarm_boost)
             cls_probs /= cls_probs.sum() + 1e-8
 
+        # 4d. Extract retinal features for active inference (Phase 1)
+        if self.use_active_inference:
+            self._retinal_features = self._extract_retinal_features(out)
+
         # 5. Free energy
         F_visual = self.model.compute_free_energy()
 
@@ -470,10 +879,22 @@ class BrainAgent:
         self._eaten_buffer = 0  # consumed
 
         # 7b. Allostatic interoception (Step 18)
-        energy = getattr(env, "fish_energy", 100.0)
         prev_speed = self.last_diagnostics.get("speed", 0.5)
-        pred_dist_px = math.sqrt(
-            (env.fish_x - env.pred_x) ** 2 + (env.fish_y - env.pred_y) ** 2)
+        if self.use_active_inference:
+            # Interoceptive energy model: predict from motor efference, observe noisily
+            self.interoceptive.predict(prev_speed, self._eaten_buffer)
+            self.interoceptive.observe(getattr(env, "fish_energy", 100.0))
+            energy = self.interoceptive.get_energy()
+            # Predator distance from retinal proxy (no env access)
+            rf = self._retinal_features
+            pred_dist_px = max(1.0,
+                               (1.0 - min(1.0, rf["enemy_px_total"] / 50.0))
+                               * 300.0)
+        else:
+            energy = getattr(env, "fish_energy", 100.0)
+            pred_dist_px = math.sqrt(
+                (env.fish_x - env.pred_x) ** 2
+                + (env.fish_y - env.pred_y) ** 2)
         allo_state = None
         if self.allostasis is not None:
             p_colleague = cls_probs[3] if len(cls_probs) > 3 else 0.0
@@ -482,12 +903,24 @@ class BrainAgent:
             self.dopa_sys.beta = self.allostasis.modulate_dopamine_gain(
                 self.dopa_sys.beta)
 
-        # 7b2. Amygdala fear response — threat arousal from retinal + proximity
+        # 7b2. Threat assessment — predator gaze, TTC, panic
+        if self.use_active_inference:
+            # Infer threat from retinal features + VAE decoded threat
+            vae_threat = None
+            if self.vae_world is not None and self._prev_z is not None:
+                vae_threat = self.vae_world.encode_threat(self._prev_z)
+            threat = self._infer_threat_from_belief(
+                self._retinal_features, vae_threat)
+        else:
+            threat = self._compute_threat_assessment(env)
+
+        # 7b3. Amygdala fear response — threat arousal from retinal + proximity + gaze
         threat_arousal = 0.0
         if self.amygdala is not None:
             stress_val = allo_state["stress"] if allo_state else 0.0
             threat_arousal = self.amygdala.step(
-                self._enemy_pixels_total, pred_dist_px, stress_val)
+                self._enemy_pixels_total, pred_dist_px, stress_val,
+                pred_facing_score=threat["pred_facing_score"])
             # Boost classifier p_enemy by threat arousal
             if threat_arousal > 0.05:
                 cls_probs[2] = min(1.0, cls_probs[2] + 0.3 * threat_arousal)
@@ -517,22 +950,47 @@ class BrainAgent:
         # 8.5 VAE world model: encode, train, plan (Step 16b)
         if self.vae_world is not None:
             # Build 13-dim multi-modal state context for belief state
-            _energy = getattr(env, "fish_energy", 100.0)
-            state_ctx = np.array([
-                fish_pos[0] / 200.0,           # proprioceptive: x [-1, 1]
-                fish_pos[1] / 150.0,           # proprioceptive: y [-1, 1]
-                world_heading / np.pi,          # proprioceptive: heading [-1, 1]
-                _energy / 100.0,                # interoceptive: energy [0, 1]
-                dopa,                           # neuromodulatory: dopamine [0, 1]
-                np.clip(rpe, -1, 1),            # neuromodulatory: RPE [-1, 1]
-                pi_OT,                          # precision: optic tectum [0, 1]
-                pi_PC,                          # precision: pred coding [0, 1]
-                cls_probs[1],                   # exteroceptive: p_food
-                cls_probs[2],                   # exteroceptive: p_enemy
-                cls_probs[4],                   # exteroceptive: p_environ
-                cms,                            # cognitive: cross-modal surprise
-                np.clip(F_visual, 0, 2) / 2,    # cognitive: visual free energy [0,1]
-            ], dtype=np.float32)
+            if self.use_active_inference:
+                # Phase 7: Use inferred state (path integration + interoceptive)
+                pi_pos = (self.place_cells._pi_pos
+                          if hasattr(self, 'place_cells')
+                          else np.array([400.0, 300.0]))
+                pi_heading = (self.place_cells._pi_heading
+                              if hasattr(self, 'place_cells')
+                              else world_heading)
+                _energy_ctx = self.interoceptive.get_energy()
+                state_ctx = np.array([
+                    pi_pos[0] / 400.0,              # proprioceptive: x (PI)
+                    pi_pos[1] / 300.0,              # proprioceptive: y (PI)
+                    pi_heading / np.pi,              # proprioceptive: heading (PI)
+                    _energy_ctx / 100.0,             # interoceptive: energy (belief)
+                    dopa,
+                    np.clip(rpe, -1, 1),
+                    pi_OT,
+                    pi_PC,
+                    cls_probs[1],
+                    cls_probs[2],
+                    cls_probs[4],
+                    cms,
+                    np.clip(F_visual, 0, 2) / 2,
+                ], dtype=np.float32)
+            else:
+                _energy = getattr(env, "fish_energy", 100.0)
+                state_ctx = np.array([
+                    fish_pos[0] / 200.0,
+                    fish_pos[1] / 150.0,
+                    world_heading / np.pi,
+                    _energy / 100.0,
+                    dopa,
+                    np.clip(rpe, -1, 1),
+                    pi_OT,
+                    pi_PC,
+                    cls_probs[1],
+                    cls_probs[2],
+                    cls_probs[4],
+                    cms,
+                    np.clip(F_visual, 0, 2) / 2,
+                ], dtype=np.float32)
 
             # Extend state_ctx with allostasis (13 → 16 dims)
             if self.allostasis is not None:
@@ -542,6 +1000,11 @@ class BrainAgent:
 
             z_np, z_mu = self.vae_world.encode(out["oF"], state_ctx)
             self.vae_world.train_step(out["oF"], state_ctx)
+
+            # Train threat decoder (active inference: self-supervised from retina)
+            if self.use_active_inference and self._retinal_features:
+                self.vae_world.update_threat_decoder(
+                    z_np, self._retinal_features)
 
             if self._prev_z is not None and self._prev_action_ctx is not None:
                 self.vae_world.update_transition(
@@ -563,11 +1026,34 @@ class BrainAgent:
 
         # 8.6 Place cell world model (Step 17)
         if hasattr(self, 'place_cells'):
-            gym_pos = np.array([env.fish_x, env.fish_y], dtype=np.float32)
             prev_turn = self.last_diagnostics.get("turn_rate", 0.0)
             prev_spd = self.last_diagnostics.get("speed", 0.5)
-            self.place_cells.path_integrate(prev_turn, prev_spd)
-            self.place_cells.correct_path_integration(gym_pos)
+            if self.use_active_inference:
+                # Initialize PI heading from first observation (legitimate:
+                # derived from retinal input, not env state)
+                if self._step_count == 1:
+                    self.place_cells._pi_heading = -world_heading  # gym convention
+                # Calibrate PI to match env kinematics:
+                #   env heading: turn_rate * 0.15 rad/step
+                #   PI heading: turn_rate * gain (0.8) → scale by 0.15/0.8
+                #   env position: 2.0 * speed_mod px/step
+                #   PI position: speed * 5.0 * gain (4.0) → scale by 2.0/4.0
+                cal_turn = prev_turn * (0.15 / 0.8)
+                cal_spd = prev_spd * (2.0 / 4.0)
+                self.place_cells.path_integrate(cal_turn, cal_spd)
+                # Boundary-based position correction (no env access)
+                corrected = self._estimate_position_from_retina(
+                    self._retinal_features,
+                    self.place_cells._pi_pos,
+                    self.place_cells._pi_heading)
+                self.place_cells.correct_path_integration(
+                    corrected, weight=0.15)
+                gym_pos = self.place_cells._pi_pos.copy()
+            else:
+                self.place_cells.path_integrate(prev_turn, prev_spd)
+                gym_pos = np.array(
+                    [env.fish_x, env.fish_y], dtype=np.float32)
+                self.place_cells.correct_path_integration(gym_pos)
             if (self.place_cells._step_count > 0
                     and self.place_cells._step_count
                     % self.place_cells.replay_interval == 0):
@@ -611,11 +1097,14 @@ class BrainAgent:
         # 9. Goal policy selection
         _hunger = self.allostasis.hunger if self.allostasis else 0.0
         _hunger_err = self.allostasis.hunger_error if self.allostasis else 0.0
+        _energy_ratio = energy / getattr(env, 'energy_max', 100.0)
         choice, self.goal_vec, posterior, confidence, efe_vec = \
             self.goal_policy.step(
                 cls_probs, pi_OT, pi_PC, dopa, rpe, cms, F_visual,
                 self.wm.get_mean(),
-                hunger=_hunger, hunger_error=_hunger_err)
+                hunger=_hunger, hunger_error=_hunger_err,
+                pred_facing_score=threat["pred_facing_score"],
+                ttc=threat["ttc"], energy_ratio=_energy_ratio)
 
         # 10. Habit shortcut
         if self.use_habit:
@@ -645,15 +1134,21 @@ class BrainAgent:
 
         # 11. Goal-conditioned behavior
         approach_gain, speed_mod_brain, explore_mod, turn_strategy = \
-            goal_to_behavior(effective_goal, cls_probs, posterior, confidence)
+            goal_to_behavior(effective_goal, cls_probs, posterior, confidence,
+                             pred_facing_score=threat["pred_facing_score"])
 
         # 11b. Shoaling integration (Step 20: social behavior)
         _shoal_diag = {}
         if effective_goal == GOAL_SOCIAL:
             colleagues = getattr(env, 'colleagues', [])
+            if self.use_active_inference and hasattr(self, 'place_cells'):
+                _sx = self.place_cells._pi_pos[0]
+                _sy = self.place_cells._pi_pos[1]
+                _sh = self.place_cells._pi_heading
+            else:
+                _sx, _sy, _sh = env.fish_x, env.fish_y, env.fish_heading
             shoal_turn, shoal_speed, _shoal_diag = self.shoaling.step(
-                env.fish_x, env.fish_y, env.fish_heading, colleagues)
-            # Blend shoaling turn into approach_gain direction
+                _sx, _sy, _sh, colleagues)
             approach_gain += shoal_turn * 0.5
             speed_mod_brain *= shoal_speed
 
@@ -697,13 +1192,12 @@ class BrainAgent:
 
         if effective_goal == GOAL_FORAGE:
             # Compute olfactory heading cue toward best food prospect.
-            # Uses angle_diff * 2 for sharper turn response (saturates at
-            # ±1 so there's no overshoot).
-            # Compute olfactory angle diff in gym coords.
-            # SIGN: brain_turn is negated to produce gym turn_rate
-            # (y-up→y-down), so the olfactory cue must also be negated
-            # to steer correctly in the gym coordinate system.
-            if food_prospects:
+            if self.use_active_inference:
+                # Use retinal food lateral bias as olfactory proxy
+                rf = self._retinal_features
+                _scaled_diff = np.clip(
+                    -rf["food_lateral_bias"] * 2.0, -1.0, 1.0)
+            elif food_prospects:
                 fx, fy = food_prospects[0]["gym_pos"]
                 food_angle = math.atan2(fy - env.fish_y,
                                         fx - env.fish_x)
@@ -712,7 +1206,6 @@ class BrainAgent:
                     math.sin(angle_diff), math.cos(angle_diff))
                 _scaled_diff = np.clip(-angle_diff * 2.0, -1.0, 1.0)
             else:
-                angle_diff = 0.0
                 _scaled_diff = 0.0
 
             if food_px_total >= 3:
@@ -755,6 +1248,70 @@ class BrainAgent:
                     raw_turn += 0.4 * obs_frac
                 else:
                     raw_turn -= 0.4 * obs_frac
+
+        # 12e. Cover-seeking during FLEE — steer toward the far side of
+        #      a rock that shields from the predator (only when TTC allows
+        #      deliberation and predator is looking at us).
+        _cover_turn = 0.0
+        if (effective_goal == GOAL_FLEE
+                and 15 < threat["ttc"] < 120
+                and threat["pred_facing_score"] > 0.3):
+            best_score = 999.0
+            best_target = None
+            if self.use_active_inference:
+                # Use path-integrated position + lateral threat as bearing
+                rf = self._retinal_features
+                _pi_pos = (self.place_cells._pi_pos
+                           if hasattr(self, 'place_cells')
+                           else np.array([env.fish_x, env.fish_y]))
+                _pi_heading = (self.place_cells._pi_heading
+                               if hasattr(self, 'place_cells')
+                               else env.fish_heading)
+                fish_cx, fish_cy = _pi_pos[0], _pi_pos[1]
+                fish_hd = _pi_heading
+                # Infer predator bearing from threat lateral signal
+                pred_bearing = fish_hd + threat.get("lateral", 0.0) * math.pi / 2
+            else:
+                fish_cx, fish_cy = env.fish_x, env.fish_y
+                fish_hd = env.fish_heading
+                pred_bearing = math.atan2(env.pred_y - fish_cy,
+                                          env.pred_x - fish_cx)
+            for rock in getattr(env, 'rock_formations', []):
+                rcx, rcy = rock["cx"], rock["cy"]
+                rdx = rcx - fish_cx
+                rdy = rcy - fish_cy
+                rock_dist = math.sqrt(rdx * rdx + rdy * rdy) + 1e-8
+                if rock_dist > 180 or rock_dist < rock["base_r"] + 5:
+                    continue
+                rock_angle = math.atan2(rdy, rdx)
+                angle_to_pred = pred_bearing - rock_angle
+                angle_to_pred = math.atan2(math.sin(angle_to_pred),
+                                           math.cos(angle_to_pred))
+                if abs(angle_to_pred) < math.pi / 4:
+                    continue
+                perp = abs(math.sin(angle_to_pred))
+                score = rock_dist / 180.0 - 0.5 * perp
+                if score < best_score:
+                    best_score = score
+                    if self.use_active_inference:
+                        # Far side = opposite inferred predator direction
+                        opp_x = -math.cos(pred_bearing) * rock["base_r"]
+                        opp_y = -math.sin(pred_bearing) * rock["base_r"]
+                        far_x = rcx + opp_x
+                        far_y = rcy + opp_y
+                    else:
+                        far_x = rcx - (env.pred_x - rcx) / (rock_dist + 1e-8) * rock["base_r"]
+                        far_y = rcy - (env.pred_y - rcy) / (rock_dist + 1e-8) * rock["base_r"]
+                    best_target = (far_x, far_y)
+
+            if best_target is not None:
+                cover_angle = math.atan2(best_target[1] - fish_cy,
+                                         best_target[0] - fish_cx)
+                cover_diff = cover_angle - fish_hd
+                cover_diff = math.atan2(math.sin(cover_diff),
+                                        math.cos(cover_diff))
+                _cover_turn = -np.clip(cover_diff * 1.5, -0.6, 0.6)
+                threat["cover_target"] = best_target
 
         # 13. Smoothed turn
         turn = self.smoother.step(raw_turn * approach_gain)
@@ -871,30 +1428,39 @@ class BrainAgent:
 
         # 18. Compute gym action
         # Negate turn: brain computes in world coords (y-up), gym uses y-down
-        brain_turn = turn + 0.03 * bg_gate + 0.02 * eye_pos + _olfactory_turn
+        brain_turn = (turn + 0.03 * bg_gate + 0.02 * eye_pos
+                      + _olfactory_turn + _cover_turn)
 
         # Boundary avoidance: steer toward center when near walls
         margin = 80
         wall_urgency = 0.0
-        if env.fish_x < margin:
-            wall_urgency = max(wall_urgency, (margin - env.fish_x) / margin)
-        if env.fish_x > env.arena_w - margin:
+        if self.use_active_inference:
+            _wx = (self.place_cells._pi_pos[0]
+                   if hasattr(self, 'place_cells') else env.fish_x)
+            _wy = (self.place_cells._pi_pos[1]
+                   if hasattr(self, 'place_cells') else env.fish_y)
+            _wh = (self.place_cells._pi_heading
+                   if hasattr(self, 'place_cells') else env.fish_heading)
+        else:
+            _wx, _wy, _wh = env.fish_x, env.fish_y, env.fish_heading
+        if _wx < margin:
+            wall_urgency = max(wall_urgency, (margin - _wx) / margin)
+        if _wx > env.arena_w - margin:
             wall_urgency = max(wall_urgency,
-                               (env.fish_x - (env.arena_w - margin)) / margin)
-        if env.fish_y < margin:
-            wall_urgency = max(wall_urgency, (margin - env.fish_y) / margin)
-        if env.fish_y > env.arena_h - margin:
+                               (_wx - (env.arena_w - margin)) / margin)
+        if _wy < margin:
+            wall_urgency = max(wall_urgency, (margin - _wy) / margin)
+        if _wy > env.arena_h - margin:
             wall_urgency = max(wall_urgency,
-                               (env.fish_y - (env.arena_h - margin)) / margin)
+                               (_wy - (env.arena_h - margin)) / margin)
 
         wall_turn = 0.0
         if wall_urgency > 0.01:
-            center_dx = env.arena_w * 0.5 - env.fish_x
-            center_dy = env.arena_h * 0.5 - env.fish_y
+            center_dx = env.arena_w * 0.5 - _wx
+            center_dy = env.arena_h * 0.5 - _wy
             angle_to_center = math.atan2(center_dy, center_dx)
-            angle_diff = angle_to_center - env.fish_heading
+            angle_diff = angle_to_center - _wh
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
-            # Strong push: up to 0.8 at wall, overriding brain turn
             wall_turn = wall_urgency * 0.8 * np.sign(angle_diff)
 
         # Blend: brain turn weight decreases near walls
@@ -910,14 +1476,29 @@ class BrainAgent:
             speed = min(1.3, speed * 1.5)
             self._flee_burst_steps -= 1
 
-        # Reduce speed when low energy
-        energy = getattr(env, "fish_energy", 100.0)
-        if energy < 20:
-            speed *= 0.5 + 0.5 * (energy / 20.0)
+        # Reduce speed when low energy (use inferred energy in AI mode)
+        if self.use_active_inference:
+            _energy_speed = self.interoceptive.get_energy()
+        else:
+            _energy_speed = getattr(env, "fish_energy", 100.0)
+        if _energy_speed < 20:
+            speed *= 0.5 + 0.5 * (_energy_speed / 20.0)
 
-        # Fatigue speed cap (Step 18)
+        # Panic sprint override: adrenaline restores speed during threat
+        panic_level = threat["panic_level"]
+        if panic_level > 0.1:
+            speed = max(speed, 0.8 * panic_level + speed * (1 - panic_level))
+            self._flee_burst_steps = max(
+                self._flee_burst_steps, int(8 * panic_level))
+
+        # Fatigue speed cap (Step 18) — partially overridden during panic
         if self.allostasis is not None:
-            speed = min(speed, self.allostasis.get_speed_cap())
+            base_cap = self.allostasis.get_speed_cap()
+            if panic_level > 0.3:
+                cap = base_cap + (1.0 - base_cap) * 0.5 * panic_level
+            else:
+                cap = base_cap
+            speed = min(speed, cap)
 
         # Sleep modulation: near-zero speed + fatigue recovery boost (Step 23)
         if sleep_state is not None and sleep_state["is_sleeping"]:
@@ -931,7 +1512,8 @@ class BrainAgent:
 
         # Signal flee state to env for energy cost multiplier
         env.set_flee_active(
-            effective_goal == GOAL_FLEE or self._flee_burst_steps > 0)
+            effective_goal == GOAL_FLEE or self._flee_burst_steps > 0,
+            panic_intensity=panic_level)
 
         action = np.array([turn_rate, speed], dtype=np.float32)
 
@@ -978,6 +1560,7 @@ class BrainAgent:
                 self._habituation_L, self._habituation_R]))),
             "experience": experience,
             "explore_bonus": explore_bonus,
+            "threat": threat,
         }
 
         # VAE diagnostics (Step 16)
@@ -999,6 +1582,16 @@ class BrainAgent:
             self.last_diagnostics["amygdala"] = \
                 self.amygdala.get_diagnostics()
 
+        # Active inference diagnostics
+        if self.use_active_inference:
+            ai_diag = {"retinal_features": self._retinal_features}
+            if self.interoceptive is not None:
+                ai_diag["energy_belief"] = self.interoceptive.get_energy()
+                ai_diag["energy_pred_error"] = self.interoceptive.prediction_error
+            if hasattr(self, 'place_cells'):
+                ai_diag["pi_pos"] = self.place_cells._pi_pos.copy().tolist()
+            self.last_diagnostics["active_inference"] = ai_diag
+
         # Shoaling diagnostics (Step 20)
         if _shoal_diag:
             self.last_diagnostics["shoaling"] = _shoal_diag
@@ -1007,6 +1600,27 @@ class BrainAgent:
         if self.sleep_regulator is not None:
             self.last_diagnostics["sleep"] = \
                 self.sleep_regulator.get_diagnostics()
+
+        # Inference validation: compare inferred vs ground truth
+        if (self.use_active_inference
+                and os.environ.get("VZEBRA_VALIDATE_INFERENCE")):
+            true_energy = getattr(env, "fish_energy", 100.0)
+            true_x, true_y = env.fish_x, env.fish_y
+            true_dist = math.sqrt(
+                (true_x - env.pred_x) ** 2 + (true_y - env.pred_y) ** 2)
+            inferred_energy = (self.interoceptive.get_energy()
+                               if self.interoceptive else true_energy)
+            pi_pos = (self.place_cells._pi_pos
+                      if hasattr(self, 'place_cells')
+                      else np.array([true_x, true_y]))
+            pos_err = math.sqrt(
+                (pi_pos[0] - true_x) ** 2 + (pi_pos[1] - true_y) ** 2)
+            self.last_diagnostics["inference_validation"] = {
+                "energy_error": abs(inferred_energy - true_energy),
+                "position_error": pos_err,
+                "true_pred_dist": true_dist,
+                "inferred_pred_dist_px": pred_dist_px,
+            }
 
         # Pass diagnostics to env for monitoring panel
         env.set_brain_diagnostics(self.last_diagnostics)
@@ -1057,25 +1671,37 @@ class BrainAgent:
 
         # VAE memory update (Step 16)
         if self.vae_world is not None and self._prev_z is not None and env is not None:
-            pred_dist = 150.0  # default safe distance
-            fish_x, fish_y = info.get("fish_pos", (0, 0))
-            pred_x = getattr(env, "pred_x", fish_x)
-            pred_y = getattr(env, "pred_y", fish_y)
-            dx = fish_x - pred_x
-            dy = fish_y - pred_y
-            pred_dist = math.sqrt(dx * dx + dy * dy)
+            if self.use_active_inference:
+                # Phase 6: risk from retinal proximity (no env access)
+                rf = self._retinal_features
+                retinal_prox = min(1.0, rf.get("enemy_px_total", 0) / 50.0)
+                pred_dist = max(1.0, (1.0 - retinal_prox) * 300.0)
+            else:
+                pred_dist = 150.0
+                fish_x, fish_y = info.get("fish_pos", (0, 0))
+                pred_x = getattr(env, "pred_x", fish_x)
+                pred_y = getattr(env, "pred_y", fish_y)
+                dx = fish_x - pred_x
+                dy = fish_y - pred_y
+                pred_dist = math.sqrt(dx * dx + dy * dy)
             self.vae_world.update_memory(self._prev_z, eaten, pred_dist)
 
         # Place cell memory update (Step 17)
         if hasattr(self, 'place_cells') and env is not None:
-            fish_x, fish_y = info.get("fish_pos", (0, 0))
-            gym_pos = np.array([fish_x, fish_y], dtype=np.float32)
-            pred_x = getattr(env, "pred_x", fish_x)
-            pred_y = getattr(env, "pred_y", fish_y)
-            dx = fish_x - pred_x
-            dy = fish_y - pred_y
-            pred_dist = math.sqrt(dx * dx + dy * dy)
-            risk_signal = max(0.0, 1.0 - pred_dist / 150.0)
+            if self.use_active_inference:
+                # Phase 6: use path-integrated position + retinal risk
+                gym_pos = self.place_cells._pi_pos.copy()
+                rf = self._retinal_features
+                risk_signal = min(1.0, rf.get("enemy_px_total", 0) / 50.0)
+            else:
+                fish_x, fish_y = info.get("fish_pos", (0, 0))
+                gym_pos = np.array([fish_x, fish_y], dtype=np.float32)
+                pred_x = getattr(env, "pred_x", fish_x)
+                pred_y = getattr(env, "pred_y", fish_y)
+                dx = fish_x - pred_x
+                dy = fish_y - pred_y
+                pred_dist = math.sqrt(dx * dx + dy * dy)
+                risk_signal = max(0.0, 1.0 - pred_dist / 150.0)
             self.place_cells.update(gym_pos, float(eaten), risk_signal)
 
         # Save reward/done for next act() call which pushes the transition
@@ -1118,6 +1744,12 @@ class BrainAgent:
         self._habituation_L = np.zeros(400, dtype=np.float32)
         self._habituation_R = np.zeros(400, dtype=np.float32)
         self.last_diagnostics = {}
+        if self.interoceptive is not None:
+            self.interoceptive.reset()
+        if self.use_active_inference:
+            self._prev_enemy_px_total = 0.0
+            self._prev_enemy_intensity_mean = 0.0
+            self._retinal_features = {}
         if self.critic is not None:
             self.critic.reset_episode()
         if self.adapter is not None:
