@@ -834,10 +834,14 @@ class BrainAgent:
         # 2. Effective heading with eye position
         effective_heading = world_heading + self.ot.eye_pos * 0.25
 
-        # 3. Forward pass through SNN (with depth shading)
+        # 3. Forward pass through SNN (with depth shading + attention)
+        goal_t = torch.tensor(
+            self.goal_vec, dtype=torch.float32,
+            device=self.device).unsqueeze(0)  # [1, 4]
         with torch.no_grad():
             out = self.model.forward(fish_pos, effective_heading, world,
-                                     depth_shading=True)
+                                     depth_shading=True,
+                                     goal_probs=goal_t)
 
         # Store SNN output for neural activity visualization
         self._last_snn_out = out
@@ -1467,20 +1471,20 @@ class BrainAgent:
         # Pass food prospects to env for target highlight rendering
         env._food_prospects = food_prospects
 
-        # 17. Precision update (freeze gamma during sleep — Step 23)
-        oF = out["oF"]
+        # 17. Precision update — driven by prediction error (predictive coding)
         _precision_frozen = (sleep_state is not None
                              and sleep_state["is_sleeping"]
                              and sleep_state["precision_freeze"])
-        if self.prev_oF is not None and not _precision_frozen:
-            error_OT = oF - self.prev_oF
-            self.model.prec_OT.update_precision(error_OT)
-            self.model.prec_PC.update_precision(
-                torch.tensor([[F_visual]], device=self.device))
+        if not _precision_frozen:
+            pe_OT = self.model.OT_F.pred_error
+            if pe_OT is not None:
+                self.model.prec_OT.update_precision(pe_OT)
+            pe_PC = self.model.PC_per.pred_error
+            if pe_PC is not None:
+                self.model.prec_PC.update_precision(pe_PC)
             with torch.no_grad():
                 self.model.prec_OT.gamma.data += 0.008 * (dopa - 0.5)
                 self.model.prec_PC.gamma.data += 0.008 * (dopa - 0.5)
-        self.prev_oF = oF.clone()
 
         # 18. Compute gym action
         # Negate turn: brain computes in world coords (y-up), gym uses y-down
@@ -1617,6 +1621,12 @@ class BrainAgent:
             "experience": experience,
             "explore_bonus": explore_bonus,
             "threat": threat,
+            # Predictive coding diagnostics
+            "pe_OTF": out.get("pe_OTF", 0.0),
+            "pe_PT": out.get("pe_PT", 0.0),
+            "pe_PC_per": out.get("pe_PC_per", 0.0),
+            "pe_PC_int": out.get("pe_PC_int", 0.0),
+            "att_signals": out.get("att_signals", None),
         }
 
         # VAE diagnostics (Step 16)

@@ -62,7 +62,7 @@ class NeuralMonitor:
     """
 
     WIDTH = 500
-    HEIGHT = 780
+    HEIGHT = 880
     BG_COLOR = (15, 15, 25)
     LABEL_COLOR = (200, 200, 200)
     GRID_COLOR = (40, 40, 55)
@@ -441,8 +441,46 @@ class NeuralMonitor:
             by = y4 + i * (bh + 3)
             self._bar(260, by, bw2, bh, float(val), mx, color, name)
 
-        # ── Row 6: Hebbian Learning + Escape Stats (y: 580-680) ──
-        y6 = 580
+        # ── Row 5b: Predictive Coding (y: 575-660) ──
+        y5b = 575
+        self._label("PREDICTIVE CODING", 6, y5b - 12, font=self.font_med)
+
+        # Per-layer prediction error bars
+        pe_names = ["PE OT_F", "PE PT", "PE PCper", "PE PCint"]
+        pe_keys = ["pe_OTF", "pe_PT", "pe_PC_per", "pe_PC_int"]
+        pe_color = (255, 120, 60)
+        for i, (name, key) in enumerate(zip(pe_names, pe_keys)):
+            val = diag.get(key, 0.0)
+            self._bar(6, y5b + i * 18, 160, 14, val, 0.5, pe_color, name)
+
+        # Attention state (8 neurons, 2 per goal)
+        att = diag.get("att_signals", None)
+        if att is not None:
+            import numpy as _np
+            if hasattr(att, 'cpu'):
+                att_np = att.cpu().numpy().flatten()[:8]
+            else:
+                att_np = _np.array(att).flatten()[:8]
+            goal_colors = [(46, 204, 113), (231, 76, 60),
+                           (52, 152, 219), (26, 188, 156)]
+            goal_labels = ["F", "L", "E", "S"]
+            att_x0 = 200
+            self._label("ATTENTION", att_x0, y5b - 12, font=self.font_med)
+            bar_w = 60
+            for g in range(4):
+                v0 = abs(float(att_np[g * 2]))
+                v1 = abs(float(att_np[g * 2 + 1]))
+                avg = (v0 + v1) / 2.0
+                bx = att_x0 + g * (bar_w + 8)
+                self._bar(bx, y5b, bar_w, 14, avg, 0.1,
+                          goal_colors[g], goal_labels[g])
+            # Total prediction error
+            total_pe = sum(diag.get(k, 0.0) for k in pe_keys)
+            self._label(f"PE total: {total_pe:.3f}",
+                        att_x0, y5b + 24, color=(255, 180, 100))
+
+        # ── Row 6: Hebbian Learning + Escape Stats (y: 680-760) ──
+        y6 = 680
         self._label("HEBBIAN LEARNING", 6, y6 - 12, font=self.font_med)
 
         dw_norm = diag.get("hebb_dw_norm", 0.0)
@@ -478,7 +516,7 @@ class NeuralMonitor:
                         color=(bc, 50, 50), font=self.font_med)
 
         # Frame counter
-        self._label(f"frame {self._frame}", W - 80, self.HEIGHT - 14,
+        self._label(f"frame {self._frame}", W - 80, self.HEIGHT - 16,
                     color=(80, 80, 100))
 
     def _draw_retina_entities(self, ret_full, hm_x, hm_y, hm_sz):
