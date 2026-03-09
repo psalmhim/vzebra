@@ -58,10 +58,10 @@ def saccadic_motor_readout(model, fish_pos, heading, world, n_steps=3):
     # Restore state
     model.OT_L.v = saved_state["OT_L"]
     model.OT_R.v = saved_state["OT_R"]
-    model.OT_F.v = saved_state["OT_F"]
-    model.PT_L.v = saved_state["PT_L"]
-    model.PC_per.v = saved_state["PC_per"]
-    model.PC_int.v = saved_state["PC_int"]
+    model.OT_F.v_s = saved_state["OT_F"]
+    model.PT_L.v_s = saved_state["PT_L"]
+    model.PC_per.v_s = saved_state["PC_per"]
+    model.PC_int.v_s = saved_state["PC_int"]
     return motor_turn
 
 
@@ -89,11 +89,11 @@ class HebbianPlasticity:
                 pre = model._last_fused
                 post = model._last_oF
                 dW = lr * (pre.t() @ post)
-                model.OT_F.W.data += dW
-                model.OT_F.W.data *= self.decay
+                model.OT_F.W_FF.data += dW
+                model.OT_F.W_FF.data *= self.decay
 
             # Motor output head: PC_int → motor
-            intent = model.PC_int.v
+            intent = model.PC_int.v_s
             motor_out = model.mot(intent)
             dW_mot = lr * (intent.t() @ motor_out.sigmoid())
             model.mot.weight.data += dW_mot.t()
