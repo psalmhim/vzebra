@@ -18,18 +18,21 @@ from zebra_v60.brain.basal_ganglia_v60 import BasalGanglia_v60
 from zebra_v60.brain.optic_tectum_v60 import OpticTectum_v60
 from zebra_v60.brain.thalamus_v60 import ThalamusRelay_v60
 from zebra_v60.brain.goal_policy_v60 import (
-    GoalPolicy_v60, goal_to_behavior,
+    GoalPolicy_v60, SpikingGoalSelector, goal_to_behavior,
     GOAL_FORAGE, GOAL_FLEE, GOAL_EXPLORE, GOAL_SOCIAL,
 )
 from zebra_v60.brain.shoaling_v60 import ShoalingModule
-from zebra_v60.brain.working_memory_v60 import WorkingMemory_v60
+from zebra_v60.brain.working_memory_v60 import WorkingMemory_v60, SpikingWorkingMemory
 from zebra_v60.brain.habit_network_v60 import HabitNetwork_v60
-from zebra_v60.brain.rl_critic_v60 import RLCritic_v60, EFEWeightAdapter
+from zebra_v60.brain.rl_critic_v60 import (
+    RLCritic_v60, EFEWeightAdapter, EFELambdaAdapter)
+from zebra_v60.brain.efe_engine_v60 import PreferredOutcomes, EFEEngine
 from zebra_v60.brain.vae_world_model_v60 import VAEWorldModel
 from zebra_v60.brain.place_cell_v60 import PlaceCellNetwork
 from zebra_v60.brain.allostasis_v60 import AllostaticRegulator
 from zebra_v60.brain.amygdala_v60 import Amygdala
 from zebra_v60.brain.sleep_wake_v60 import SleepWakeRegulator
+from zebra_v60.brain.hebbian_v60 import HebbianPlasticity
 from zebra_v60.brain.device_util import get_device
 from zebra_v60.world.world_env import WorldEnv
 from zebra_v60.tests.step1_vision_pursuit import TurnSmoother
@@ -205,10 +208,11 @@ class BrainAgent:
         self.bg = BasalGanglia_v60(mode="exploratory")
         self.ot = OpticTectum_v60()
         self.thal = ThalamusRelay_v60()
-        self.goal_policy = GoalPolicy_v60(
-            n_goals=4, beta=2.0, persist_steps=8,
+        self.goal_policy = SpikingGoalSelector(
+            n_goals=4, beta=2.0, device=str(self.device),
             weight_adapter=self.adapter)
-        self.wm = WorkingMemory_v60(n_goals=4, buffer_len=20)
+        self.wm = SpikingWorkingMemory(
+            n_goals=4, buffer_len=20, device=str(self.device))
         self.habit = HabitNetwork_v60()
         self.smoother = TurnSmoother(alpha=0.35)
 
@@ -223,6 +227,7 @@ class BrainAgent:
         self._prev_reward = 0.0
         self._prev_done = False
         self._flee_burst_steps = 0
+        self._prev_threat_arousal = 0.0
         self._saccade_active = False
         self._saccade_flash = 0
         self._enemy_pixels_total = 0
@@ -260,6 +265,9 @@ class BrainAgent:
         else:
             self.sleep_regulator = None
 
+        # Hebbian plasticity (RPE-gated online learning)
+        self.hebbian = HebbianPlasticity(eta=0.0003, decay=0.9999)
+
         # Active inference mode (all state inferred through generative models)
         self.use_active_inference = use_active_inference
         if use_active_inference:
@@ -285,6 +293,18 @@ class BrainAgent:
             self.vae_world = None
         else:
             self.vae_world = None
+
+        # Proper EFE engine (Step 25): active inference + VAE required
+        if use_active_inference and self.vae_world is not None:
+            self.preferred_outcomes = PreferredOutcomes()
+            self.efe_engine = EFEEngine(
+                self.vae_world, self.preferred_outcomes,
+                horizon=5, gamma=0.9)
+            self.lambda_adapter = EFELambdaAdapter()
+        else:
+            self.preferred_outcomes = None
+            self.efe_engine = None
+            self.lambda_adapter = None
 
         # Diagnostics (populated each step)
         self.last_diagnostics = {}
@@ -1014,8 +1034,25 @@ class BrainAgent:
                 self.last_diagnostics.get("turn_rate", 0.0),
                 self.last_diagnostics.get("speed", 0.5)],
                 dtype=np.float32)
-            G_plan = self.vae_world.plan(z_np, last_act, dopa, cls_probs)
-            self.goal_policy.set_plan_bonus(G_plan)
+
+            # Step 25: proper EFE engine replaces ad-hoc planning + allo bias
+            if self.efe_engine is not None:
+                _energy_bel = (self.interoceptive.get_energy()
+                               if self.interoceptive else energy)
+                _lambdas = (self.lambda_adapter.get_lambdas()
+                            if self.lambda_adapter else None)
+                efe_result = self.efe_engine.compute_efe(
+                    z_np, self._retinal_features, allo_state,
+                    _energy_bel, lambdas=_lambdas)
+                self.goal_policy.set_efe_engine_result(efe_result)
+                # Cache components for lambda adapter update
+                if self.lambda_adapter is not None:
+                    self.lambda_adapter.cache_components(
+                        self.efe_engine._last_components)
+            else:
+                G_plan = self.vae_world.plan(z_np, last_act, dopa, cls_probs)
+                self.goal_policy.set_plan_bonus(G_plan)
+
             self._prev_z = z_np
 
         # 8.5b Enhanced VAE training during sleep (Step 23)
@@ -1069,9 +1106,11 @@ class BrainAgent:
                 self.place_cells.replay_extended()
 
         # 8.7 Allostatic bias on top of planning bonus (Step 18)
+        #     Skip when EFE engine is active — allostasis modulates precision
+        #     inside the EFE computation instead of additive bias (Step 25).
         #     Note: read current bonus from VAE/place cell (set in 8.5/8.6).
         #     If no world model is active, start from zero to avoid accumulation.
-        if self.allostasis is not None:
+        if self.allostasis is not None and self.efe_engine is None:
             allo_bias = self.allostasis.get_goal_prior_bias()
             if self.vae_world is not None or hasattr(self, 'place_cells'):
                 current_bonus = self.goal_policy._external_efe_bonus.copy()
@@ -1092,6 +1131,20 @@ class BrainAgent:
         current_bonus[GOAL_EXPLORE] += explore_bonus
         # Mirror partial bonus to FLEE so exploration doesn't suppress survival
         current_bonus[GOAL_FLEE] += explore_bonus * 0.5
+
+        # 8.9 Energy-driven goal bias
+        #     < 90%: prefer foraging (hungry fish seeks food)
+        #     ≥ 90%: prefer socializing (well-fed fish joins conspecifics)
+        _energy_r = energy / getattr(env, 'energy_max', 100.0)
+        if _energy_r < 0.90:
+            forage_drive = 0.5 * (0.90 - _energy_r) / 0.90  # 0→0.5 ramp
+            current_bonus[GOAL_FORAGE] -= forage_drive       # lower EFE = preferred
+            current_bonus[GOAL_SOCIAL] += forage_drive * 0.3  # suppress social
+        else:
+            social_drive = 0.6 * (_energy_r - 0.90) / 0.10  # 0→0.6 ramp
+            current_bonus[GOAL_SOCIAL] -= social_drive       # lower EFE = preferred
+            current_bonus[GOAL_FORAGE] += social_drive * 0.3  # suppress foraging
+
         self.goal_policy.set_plan_bonus(current_bonus)
 
         # 9. Goal policy selection
@@ -1169,8 +1222,11 @@ class BrainAgent:
         food_px_R = float(np.sum(np.abs(typeR_t - 1.0) < 0.1))
         food_px_total = food_px_L + food_px_R
         obs_total = obs_px_L + obs_px_R
-        if obs_total > 5:
-            obs_repulsion = -0.6 * (obs_px_R - obs_px_L) / obs_total
+        if obs_total > 3:
+            obs_repulsion = -1.2 * (obs_px_R - obs_px_L) / (obs_total + 1e-8)
+            # Strong center-push when obstacle fills both eyes
+            if obs_total > 15:
+                obs_repulsion *= 1.5
             raw_turn = raw_turn + obs_repulsion
 
         # 12c. Food-directed navigation (FORAGE mode)
@@ -1582,6 +1638,14 @@ class BrainAgent:
             self.last_diagnostics["amygdala"] = \
                 self.amygdala.get_diagnostics()
 
+        # EFE engine diagnostics (Step 25)
+        if self.efe_engine is not None:
+            self.last_diagnostics["efe_engine"] = \
+                self.efe_engine.get_diagnostics()
+            if self.lambda_adapter is not None:
+                self.last_diagnostics["efe_lambdas"] = \
+                    self.lambda_adapter.get_lambdas().tolist()
+
         # Active inference diagnostics
         if self.use_active_inference:
             ai_diag = {"retinal_features": self._retinal_features}
@@ -1641,6 +1705,9 @@ class BrainAgent:
             if td_err is not None and self.adapter is not None:
                 self.adapter.update(
                     td_err, posterior, confidence, shortcut_active)
+            # Step 25: update lambda adapter with TD error
+            if td_err is not None and self.lambda_adapter is not None:
+                self.lambda_adapter.update(td_err, effective_goal)
 
             self.last_diagnostics["critic_value"] = critic_value
             self.last_diagnostics["td_error"] = td_err if td_err is not None else 0.0
@@ -1648,6 +1715,30 @@ class BrainAgent:
             self.last_diagnostics["critic_update_count"] = self.critic.get_stats()["update_count"]
 
             self._prev_wm_state = wm_state
+
+        # Online learning for spiking modules (RPE-gated Hebbian/RL)
+        _rpe = self.dopa_sys.rpe
+        _dopa = self.dopa_sys.dopa
+        _reward = self._prev_reward
+        if hasattr(self.wm, 'learn'):
+            self.wm.learn(_rpe, _dopa)
+        if hasattr(self.goal_policy, 'learn'):
+            self.goal_policy.learn(_rpe, _dopa, _reward)
+
+        # Hebbian plasticity: RPE-gated weight updates for SNN pathway
+        # Boost learning 3x during high-threat for escape learning
+        _threat_boost = 1.0
+        if self.amygdala is not None:
+            _ta = self.amygdala.threat_arousal
+            if _ta > 0.3:
+                _threat_boost = 1.0 + 2.0 * _ta  # up to 3x
+        self.hebbian.update(self.model, _rpe, _dopa, threat_boost=_threat_boost)
+        hebb_stats = self.hebbian.get_stats()
+        self.last_diagnostics["hebb_updates"] = hebb_stats["hebb_updates"]
+        self.last_diagnostics["hebb_dw_norm"] = hebb_stats["hebb_dw_norm"]
+        self.last_diagnostics["escape_successes"] = hebb_stats["escape_successes"]
+        self.last_diagnostics["escape_failures"] = hebb_stats["escape_failures"]
+        self.last_diagnostics["threat_boost"] = _threat_boost
 
         return action
 
@@ -1704,6 +1795,23 @@ class BrainAgent:
                 risk_signal = max(0.0, 1.0 - pred_dist / 150.0)
             self.place_cells.update(gym_pos, float(eaten), risk_signal)
 
+            # Fear conditioning: amygdala → place cell risk
+            if self.amygdala is not None:
+                ta = self.amygdala.threat_arousal
+                if ta > 0.1:
+                    self.place_cells.update_fear(gym_pos, ta, alpha=0.3)
+                self.place_cells.check_fear_memory(ta)
+            self.place_cells.decay_risk(0.999)
+
+        # Escape learning: track success/failure transitions
+        if self.amygdala is not None:
+            current_arousal = self.amygdala.threat_arousal
+            if self._prev_threat_arousal > 0.5 and current_arousal < 0.1:
+                self.hebbian.record_escape_success()
+            self._prev_threat_arousal = current_arousal
+        if done and self._prev_threat_arousal > 0.3:
+            self.hebbian.record_escape_failure()
+
         # Save reward/done for next act() call which pushes the transition
         if self.critic is not None:
             self._prev_reward = reward
@@ -1754,6 +1862,12 @@ class BrainAgent:
             self.critic.reset_episode()
         if self.adapter is not None:
             self.adapter.reset_episode()
+        if self.efe_engine is not None:
+            self.efe_engine.reset()
+        if self.preferred_outcomes is not None:
+            self.preferred_outcomes.reset()
+        if self.lambda_adapter is not None:
+            self.lambda_adapter.reset_episode()
         if self.vae_world is not None:
             self.vae_world.reset_episode()
             self._prev_z = None
@@ -1774,7 +1888,7 @@ class BrainAgent:
             path: file path for the checkpoint (.pt)
         """
         checkpoint = {
-            "version": 1,
+            "version": 2,
             "timestamp": datetime.datetime.now().isoformat(),
             "snn": self.model.get_saveable_state(),
             "habit": self.habit.get_saveable_state(),
@@ -1785,8 +1899,15 @@ class BrainAgent:
             checkpoint["adapter"] = self.adapter.get_saveable_state()
         if self.vae_world is not None:
             checkpoint["vae_world"] = self.vae_world.get_saveable_state()
+        if self.lambda_adapter is not None:
+            checkpoint["lambda_adapter"] = self.lambda_adapter.get_saveable_state()
         if hasattr(self, 'place_cells'):
             checkpoint["place_cells"] = self.place_cells.get_saveable_state()
+        if hasattr(self.wm, 'get_saveable_state'):
+            checkpoint["spiking_wm"] = self.wm.get_saveable_state()
+        if hasattr(self.goal_policy, 'get_saveable_state'):
+            checkpoint["spiking_goal"] = self.goal_policy.get_saveable_state()
+        checkpoint["hebbian"] = self.hebbian.get_saveable_state()
 
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         torch.save(checkpoint, path)
@@ -1813,6 +1934,18 @@ class BrainAgent:
             self.adapter.load_saveable_state(checkpoint["adapter"])
         if "vae_world" in checkpoint and self.vae_world is not None:
             self.vae_world.load_saveable_state(checkpoint["vae_world"])
+        if ("lambda_adapter" in checkpoint
+                and self.lambda_adapter is not None):
+            self.lambda_adapter.load_saveable_state(
+                checkpoint["lambda_adapter"])
         if "place_cells" in checkpoint and hasattr(self, 'place_cells'):
             self.place_cells.load_saveable_state(checkpoint["place_cells"])
+        if ("spiking_wm" in checkpoint
+                and hasattr(self.wm, 'load_saveable_state')):
+            self.wm.load_saveable_state(checkpoint["spiking_wm"])
+        if ("spiking_goal" in checkpoint
+                and hasattr(self.goal_policy, 'load_saveable_state')):
+            self.goal_policy.load_saveable_state(checkpoint["spiking_goal"])
+        if "hebbian" in checkpoint:
+            self.hebbian.load_saveable_state(checkpoint["hebbian"])
         print("[checkpoint] Loaded successfully")

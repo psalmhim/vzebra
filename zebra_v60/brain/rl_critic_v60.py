@@ -335,3 +335,100 @@ class EFEWeightAdapter:
         self._phi_forage = None
         self._phi_flee = None
         self._phi_explore = None
+
+
+# ---------------------------------------------------------------------------
+# EFELambdaAdapter — learnable drive weights for proper EFE (Step 25)
+# ---------------------------------------------------------------------------
+
+class EFELambdaAdapter:
+    """Learns perturbations on EFE drive weights λ_E, λ_S, λ_F, λ_I.
+
+    The four weights control the relative importance of:
+      λ_E: energy economy risk
+      λ_S: predator safety risk
+      λ_F: fatigue risk
+      λ_I: epistemic / exploration value
+
+    Update rule (REINFORCE-style):
+      dλ_k -= η · td_error · G_k / (|G_k| + ε)
+    Positive TD error → reinforce drives that predicted reward.
+
+    All lambdas are clamped to [0.2, 5.0] to prevent collapse.
+    """
+
+    def __init__(self, eta=0.02, lambda_reg=0.001, warmup_steps=200):
+        self.eta = eta
+        self.lambda_reg = lambda_reg
+        self._warmup_steps = warmup_steps
+        self._step_count = 0
+
+        # Drive weights (initialized to 1.0 = equal weighting)
+        self.lambdas = np.ones(4, dtype=np.float64)  # [E, S, F, I]
+        # Cached EFE components from last compute_efe call
+        self._last_G_components = None
+
+    def get_lambdas(self):
+        """Return current lambda weights as float32 array."""
+        return self.lambdas.astype(np.float32)
+
+    def cache_components(self, efe_components):
+        """Cache per-drive EFE components for the update rule.
+
+        Args:
+            efe_components: dict from EFEEngine — per-goal component sums.
+                Expected keys per goal: risk_e, risk_s, risk_f, epistemic.
+        """
+        self._last_G_components = efe_components
+
+    def update(self, td_error, active_goal):
+        """Update lambda weights using TD error.
+
+        Args:
+            td_error: float — TD error from critic
+            active_goal: int — currently selected goal index
+        """
+        self._step_count += 1
+        if self._step_count < self._warmup_steps:
+            return
+        if self._last_G_components is None:
+            return
+        if active_goal not in self._last_G_components:
+            return
+
+        comp = self._last_G_components[active_goal]
+        G_vec = np.array([
+            comp["risk_e"], comp["risk_s"], comp["risk_f"],
+            comp["epistemic"]
+        ], dtype=np.float64)
+
+        # Normalize direction
+        G_norm = np.abs(G_vec) + 1e-8
+
+        # REINFORCE: positive TD error → lower EFE for active goal
+        # Lower EFE = reduce risk weights, increase epistemic weight
+        self.lambdas -= self.eta * td_error * G_vec / G_norm
+
+        # L2 regularization toward 1.0
+        self.lambdas -= self.lambda_reg * (self.lambdas - 1.0)
+
+        # Clamp
+        self.lambdas = np.clip(self.lambdas, 0.2, 5.0)
+
+    def get_saveable_state(self):
+        return {
+            "lambdas": self.lambdas.copy(),
+            "step_count": self._step_count,
+        }
+
+    def load_saveable_state(self, state):
+        self.lambdas = state["lambdas"].copy()
+        self._step_count = state["step_count"]
+
+    def reset_episode(self):
+        self._last_G_components = None
+
+    def reset(self):
+        self._step_count = 0
+        self.lambdas = np.ones(4, dtype=np.float64)
+        self._last_G_components = None

@@ -80,9 +80,11 @@ class ZebrafishPreyPredatorEnv(gym.Env):
     }
 
     def __init__(self, render_mode=None, arena_size=800, n_food=15,
-                 max_steps=2000, n_colleagues=3, side_panels=False):
+                 max_steps=2000, n_colleagues=3, side_panels=False,
+                 use_predator_brain=False):
         super().__init__()
 
+        self.use_predator_brain = use_predator_brain
         self.arena_w = arena_size
         self.arena_h = int(arena_size * 0.75)  # 4:3 aspect ratio
         self.n_food_init = n_food
@@ -128,7 +130,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self.energy_max = 100.0
         self.energy_drain_base = 0.05
         self.energy_drain_speed = 0.03
-        self.energy_food_gain = 15.0
+        self.energy_food_gain = 25.0
 
         # Obstacle parameters (Feature B)
         self.n_obstacles_min = 3
@@ -163,8 +165,18 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self._brain_diag = {}
         self._food_prospects = []
         self._flee_active = False
+        self._panic_intensity = 0.0
+        self.pred_speed_current = 0.0
+
+        # Predator brain agent (lazy init after reset)
+        self._predator_agent = None
 
         self.reset()
+
+        if self.use_predator_brain:
+            from zebra_v60.gym_env.predator_brain_agent import PredatorBrainAgent
+            self._predator_agent = PredatorBrainAgent(device="auto")
+            self._predator_agent.reset()
 
     @property
     def render_width(self):
@@ -185,8 +197,8 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self.fish_heading = self.np_random.uniform(-math.pi, math.pi)
         self.fish_speed = 0.0
 
-        # Energy (Feature A)
-        self.fish_energy = self.energy_max
+        # Energy (Feature A) — start at 91% so fish forages before socializing
+        self.fish_energy = self.energy_max * 0.91
 
         # Predator state (start visible but gives foraging room: 200–300px)
         for _ in range(20):
@@ -212,6 +224,9 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # Preserve curriculum-set gating; default = all states allowed
         if not hasattr(self, '_pred_allowed_states'):
             self._pred_allowed_states = ["PATROL", "STALK", "HUNT", "AMBUSH"]
+        # Reset predator brain if active
+        if self._predator_agent is not None:
+            self._predator_agent.reset()
 
         # Rock formations — large mountain-like obstacles
         self.rock_formations = []
@@ -265,6 +280,8 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self._brain_diag = {}
         self._food_prospects = []
         self._flee_active = False
+        self._panic_intensity = 0.0
+        self.pred_speed_current = 0.0
 
         obs = self._get_obs()
         info = self._get_info()
@@ -302,14 +319,15 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         """Spawn 2-3 large mountain-like rock formations in different quadrants."""
         n_rocks = int(self.np_random.integers(2, 4))  # 2 or 3
 
-        # Quadrant centers (avoid edges)
-        quadrants = [
-            (self.arena_w * 0.25, self.arena_h * 0.30),
-            (self.arena_w * 0.72, self.arena_h * 0.28),
-            (self.arena_w * 0.35, self.arena_h * 0.70),
-            (self.arena_w * 0.75, self.arena_h * 0.72),
+        # First rock always left-upper (1/3 height), rest shuffled
+        left_upper = (self.arena_w * 0.22, self.arena_h * 0.22)
+        others = [
+            (self.arena_w * 0.72, self.arena_h * 0.28),   # right upper
+            (self.arena_w * 0.35, self.arena_h * 0.70),   # left lower
+            (self.arena_w * 0.75, self.arena_h * 0.72),   # right lower
         ]
-        self.np_random.shuffle(quadrants)
+        self.np_random.shuffle(others)
+        quadrants = [left_upper] + list(others)
 
         fish_cx, fish_cy = self.arena_w * 0.5, self.arena_h * 0.5
 
@@ -601,41 +619,128 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         }
 
     def _update_colleagues(self):
-        """Move colleagues: gentle random walk + cohesion + wall avoidance."""
+        """Move colleagues: Reynolds flocking + gaze-aware predator escape.
+
+        Each colleague applies separation, cohesion, alignment with all
+        neighbors (other colleagues + main fish), plus predator evasion
+        with per-individual jitter.
+        """
         if not self.colleagues:
             return
 
-        # Compute group centroid
-        cx_sum = sum(c["x"] for c in self.colleagues) + self.fish_x
-        cy_sum = sum(c["y"] for c in self.colleagues) + self.fish_y
-        n = len(self.colleagues) + 1
-        centroid_x = cx_sum / n
-        centroid_y = cy_sum / n
+        # Flocking parameters
+        sep_radius = 25.0
+        coh_radius = 100.0
+        align_radius = 60.0
+        sep_w = 1.0
+        coh_w = 0.5
+        align_w = 0.3
 
-        for c in self.colleagues:
-            # Cohesion toward group centroid
-            dx = centroid_x - c["x"]
-            dy = centroid_y - c["y"]
-            dist_to_centroid = math.sqrt(dx * dx + dy * dy) + 1e-8
-            coh_angle = math.atan2(dy, dx)
-            angle_diff = coh_angle - c["heading"]
-            angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
-            # Stronger cohesion when far from group
-            coh_strength = min(0.06, dist_to_centroid * 0.0003)
-            c["heading"] += coh_strength * angle_diff
+        pred_speed = getattr(self, 'pred_speed_current', 0.0)
 
-            # Random walk noise
-            c["heading"] += float(self.np_random.uniform(-0.08, 0.08))
+        for i, c in enumerate(self.colleagues):
+            jitter = c["speed"] - 1.0  # ≈ [-0.2, +0.2]
 
-            # Flee from predator if close
+            # --- Reynolds flocking ---
+            sep_x, sep_y = 0.0, 0.0
+            coh_x, coh_y = 0.0, 0.0
+            align_sin, align_cos = 0.0, 0.0
+            n_sep, n_coh, n_align = 0, 0, 0
+
+            # Check neighbors: other colleagues + main fish
+            neighbors = [(self.fish_x, self.fish_y, self.fish_heading)]
+            for j, other in enumerate(self.colleagues):
+                if i != j:
+                    neighbors.append((other["x"], other["y"], other["heading"]))
+
+            for nx, ny, nh in neighbors:
+                dx = nx - c["x"]
+                dy = ny - c["y"]
+                dist = math.sqrt(dx * dx + dy * dy) + 1e-8
+                if dist < sep_radius:
+                    sep_x -= dx / (dist * dist)
+                    sep_y -= dy / (dist * dist)
+                    n_sep += 1
+                if dist < coh_radius:
+                    coh_x += dx
+                    coh_y += dy
+                    n_coh += 1
+                if dist < align_radius:
+                    align_sin += math.sin(nh)
+                    align_cos += math.cos(nh)
+                    n_align += 1
+
+            desired_dx, desired_dy = 0.0, 0.0
+            if n_sep > 0:
+                desired_dx += sep_w * sep_x
+                desired_dy += sep_w * sep_y
+            if n_coh > 0:
+                desired_dx += coh_w * (coh_x / n_coh)
+                desired_dy += coh_w * (coh_y / n_coh)
+            if n_align > 0:
+                avg_h = math.atan2(align_sin / n_align, align_cos / n_align)
+                align_diff = avg_h - c["heading"]
+                align_diff = math.atan2(
+                    math.sin(align_diff), math.cos(align_diff))
+                desired_dx += align_w * math.cos(c["heading"] + align_diff)
+                desired_dy += align_w * math.sin(c["heading"] + align_diff)
+
+            if abs(desired_dx) + abs(desired_dy) > 1e-6:
+                desired_angle = math.atan2(desired_dy, desired_dx)
+                angle_diff = desired_angle - c["heading"]
+                angle_diff = math.atan2(
+                    math.sin(angle_diff), math.cos(angle_diff))
+                c["heading"] += max(-0.15, min(0.15, angle_diff))
+
+            # Random walk noise (reduced for cohesive schooling)
+            c["heading"] += float(self.np_random.uniform(-0.04, 0.04))
+
+            # --- Gaze-aware predator escape ---
             pdx = c["x"] - self.pred_x
             pdy = c["y"] - self.pred_y
             pred_dist = math.sqrt(pdx * pdx + pdy * pdy) + 1e-8
-            if pred_dist < 100:
+
+            angle_pred_to_c = math.atan2(pdy, pdx)
+            facing_diff = self.pred_heading - angle_pred_to_c
+            facing_diff = math.atan2(
+                math.sin(facing_diff), math.cos(facing_diff))
+            c_facing_score = max(0.0, 1.0 - abs(facing_diff) / math.pi)
+
+            pred_vx = pred_speed * math.cos(self.pred_heading)
+            pred_vy = pred_speed * math.sin(self.pred_heading)
+            ux = pdx / pred_dist
+            uy = pdy / pred_dist
+            closing_speed = -(pred_vx * ux + pred_vy * uy)
+            c_ttc = (pred_dist / closing_speed) if closing_speed > 0.1 else 999.0
+
+            detect_range = 100.0 + jitter * 100.0
+
+            c_panic = 0.0
+            facing_thresh = 0.5 + jitter * 0.15
+            if abs(facing_diff) < facing_thresh and c_ttc < (40 + jitter * 10):
+                c_panic = c_facing_score * max(0.0, 1.0 - c_ttc / 40.0)
+            elif c_ttc < 20:
+                c_panic = 0.5 * max(0.0, 1.0 - c_ttc / 20.0)
+            c_panic = min(1.0, c_panic)
+
+            if pred_dist < detect_range:
                 flee_angle = math.atan2(pdy, pdx)
                 flee_diff = flee_angle - c["heading"]
-                flee_diff = math.atan2(math.sin(flee_diff), math.cos(flee_diff))
-                c["heading"] += 0.15 * flee_diff
+                flee_diff = math.atan2(
+                    math.sin(flee_diff), math.cos(flee_diff))
+                flee_gain = 0.15 + 0.15 * c_facing_score
+                c["heading"] += flee_gain * flee_diff
+
+            # Rock avoidance
+            for rock in getattr(self, 'rock_formations', []):
+                rdx = c["x"] - rock["cx"]
+                rdy = c["y"] - rock["cy"]
+                rdist = math.sqrt(rdx * rdx + rdy * rdy) + 1e-8
+                if rdist < rock["base_r"] * 1.3:
+                    away = math.atan2(rdy, rdx)
+                    diff = away - c["heading"]
+                    diff = math.atan2(math.sin(diff), math.cos(diff))
+                    c["heading"] += 0.2 * diff
 
             # Wall avoidance
             margin = 40
@@ -651,10 +756,12 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             c["heading"] = math.atan2(
                 math.sin(c["heading"]), math.cos(c["heading"]))
 
-            # Move
-            spd = c["speed"] * 1.2
-            c["x"] += spd * math.cos(c["heading"])
-            c["y"] += spd * math.sin(c["heading"])
+            # Move — panic sprint boosts speed
+            base_spd = c["speed"] * 1.2
+            if c_panic > 0.1:
+                base_spd = max(base_spd, base_spd * (1.0 + 0.5 * c_panic))
+            c["x"] += base_spd * math.cos(c["heading"])
+            c["y"] += base_spd * math.sin(c["heading"])
 
             # Clamp to arena
             c["x"] = float(np.clip(c["x"], 10, self.arena_w - 10))
@@ -676,9 +783,15 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         """Set brain diagnostics dict for monitoring panel rendering."""
         self._brain_diag = diag
 
-    def set_flee_active(self, active):
-        """Signal whether the fish is currently fleeing (higher energy cost)."""
+    def set_flee_active(self, active, panic_intensity=0.0):
+        """Signal whether the fish is currently fleeing (higher energy cost).
+
+        Args:
+            active: bool — fleeing state
+            panic_intensity: float [0, 1] — panic level scales energy drain
+        """
         self._flee_active = bool(active)
+        self._panic_intensity = float(np.clip(panic_intensity, 0.0, 1.0))
 
     def step(self, action):
         action = np.clip(action, self.action_space.low, self.action_space.high)
@@ -706,7 +819,10 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self._resolve_obstacle_collisions()
 
         # === Predator AI ===
-        self._update_predator()
+        if self._predator_agent is not None:
+            self._update_predator_brain()
+        else:
+            self._update_predator()
 
         # === Colleague movement (Step 20) ===
         self._update_colleagues()
@@ -735,8 +851,11 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             self.foods.append([fx, fy])
 
         # === Energy drain (Feature A) ===
-        # Flee multiplier: escape bursts cost 2.5x the speed-dependent drain
-        flee_mult = 2.5 if self._flee_active else 1.0
+        # Flee multiplier: escape bursts cost 2.5–3.5x (panic-scaled)
+        if self._flee_active:
+            flee_mult = 2.5 + 1.0 * self._panic_intensity
+        else:
+            flee_mult = 1.0
         self.fish_energy -= (self.energy_drain_base
                              + self.energy_drain_speed * speed_mod * flee_mult)
         self.fish_energy = max(0.0, self.fish_energy)
@@ -751,6 +870,30 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             self.alive = False
             self._death_timer = 60  # show splash for 60 frames
             self._death_pos = (self.fish_x, self.fish_y)
+            # Feed catch event to predator brain
+            if self._predator_agent is not None:
+                self._predator_agent.update_post_step(caught=True)
+
+        # === Predator catches colleagues ===
+        catch_r2 = (self.pred_catch_radius * 1.5) ** 2  # slightly larger radius
+        surviving = []
+        colleague_caught = False
+        for c in getattr(self, 'colleagues', []):
+            cdx = c["x"] - self.pred_x
+            cdy = c["y"] - self.pred_y
+            if cdx * cdx + cdy * cdy < catch_r2:
+                colleague_caught = True
+                # Predator eats colleague — satisfy hunger
+                self.pred_hunger = max(0.0, self.pred_hunger - 0.3)
+            else:
+                surviving.append(c)
+        if colleague_caught:
+            self.colleagues = surviving
+            if self._predator_agent is not None:
+                self._predator_agent.update_post_step(caught=True)
+            # Respawn colleague after a delay (instant for now)
+            while len(self.colleagues) < self.n_colleagues:
+                self.colleagues.append(self._spawn_colleague())
 
         # === Check starvation (Feature A) ===
         starved = self.fish_energy <= 0.0
@@ -799,7 +942,10 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         return obs, reward, terminated, truncated, info
 
     def _resolve_obstacle_collisions(self):
-        """Push fish out of rock formation AABBs (Feature B)."""
+        """Push fish out of rock formation AABBs (Feature B).
+
+        Strong push-out + heading deflection to prevent sticking.
+        """
         fish_r = self.fish_size * 0.5
         for rock in getattr(self, 'rock_formations', []):
             for aabb in rock["aabbs"]:
@@ -809,24 +955,25 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                 overlap_y = aabb["hh"] + fish_r - abs(dy)
 
                 if overlap_x > 0 and overlap_y > 0:
-                    # Push out along minimum penetration axis
+                    # Push out with generous margin to prevent re-entry
+                    push_margin = 4.0
                     if overlap_x < overlap_y:
                         push_dir = 1.0 if dx > 0 else -1.0
-                        self.fish_x += push_dir * (overlap_x + 1.0)
-                        # Slide: zero out x-velocity component
-                        vx = math.cos(self.fish_heading) * self.fish_speed
-                        vy = math.sin(self.fish_heading) * self.fish_speed
-                        if (vx > 0) != (dx > 0):
-                            vx = 0
-                        self.fish_heading = math.atan2(vy, vx + 1e-8)
+                        self.fish_x += push_dir * (overlap_x + push_margin)
                     else:
                         push_dir = 1.0 if dy > 0 else -1.0
-                        self.fish_y += push_dir * (overlap_y + 1.0)
-                        vx = math.cos(self.fish_heading) * self.fish_speed
-                        vy = math.sin(self.fish_heading) * self.fish_speed
-                        if (vy > 0) != (dy > 0):
-                            vy = 0
-                        self.fish_heading = math.atan2(vy + 1e-8, vx)
+                        self.fish_y += push_dir * (overlap_y + push_margin)
+
+                    # Deflect heading away from rock center
+                    away_angle = math.atan2(dy, dx)
+                    angle_diff = away_angle - self.fish_heading
+                    angle_diff = math.atan2(
+                        math.sin(angle_diff), math.cos(angle_diff))
+                    # Blend heading toward "away from rock" direction
+                    self.fish_heading += 0.4 * angle_diff
+                    self.fish_heading = math.atan2(
+                        math.sin(self.fish_heading),
+                        math.cos(self.fish_heading))
 
     def _find_food_cluster(self):
         """Find the densest food cluster center for ambush strategy."""
@@ -843,6 +990,84 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                 best_count = count
                 best_center = (fx, fy)
         return best_center if best_count >= 3 else None
+
+    def _update_predator_brain(self):
+        """Update predator using SNN brain agent instead of state machine."""
+        agent = self._predator_agent
+
+        # Hunger increases over time
+        self.pred_hunger = min(1.0, self.pred_hunger + 0.0003)
+
+        # Get brain action
+        turn_rate, speed_mod = agent.act(self)
+
+        # Apply action (slightly faster turning than fish for pursuit advantage)
+        pred_turn_max = 0.18
+        self.pred_heading += turn_rate * pred_turn_max
+        self.pred_heading = math.atan2(
+            math.sin(self.pred_heading), math.cos(self.pred_heading))
+
+        speed = self.pred_speed * speed_mod
+        self.pred_x += speed * math.cos(self.pred_heading)
+        self.pred_y += speed * math.sin(self.pred_heading)
+        self.pred_speed_current = speed
+
+        # Stamina dynamics: slow drain during sprint, faster recovery when slow
+        if speed_mod > 0.6:
+            self.pred_stamina = max(0.0, self.pred_stamina - 0.002)
+        else:
+            self.pred_stamina = min(1.0, self.pred_stamina + 0.006)
+
+        # Obstacle deflection (same as state machine predator)
+        pred_r = self.pred_size * 0.5
+        for obs in self.obstacles:
+            ddx = self.pred_x - obs["x"]
+            ddy = self.pred_y - obs["y"]
+            d = math.sqrt(ddx * ddx + ddy * ddy) + 1e-8
+            min_d = obs["r"] + pred_r
+            if d < min_d:
+                nx = ddx / d
+                ny = ddy / d
+                self.pred_x = obs["x"] + nx * (min_d + 1.0)
+                self.pred_y = obs["y"] + ny * (min_d + 1.0)
+                self.pred_heading = math.atan2(ny, nx)
+
+        # Wall bounce
+        margin = 20
+        if self.pred_x < margin:
+            self.pred_x = margin
+            self.pred_heading = math.pi - self.pred_heading
+        if self.pred_x > self.arena_w - margin:
+            self.pred_x = self.arena_w - margin
+            self.pred_heading = math.pi - self.pred_heading
+        if self.pred_y < margin:
+            self.pred_y = margin
+            self.pred_heading = -self.pred_heading
+        if self.pred_y > self.arena_h - margin:
+            self.pred_y = self.arena_h - margin
+            self.pred_heading = -self.pred_heading
+
+        # Map brain goal to state machine state name (for diagnostics/rendering)
+        from zebra_v60.gym_env.predator_brain_agent import GOAL_NAMES as PRED_GOAL_NAMES
+        diag = agent.last_diagnostics
+        goal_name = diag.get("goal_name", "PATROL")
+        self.pred_state = goal_name  # reuse pred_state for rendering
+
+        dx = self.fish_x - self.pred_x
+        dy = self.fish_y - self.pred_y
+        dist = math.sqrt(dx * dx + dy * dy)
+
+        self.pred_diag = {
+            "state": goal_name,
+            "prev_state": goal_name,
+            "hunger": self.pred_hunger,
+            "stamina": self.pred_stamina,
+            "dist_to_fish": dist,
+            "speed": speed,
+            "strategy": f"brain:{goal_name.lower()} conf={diag.get('confidence', 0):.2f}",
+            "timer": self._step_count if hasattr(self, '_step_count') else 0,
+            "ambush_target": None,
+        }
 
     def _update_predator(self):
         """Smart predator AI with state machine: PATROL, STALK, HUNT, AMBUSH."""
@@ -1003,6 +1228,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
 
         self.pred_x += speed * math.cos(self.pred_heading)
         self.pred_y += speed * math.sin(self.pred_heading)
+        self.pred_speed_current = speed
 
         # --- Obstacle deflection ---
         pred_r = self.pred_size * 0.5
@@ -1675,6 +1901,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             "STALK": (220, 180, 50),
             "HUNT": (255, 60, 60),
             "AMBUSH": (180, 100, 220),
+            "REST": (100, 200, 100),
         }
         sc = state_colors.get(state, (180, 180, 180))
         surface.blit(font.render(f"State: {state}", True, sc),

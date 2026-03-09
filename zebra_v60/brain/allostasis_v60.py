@@ -168,6 +168,25 @@ class AllostaticRegulator:
                         dtype=np.float32)
 
     # ------------------------------------------------------------------
+    # Preferred outcome params (Step 25 — for EFE engine)
+    # ------------------------------------------------------------------
+
+    def get_preferred_outcome_params(self):
+        """Return allostatic state for EFE preferred outcome modulation.
+
+        Returns:
+            dict with hunger, fatigue, stress, and their errors
+        """
+        return {
+            "hunger": self.hunger,
+            "fatigue": self.fatigue,
+            "stress": self.stress,
+            "hunger_error": self.hunger_error,
+            "fatigue_error": self.fatigue_error,
+            "stress_error": self.stress_error,
+        }
+
+    # ------------------------------------------------------------------
     # Neuromodulation
     # ------------------------------------------------------------------
 

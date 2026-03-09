@@ -5,7 +5,7 @@ import math
 
 from zebra_v60.world.world_env import (
     ENTITY_NONE, ENTITY_FOOD, ENTITY_ENEMY, ENTITY_COLLEAGUE,
-    ENTITY_BOUNDARY, ENTITY_OBSTACLE,
+    ENTITY_BOUNDARY, ENTITY_OBSTACLE, ENTITY_PREY,
 )
 
 # Type-encoding channel: maximally distinct values per entity for classification
@@ -16,6 +16,7 @@ ENTITY_TYPE_ENCODING = {
     ENTITY_COLLEAGUE: 0.25,
     ENTITY_BOUNDARY:  0.12,
     ENTITY_OBSTACLE:  0.75,
+    ENTITY_PREY:      0.38,
 }
 
 
@@ -47,7 +48,8 @@ def retinal_foveation(alpha, sigma=np.radians(12)):
 
 def sample_retina_binocular_v60(position, heading, world, device="cpu",
                                  eye_offset=np.radians(45),
-                                 depth_shading=False, depth_scale=80.0):
+                                 depth_shading=False, depth_scale=80.0,
+                                 max_dist=200):
     """
     v60 binocular retina sampling with 2-channel output:
       Channel 0 ([:400]): intensity (foveation-weighted brightness)
@@ -68,9 +70,11 @@ def sample_retina_binocular_v60(position, heading, world, device="cpu",
 
     if depth_shading:
         def ray_fn(w, p, a):
-            return cast_ray_with_depth(w, p, a, depth_scale=depth_scale)
+            return cast_ray_with_depth(w, p, a, max_dist=max_dist,
+                                       depth_scale=depth_scale)
     else:
-        ray_fn = cast_ray
+        def ray_fn(w, p, a):
+            return cast_ray(w, p, a, max_dist=max_dist)
 
     retL = torch.zeros(1, 800, device=device)
     retR = torch.zeros(1, 800, device=device)

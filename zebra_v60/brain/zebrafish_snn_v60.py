@@ -42,10 +42,10 @@ class ZebrafishSNN_v60(nn.Module):
         self.prec_OT = PrecisionUnit(self.OTF, device)
         self.prec_PC = PrecisionUnit(self.PC_PER, device)
 
-        # output heads
-        self.mot = nn.Linear(self.PC_INT, 200)
-        self.eye = nn.Linear(self.PC_INT, 100)
-        self.DA  = nn.Linear(self.PC_INT, 50)
+        # output heads — TwoComp for temporal smoothing (Level 1 SNN-up)
+        self.mot = TwoComp(self.PC_INT, 200, device)
+        self.eye = TwoComp(self.PC_INT, 100, device)
+        self.DA  = TwoComp(self.PC_INT, 50, device)
 
         # Classification head: branches from bilateral retinal type channels
         # Uses type-encoding channels (400 per eye = 800 total) which carry
@@ -68,11 +68,17 @@ class ZebrafishSNN_v60(nn.Module):
         self.PT_L.v = torch.zeros(1, self.PT, device=self.device)
         self.PC_per.v = torch.zeros(1, self.PC_PER, device=self.device)
         self.PC_int.v = torch.zeros(1, self.PC_INT, device=self.device)
+        # Output heads (Level 1 SNN-up)
+        self.mot.v = torch.zeros(1, 200, device=self.device)
+        self.eye.v = torch.zeros(1, 100, device=self.device)
+        self.DA.v = torch.zeros(1, 50, device=self.device)
 
-    def forward(self, pos, heading, world, depth_shading=False, depth_scale=80.0):
+    def forward(self, pos, heading, world, depth_shading=False, depth_scale=80.0,
+                max_dist=200):
         L, R = sample_retina_binocular_v60(
             pos, heading, world, device=self.device,
-            depth_shading=depth_shading, depth_scale=depth_scale)
+            depth_shading=depth_shading, depth_scale=depth_scale,
+            max_dist=max_dist)
         # OT left/right (now 800-dim input with type channel)
         oL = self.OT_L.step(L)
         oR = self.OT_R.step(R)
@@ -92,9 +98,9 @@ class ZebrafishSNN_v60(nn.Module):
 
         intent = self.PC_int.step(per)
 
-        m = self.mot(intent)
-        e = self.eye(intent)
-        d = self.DA(intent)
+        m = self.mot.step(intent)
+        e = self.eye.step(intent)
+        d = self.DA.step(intent)
 
         # Classification from bilateral retinal type channels (no gradient to SNN)
         # Type channels: L[:, 400:] and R[:, 400:]
@@ -156,18 +162,18 @@ class ZebrafishSNN_v60(nn.Module):
 
 @torch.no_grad()
 def enforce_motor_directionality(model):
-    W = model.mot.weight  # shape [200, 30]
+    # TwoComp.W shape is [n_in, n_out] = [30, 200] (transposed vs nn.Linear)
+    W = model.mot.W  # shape [30, 200]
     W[:] = 0.0
 
     left_size = model.PC_INT // 2
-    right_size = model.PC_INT - left_size
 
-    for mi in range(100):
-        for pi in range(left_size):
-            W[mi, pi] = 1.0
+    for pi in range(left_size):
+        for mi in range(100):
+            W[pi, mi] = 1.0
 
-    for mi in range(100, 200):
-        for pi in range(left_size, model.PC_INT):
-            W[mi, pi] = 1.0
+    for pi in range(left_size, model.PC_INT):
+        for mi in range(100, 200):
+            W[pi, mi] = 1.0
 
     print("[v60] Motor directional mapping applied.")
