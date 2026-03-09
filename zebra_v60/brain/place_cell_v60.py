@@ -57,6 +57,11 @@ class PlaceCellNetwork:
         # Step counter
         self._step_count = 0
 
+        # Fear conditioning state
+        self._fear_memory_count = 0
+        self._threat_counter = 0
+        self._fear_threshold_steps = 5
+
         # Diagnostics
         self._last_pi_error = 0.0
         self._last_G_plan = np.zeros(3, dtype=np.float32)
@@ -169,6 +174,45 @@ class PlaceCellNetwork:
             # Centroid drift toward observation
             self.centroids[idx] += self.drift_rate * (pos - self.centroids[idx])
             self.visit_count[idx] += 1.0
+
+    # ------------------------------------------------------------------
+    # Fear conditioning
+    # ------------------------------------------------------------------
+
+    def update_fear(self, pos, threat_arousal, alpha=0.3):
+        """Tag nearest place cell with elevated risk from amygdala threat.
+
+        Additive update so fear accumulates with repeated exposure.
+        """
+        if self.n_allocated == 0 or threat_arousal < 0.1:
+            return
+        pos = np.asarray(pos, dtype=np.float32)
+        active = self.centroids[:self.n_allocated]
+        dists = np.linalg.norm(active - pos[np.newaxis, :], axis=1)
+        best_idx = int(np.argmin(dists))
+        if dists[best_idx] < self.match_threshold * 2.0:
+            self.risk[best_idx] = min(
+                2.0, self.risk[best_idx] + alpha * threat_arousal)
+
+    def decay_risk(self, factor=0.999):
+        """Slowly decay all risk values (fear forgetting).
+
+        Factor 0.999 → half-life ~693 steps (~23s at 30fps).
+        """
+        if self.n_allocated > 0:
+            self.risk[:self.n_allocated] *= factor
+
+    def check_fear_memory(self, threat_arousal):
+        """Track sustained threat. Returns True when fear memory forms."""
+        if threat_arousal > 0.5:
+            self._threat_counter += 1
+        else:
+            self._threat_counter = max(0, self._threat_counter - 1)
+        if self._threat_counter >= self._fear_threshold_steps:
+            self._fear_memory_count += 1
+            self._threat_counter = 0
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Path integration
@@ -367,6 +411,9 @@ class PlaceCellNetwork:
             "step": self._step_count,
             "visit_mean": float(self.visit_count[:max(1, self.n_allocated)].mean()),
             "trajectory_len": len(self._trajectory),
+            "fear_memory_count": self._fear_memory_count,
+            "max_risk": float(self.risk[:max(1, self.n_allocated)].max()),
+            "mean_risk": float(self.risk[:max(1, self.n_allocated)].mean()),
         }
 
     def get_saveable_state(self):
@@ -379,6 +426,7 @@ class PlaceCellNetwork:
             "risk": self.risk[:n].copy(),
             "visit_count": self.visit_count[:n].copy(),
             "n_allocated": n,
+            "fear_memory_count": self._fear_memory_count,
         }
 
     def load_saveable_state(self, state):
@@ -395,15 +443,18 @@ class PlaceCellNetwork:
         self.risk[:n] = state["risk"]
         self.visit_count[:n] = state["visit_count"]
         self.n_allocated = n
+        self._fear_memory_count = state.get("fear_memory_count", 0)
 
     def reset_episode(self):
-        """Clear transient state but keep learned place fields."""
+        """Clear transient state but keep learned place fields and fear memories."""
         self._pi_pos = np.array([400.0, 300.0], dtype=np.float32)
         self._pi_heading = 0.0
         self._trajectory = []
         self._step_count = 0
         self._last_pi_error = 0.0
         self._last_G_plan = np.zeros(3, dtype=np.float32)
+        self._threat_counter = 0
+        # _fear_memory_count is preserved (lifetime counter)
 
     def reset(self):
         """Clear all state."""

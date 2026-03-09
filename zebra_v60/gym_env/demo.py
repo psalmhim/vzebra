@@ -195,7 +195,8 @@ def run_demo(use_heuristic=False, render=False, T=1000):
 
 
 def run_brain_demo(render=False, monitor=False, record=False, T=1000,
-                   autosave=False, load_checkpoint=None):
+                   autosave=False, load_checkpoint=None,
+                   predator_brain=False, sound=False):
     """Run the full brain agent with optional neural activity monitor.
 
     When --monitor is used, a single combined window is created:
@@ -223,15 +224,17 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
 
         env = ZebrafishPreyPredatorEnv(
             render_mode="rgb_array", n_food=15, max_steps=T,
-            side_panels=True)
+            side_panels=True, use_predator_brain=predator_brain)
         mon = NeuralMonitor()
         MON_W = mon.WIDTH  # 500
         RENDER_W = env.render_width
         RENDER_H = env.render_height
 
+        COMBINED_H = max(RENDER_H, mon.HEIGHT)
+
         pygame.init()
         combined_screen = pygame.display.set_mode(
-            (RENDER_W + MON_W, RENDER_H))
+            (RENDER_W + MON_W, COMBINED_H))
         pygame.display.set_caption(
             "Zebrafish Brain Agent + Neural Monitor")
         clock = pygame.time.Clock()
@@ -240,7 +243,8 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
         # Env-only window (standard human mode)
         env = ZebrafishPreyPredatorEnv(
             render_mode="human" if not record else "rgb_array",
-            n_food=15, max_steps=T, side_panels=True)
+            n_food=15, max_steps=T, side_panels=True,
+            use_predator_brain=predator_brain)
         RENDER_W = env.render_width
         RENDER_H = env.render_height
         if record:
@@ -255,11 +259,12 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
         from zebra_v60.viz.neural_monitor import NeuralMonitor
 
         env = ZebrafishPreyPredatorEnv(
-            render_mode=None, n_food=15, max_steps=T)
+            render_mode=None, n_food=15, max_steps=T,
+            use_predator_brain=predator_brain)
         mon = NeuralMonitor()
         MON_W = mon.WIDTH
         RENDER_W = MON_W
-        RENDER_H = env.render_height
+        RENDER_H = mon.HEIGHT
 
         pygame.init()
         combined_screen = pygame.display.set_mode(
@@ -270,7 +275,8 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
     else:
         # Headless
         env = ZebrafishPreyPredatorEnv(
-            render_mode=None, n_food=15, max_steps=T)
+            render_mode=None, n_food=15, max_steps=T,
+            use_predator_brain=predator_brain)
         RENDER_W = env.render_width
         RENDER_H = env.render_height
 
@@ -281,9 +287,18 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
     obs, info = env.reset(seed=42)
     agent.reset()
 
+    # Spike audio engine
+    spike_audio = None
+    if sound:
+        from zebra_v60.viz.spike_audio import SpikeAudioEngine
+        spike_audio = SpikeAudioEngine(master_volume=0.4)
+
     rec_msg = " [RECORDING]" if record else ""
+    pred_msg = " + predator brain" if predator_brain else ""
+    snd_msg = " + spike audio" if sound else ""
     print(f"Running brain agent for {T} steps"
-          f"{' + neural monitor' if monitor else ''}{rec_msg}...")
+          f"{' + neural monitor' if monitor else ''}"
+          f"{pred_msg}{snd_msg}{rec_msg}...")
 
     cumulative_reward = 0.0
     running = True
@@ -327,6 +342,10 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
                     mon_x = RENDER_W if render else 0
                     combined_screen.blit(mon.get_surface(), (mon_x, 0))
 
+                # Spike sonification
+                if spike_audio is not None and hasattr(agent, '_last_snn_out'):
+                    spike_audio.update(agent._last_snn_out)
+
                 pygame.display.flip()
 
                 # Capture frame for recording
@@ -343,6 +362,12 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
         elif render:
             # Standard human-mode rendering (env handles its own window)
             env.render()
+
+        # Spike audio (works with or without monitor/combined_screen)
+        if (spike_audio is not None
+                and combined_screen is None
+                and hasattr(agent, '_last_snn_out')):
+            spike_audio.update(agent._last_snn_out)
 
         if t % 100 == 0:
             vae = agent.last_diagnostics.get("vae", {})
@@ -406,13 +431,21 @@ if __name__ == "__main__":
                              "(zebra_v60/weights/brain_checkpoint.pt)")
     parser.add_argument("--load-checkpoint", type=str, default=None,
                         help="Load checkpoint before run")
+    parser.add_argument("--predator-brain", action="store_true",
+                        help="Use SNN brain agent for predator "
+                             "(instead of state machine)")
+    parser.add_argument("--sound", action="store_true",
+                        help="Enable spike sonification "
+                             "(different sounds per neuron group)")
     args = parser.parse_args()
 
     if args.brain:
         run_brain_demo(render=args.render, monitor=args.monitor,
                        record=args.record, T=args.steps,
                        autosave=args.autosave,
-                       load_checkpoint=args.load_checkpoint)
+                       load_checkpoint=args.load_checkpoint,
+                       predator_brain=args.predator_brain,
+                       sound=args.sound)
     else:
         run_demo(use_heuristic=args.heuristic, render=args.render,
                  T=args.steps)

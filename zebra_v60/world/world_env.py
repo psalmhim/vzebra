@@ -14,14 +14,16 @@ ENTITY_ENEMY = 2
 ENTITY_COLLEAGUE = 3
 ENTITY_BOUNDARY = 4
 ENTITY_OBSTACLE = 5
+ENTITY_PREY = 6
 
 # Visual signatures: (intensity, detection_radius)
 ENTITY_VISUAL = {
     ENTITY_FOOD:      (1.0,  15),   # bright, small prey
-    ENTITY_ENEMY:     (0.75, 35),   # dimmer, large predator (visible from far)
+    ENTITY_ENEMY:     (0.75, 45),   # dimmer, 1.5x larger body — visible from far
     ENTITY_COLLEAGUE: (0.50, 18),   # moderate, same-size fish
     ENTITY_BOUNDARY:  (0.30, None), # dull edge signal (detected by ray clipping)
     ENTITY_OBSTACLE:  (0.60, 10),   # rock visible within 10-unit margin around AABB
+    ENTITY_PREY:      (0.85, 28),   # bright, fish-sized prey (predator's target)
 }
 
 BACKGROUND_INTENSITY = 0.05
@@ -51,6 +53,7 @@ class WorldEnv:
         self.enemies = []
         self.colleagues = []
         self.obstacles = []   # list of dicts: {"x":..., "y":..., "hw":..., "hh":...}
+        self.prey = []        # prey targets (fish seen by predator)
 
         self.generate_food(n_food)
         self.generate_enemies(n_enemies)
@@ -95,6 +98,7 @@ class WorldEnv:
         food_r2 = ENTITY_VISUAL[ENTITY_FOOD][1] ** 2
         enemy_r2 = ENTITY_VISUAL[ENTITY_ENEMY][1] ** 2
         colleague_r2 = ENTITY_VISUAL[ENTITY_COLLEAGUE][1] ** 2
+        prey_r2 = ENTITY_VISUAL[ENTITY_PREY][1] ** 2
         _obs_margin = ENTITY_VISUAL[ENTITY_OBSTACLE][1]
 
         while t < max_dist:
@@ -109,6 +113,11 @@ class WorldEnv:
             for (fx, fy) in self.foods:
                 if (x - fx) ** 2 + (y - fy) ** 2 < food_r2:
                     return ENTITY_VISUAL[ENTITY_FOOD][0], ENTITY_FOOD
+
+            # Prey detection (fish seen by predator)
+            for (px, py) in self.prey:
+                if (x - px) ** 2 + (y - py) ** 2 < prey_r2:
+                    return ENTITY_VISUAL[ENTITY_PREY][0], ENTITY_PREY
 
             # Enemy detection
             for (ex, ey) in self.enemies:
@@ -145,6 +154,7 @@ class WorldEnv:
         food_r2 = ENTITY_VISUAL[ENTITY_FOOD][1] ** 2
         enemy_r2 = ENTITY_VISUAL[ENTITY_ENEMY][1] ** 2
         colleague_r2 = ENTITY_VISUAL[ENTITY_COLLEAGUE][1] ** 2
+        prey_r2 = ENTITY_VISUAL[ENTITY_PREY][1] ** 2
         _obs_margin = ENTITY_VISUAL[ENTITY_OBSTACLE][1]
 
         while t < max_dist:
@@ -159,6 +169,11 @@ class WorldEnv:
             for (fx, fy) in self.foods:
                 if (x - fx) ** 2 + (y - fy) ** 2 < food_r2:
                     return ENTITY_VISUAL[ENTITY_FOOD][0], ENTITY_FOOD, t
+
+            # Prey detection (fish seen by predator)
+            for (px, py) in self.prey:
+                if (x - px) ** 2 + (y - py) ** 2 < prey_r2:
+                    return ENTITY_VISUAL[ENTITY_PREY][0], ENTITY_PREY, t
 
             # Enemy detection
             for (ex, ey) in self.enemies:

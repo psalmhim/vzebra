@@ -31,13 +31,16 @@ class Amygdala:
 
         self.threat_arousal = 0.0
 
-    def step(self, enemy_pixels, pred_dist, stress):
+    def step(self, enemy_pixels, pred_dist, stress, pred_facing_score=0.0):
         """Update threat arousal from multi-modal threat evidence.
 
         Args:
             enemy_pixels: int — total enemy-type pixels on retina
             pred_dist: float — distance to predator in pixels
             stress: float — current allostatic stress [0, 1]
+            pred_facing_score: float [0, 1] — how directly the predator
+                faces the fish (0=away, 1=dead-on). Amplifies threat
+                when predator is nearby and looking at the fish.
 
         Returns:
             threat_arousal: float [0, 1]
@@ -48,8 +51,11 @@ class Amygdala:
         # Proximity boost (saturates at proximity_range)
         proximity = max(0.0, 1.0 - pred_dist / self.proximity_range)
 
+        # Gaze-direction threat: predator facing the fish from nearby
+        gaze_threat = pred_facing_score * proximity * 0.8
+
         # Take the strongest threat signal
-        raw = max(retinal_threat, 0.5 * proximity, stress)
+        raw = max(retinal_threat, 0.5 * proximity, stress, gaze_threat)
 
         # Leaky integration: rises fast, decays slower
         if raw > self.threat_arousal:

@@ -587,6 +587,48 @@ class VAEWorldModel:
         self._last_threat_loss = float(loss.item())
 
     # -------------------------------------------------------------------
+    # Trajectory rollout (Step 25 — used by EFEEngine)
+    # -------------------------------------------------------------------
+
+    def rollout_trajectory(self, z, action_contexts, H):
+        """Roll out transition model for H steps from starting z.
+
+        Args:
+            z: numpy [16] — starting latent state
+            action_contexts: list of H numpy arrays, each [act_dim]
+            H: int — horizon length
+
+        Returns:
+            list of H numpy [16] — predicted latent states z_1..z_H
+        """
+        z_t = torch.tensor(
+            z[np.newaxis], dtype=torch.float32, device=self.device)
+        trajectory = []
+        with torch.no_grad():
+            for step in range(H):
+                act = torch.tensor(
+                    action_contexts[step][np.newaxis],
+                    dtype=torch.float32, device=self.device)
+                z_t = self.transition(z_t, act)
+                trajectory.append(z_t[0].cpu().numpy().astype(np.float32))
+        return trajectory
+
+    def decode_uncertainty(self, z):
+        """Proxy for observation noise / decoder uncertainty at latent z.
+
+        Uses decoder output magnitude and variance as uncertainty signals.
+
+        Args:
+            z: numpy [16] — latent state
+
+        Returns:
+            float [0, 1] — uncertainty (high = unknown region)
+        """
+        z_t = torch.tensor(
+            z[np.newaxis], dtype=torch.float32, device=self.device)
+        return self._predict_recon_uncertainty(z_t)
+
+    # -------------------------------------------------------------------
     # Planning
     # -------------------------------------------------------------------
 
