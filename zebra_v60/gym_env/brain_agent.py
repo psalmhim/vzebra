@@ -1743,9 +1743,12 @@ class BrainAgent:
             if _ta > 0.3:
                 _threat_boost = 1.0 + 2.0 * _ta  # up to 3x
         self.hebbian.update(self.model, _rpe, _dopa, threat_boost=_threat_boost)
+        # PE-driven feedback learning (every step, independent of RPE)
+        self.hebbian.update_feedback(self.model)
         hebb_stats = self.hebbian.get_stats()
         self.last_diagnostics["hebb_updates"] = hebb_stats["hebb_updates"]
         self.last_diagnostics["hebb_dw_norm"] = hebb_stats["hebb_dw_norm"]
+        self.last_diagnostics["hebb_fb_dw_norm"] = hebb_stats["hebb_fb_dw_norm"]
         self.last_diagnostics["escape_successes"] = hebb_stats["escape_successes"]
         self.last_diagnostics["escape_failures"] = hebb_stats["escape_failures"]
         self.last_diagnostics["threat_boost"] = _threat_boost

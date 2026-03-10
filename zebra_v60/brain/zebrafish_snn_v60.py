@@ -58,7 +58,7 @@ class PredictiveTwoComp(nn.Module):
     """
 
     def __init__(self, n_in, n_out, n_fb=0, device="cpu",
-                 tau_s=0.8, tau_a=0.85, alpha_att=0.1):
+                 tau_s=0.8, tau_a=0.65, alpha_att=0.1):
         super().__init__()
         self.n_in = n_in
         self.n_out = n_out
@@ -72,9 +72,11 @@ class PredictiveTwoComp(nn.Module):
             0.01 * torch.randn(n_in, n_out, device=device))
 
         # Feedback weight (top-down from higher layer)
+        # 2x W_FF scale: feedback source has fewer neurons than feedforward,
+        # so W_FB must be larger to produce comparable apical drive
         if n_fb > 0:
             self.W_FB = nn.Parameter(
-                0.005 * torch.randn(n_fb, n_out, device=device))
+                0.02 * torch.randn(n_fb, n_out, device=device))
         else:
             self.W_FB = None
 
@@ -122,6 +124,8 @@ class PredictiveTwoComp(nn.Module):
                     + (1.0 - self.tau_s) * ff_drive
                     + apical_drive
                     + self.alpha_att * self.m_att)
+        # Prevent somatic runaway
+        self.v_s = torch.clamp(self.v_s, -10.0, 10.0)
 
         # Compute prediction error (apical prediction - somatic evidence)
         self.pred_error = self.v_a - self.v_s
