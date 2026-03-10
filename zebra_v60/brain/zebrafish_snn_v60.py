@@ -57,6 +57,8 @@ class PredictiveTwoComp(nn.Module):
     current higher-layer output, so feedback is effectively 1-step delayed.
     """
 
+    TARGET_RMS = 5.0  # homeostatic gain control target
+
     def __init__(self, n_in, n_out, n_fb=0, device="cpu",
                  tau_s=0.8, tau_a=0.65, alpha_att=0.1):
         super().__init__()
@@ -124,8 +126,12 @@ class PredictiveTwoComp(nn.Module):
                     + (1.0 - self.tau_s) * ff_drive
                     + apical_drive
                     + self.alpha_att * self.m_att)
-        # Prevent somatic runaway
-        self.v_s = torch.clamp(self.v_s, -10.0, 10.0)
+        # Divisive normalization (homeostatic gain control):
+        # prevents cascading activity growth up the hierarchy.
+        # Biologically: neurons maintain a target firing rate.
+        v_rms = (self.v_s ** 2).mean().sqrt()
+        if v_rms > self.TARGET_RMS:
+            self.v_s = self.v_s * (self.TARGET_RMS / v_rms)
 
         # Compute prediction error (apical prediction - somatic evidence)
         self.pred_error = self.v_a - self.v_s
