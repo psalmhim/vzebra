@@ -175,12 +175,22 @@ class EFEEngine:
 
             speed = self.GOAL_SPEEDS[gi]
             drain = self.DRAIN_MULT[gi]
-            energy_drain_per_step = 0.08 * speed * drain
             energy_gain_per_step = (0.3 if gi == 0 else 0.0)  # FORAGE gains
 
             for tau in range(H):
                 discount = self.gamma ** (tau + 1)
                 z_tau = z_traj[tau]
+
+                # Starvation pressure: metabolic cost rises at low energy
+                e_ratio = e_pred / 100.0
+                if e_ratio < 0.30:
+                    starvation_mult = 2.0
+                elif e_ratio < 0.50:
+                    starvation_mult = 1.5
+                else:
+                    starvation_mult = 1.0
+                energy_drain_per_step = (0.08 * speed * drain
+                                         * starvation_mult)
 
                 # Predict energy at step τ
                 e_pred = e_pred - energy_drain_per_step + energy_gain_per_step

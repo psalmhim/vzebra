@@ -47,6 +47,7 @@ def make_single_entity_scene(world, entity_class, fish_pos, heading):
     world.foods = []
     world.enemies = []
     world.colleagues = []
+    world.obstacles = []
 
     if entity_class == CLASS_NOTHING:
         # Empty scene — no entities, fish is centered (away from walls)
@@ -65,17 +66,23 @@ def make_single_entity_scene(world, entity_class, fish_pos, heading):
     elif entity_class == CLASS_COLLEAGUE:
         world.colleagues.append((ex, ey))
     elif entity_class == CLASS_ENVIRONMENT:
-        # Place fish NEAR a wall so it's in the retinal field
-        # Move fish close to a random wall
-        wall = np.random.choice(["left", "right", "top", "bottom"])
-        if wall == "right":
-            fish_pos[0] = world.xmax - 40
-        elif wall == "left":
-            fish_pos[0] = world.xmin + 40
-        elif wall == "top":
-            fish_pos[1] = world.ymax - 40
-        elif wall == "bottom":
-            fish_pos[1] = world.ymin + 40
+        # 50% wall proximity, 50% obstacle (rock)
+        if np.random.random() < 0.5:
+            # Place fish near a wall
+            wall = np.random.choice(["left", "right", "top", "bottom"])
+            if wall == "right":
+                fish_pos[0] = world.xmax - 40
+            elif wall == "left":
+                fish_pos[0] = world.xmin + 40
+            elif wall == "top":
+                fish_pos[1] = world.ymax - 40
+            elif wall == "bottom":
+                fish_pos[1] = world.ymin + 40
+        else:
+            # Place obstacle (rock) in visual field
+            hw = np.random.uniform(10, 30)
+            hh = np.random.uniform(8, 20)
+            world.add_obstacle(ex, ey, hw, hh)
 
     return entity_class
 
@@ -125,9 +132,18 @@ def run_step11(n_epochs=150, samples_per_epoch=100, lr=0.01, n_integration=3):
 
             make_single_entity_scene(world, target_class, fish_pos, heading)
 
+            # Goal context: match entity type to plausible goal
+            if target_class == CLASS_FOOD:
+                goal_probs = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=device)
+            elif target_class == CLASS_ENEMY:
+                goal_probs = torch.tensor([[0.0, 1.0, 0.0, 0.0]], device=device)
+            else:
+                goal_probs = torch.tensor([[0.0, 0.0, 1.0, 0.0]], device=device)
+
             # Multi-step integration
             for _ in range(n_integration):
-                out = model.forward(fish_pos, heading, world)
+                out = model.forward(fish_pos, heading, world,
+                                    goal_probs=goal_probs)
 
             # Classification loss
             cls_logits = out["cls"]  # [1, 5]
@@ -180,9 +196,17 @@ def run_step11(n_epochs=150, samples_per_epoch=100, lr=0.01, n_integration=3):
         model.reset()
         make_single_entity_scene(world, target_class, fish_pos, heading)
 
+        if target_class == CLASS_FOOD:
+            goal_probs = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=device)
+        elif target_class == CLASS_ENEMY:
+            goal_probs = torch.tensor([[0.0, 1.0, 0.0, 0.0]], device=device)
+        else:
+            goal_probs = torch.tensor([[0.0, 0.0, 1.0, 0.0]], device=device)
+
         with torch.no_grad():
             for _ in range(n_integration):
-                out = model.forward(fish_pos, heading, world)
+                out = model.forward(fish_pos, heading, world,
+                                    goal_probs=goal_probs)
             pred = out["cls"].argmax(dim=1).item()
 
         val_confusion[target_class, pred] += 1

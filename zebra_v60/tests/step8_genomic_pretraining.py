@@ -77,29 +77,56 @@ def run_step8(n_epochs=120, samples_per_epoch=50, n_integration=5, lr=0.005):
             heading = np.random.uniform(-math.pi, math.pi)
             fish_pos = np.array([0.0, 0.0])
 
-            # Random food at varied angles and distances
-            food_angle = heading + np.random.uniform(-2.5, 2.5)
-            food_dist = np.random.uniform(30, 120)
-            food_pos = np.array([
-                fish_pos[0] + food_dist * math.cos(food_angle),
-                fish_pos[1] + food_dist * math.sin(food_angle),
-            ])
-            world.foods = [tuple(food_pos)]
+            # Diverse goal contexts: 70% FORAGE, 20% FLEE, 10% EXPLORE
+            r = np.random.random()
+            if r < 0.70:
+                # FORAGE: turn toward food
+                goal_probs = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=device)
+                entity_angle = heading + np.random.uniform(-2.5, 2.5)
+                entity_dist = np.random.uniform(30, 120)
+                entity_pos = np.array([
+                    fish_pos[0] + entity_dist * math.cos(entity_angle),
+                    fish_pos[1] + entity_dist * math.sin(entity_angle),
+                ])
+                world.foods = [tuple(entity_pos)]
+                world.enemies = []
+                target_sign = 1.0  # toward entity
+            elif r < 0.90:
+                # FLEE: turn away from enemy
+                goal_probs = torch.tensor([[0.0, 1.0, 0.0, 0.0]], device=device)
+                entity_angle = heading + np.random.uniform(-2.5, 2.5)
+                entity_dist = np.random.uniform(30, 120)
+                entity_pos = np.array([
+                    fish_pos[0] + entity_dist * math.cos(entity_angle),
+                    fish_pos[1] + entity_dist * math.sin(entity_angle),
+                ])
+                world.foods = []
+                world.enemies = [tuple(entity_pos)]
+                target_sign = -1.0  # away from entity
+            else:
+                # EXPLORE: no target, turn toward center (mild)
+                goal_probs = torch.tensor([[0.0, 0.0, 1.0, 0.0]], device=device)
+                world.foods = []
+                world.enemies = []
+                entity_angle = heading  # straight ahead
+                entity_pos = np.array([0.0, 0.0])
+                target_sign = 1.0
 
-            # Multi-step integration
+            # Multi-step integration with goal context
             for _ in range(n_integration):
-                out = model.forward(fish_pos, heading, world)
+                out = model.forward(fish_pos, heading, world,
+                                    goal_probs=goal_probs)
 
             # Motor output → predicted turn
             pred_turn = compute_motor_turn(out)
 
-            # Target: angle to food → desired turn
-            dx = food_pos[0] - fish_pos[0]
-            dy = food_pos[1] - fish_pos[1]
-            angle_to_food = math.atan2(dy, dx) - heading
-            angle_to_food = math.atan2(math.sin(angle_to_food),
-                                       math.cos(angle_to_food))
-            target_turn = math.tanh(2.0 * angle_to_food)
+            # Target: angle to entity → desired turn (toward or away)
+            dx = entity_pos[0] - fish_pos[0]
+            dy = entity_pos[1] - fish_pos[1]
+            angle_to_entity = math.atan2(dy, dx) - heading
+            angle_to_entity = math.atan2(math.sin(angle_to_entity),
+                                         math.cos(angle_to_entity))
+            target_turn = math.tanh(2.0 * angle_to_entity) * target_sign
             target = torch.tensor(target_turn, device=device)
 
             # Motor loss
@@ -108,8 +135,8 @@ def run_step8(n_epochs=120, samples_per_epoch=50, n_integration=5, lr=0.005):
             # Eye angle loss (auxiliary)
             eye_out = out["eye"]
             pred_angle = eye_out.mean()
-            angle_target = torch.tensor(float(angle_to_food / math.pi),
-                                        device=device)
+            angle_target = torch.tensor(
+                float(angle_to_entity * target_sign / math.pi), device=device)
             loss += 0.3 * F.mse_loss(pred_angle, angle_target)
 
             loss.backward()
@@ -146,14 +173,17 @@ def run_step8(n_epochs=120, samples_per_epoch=50, n_integration=5, lr=0.005):
     val_true_angles = []
     val_pred_turns = []
 
+    forage_goal = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=device)
     for angle in test_angles:
         heading = 0.0
         food = (80 * math.cos(angle), 80 * math.sin(angle))
         model.reset()
         world.foods = [food]
+        world.enemies = []
         with torch.no_grad():
             for _ in range(n_integration):
-                out = model.forward(fish_pos, heading, world)
+                out = model.forward(fish_pos, heading, world,
+                                    goal_probs=forage_goal)
             pred_turn = float(compute_motor_turn(out))
 
         true_angle = math.atan2(math.sin(angle), math.cos(angle))

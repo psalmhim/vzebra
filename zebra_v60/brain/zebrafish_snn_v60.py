@@ -396,30 +396,40 @@ class ZebrafishSNN_v60(nn.Module):
     def load_saveable_state(self, state):
         """Restore learned weights from a checkpoint.
 
-        Handles old checkpoints that use TwoComp.W instead of
-        PredictiveTwoComp.W_FF by remapping parameter names.
+        Handles old checkpoints that use TwoComp.W or nn.Linear (weight/bias)
+        instead of PredictiveTwoComp.W_FF by remapping parameter names.
         """
-        # Detect old format: has "OT_F.W" but not "OT_F.W_FF"
         has_old_keys = any(
-            k.endswith('.W') and not k.endswith('.W_FF')
-            and not k.endswith('.W_FB')
-            and k.split('.')[0] in ('OT_F', 'PT_L', 'PC_per', 'PC_int',
-                                    'mot', 'eye', 'DA')
+            (k.endswith('.W') and not k.endswith('.W_FF')
+             and not k.endswith('.W_FB'))
+            or (k.split('.')[0] in ('mot', 'eye', 'DA')
+                and k.endswith('.weight'))
             for k in state.keys()
+            if k.split('.')[0] in ('OT_F', 'PT_L', 'PC_per', 'PC_int',
+                                   'mot', 'eye', 'DA')
         )
         if has_old_keys:
             remapped = {}
             remap_layers = {'OT_F', 'PT_L', 'PC_per', 'PC_int',
                             'mot', 'eye', 'DA'}
+            # Layers that were nn.Linear (weight is transposed vs W_FF)
+            linear_layers = {'mot', 'eye', 'DA'}
             for k, v in state.items():
                 parts = k.split('.')
-                if (len(parts) == 2 and parts[0] in remap_layers
-                        and parts[1] == 'W'):
-                    remapped[f"{parts[0]}.W_FF"] = v
+                layer = parts[0]
+                if len(parts) == 2 and layer in remap_layers:
+                    if parts[1] == 'W':
+                        remapped[f"{layer}.W_FF"] = v
+                    elif parts[1] == 'weight' and layer in linear_layers:
+                        remapped[f"{layer}.W_FF"] = v.t()
+                    elif parts[1] == 'bias' and layer in linear_layers:
+                        pass  # drop bias — PredictiveTwoComp has none
+                    else:
+                        remapped[k] = v
                 else:
                     remapped[k] = v
             self.load_state_dict(remapped, strict=False)
-            print("[SNN] Migrated old checkpoint (TwoComp.W → W_FF)")
+            print("[SNN] Migrated old checkpoint → PredictiveTwoComp")
         else:
             self.load_state_dict(state, strict=False)
 
