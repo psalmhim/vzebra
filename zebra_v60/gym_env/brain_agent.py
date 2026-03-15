@@ -188,9 +188,9 @@ class BrainAgent:
         # SNN model
         self.model = ZebrafishSNN_v60(device=self.device)
         if cls_weights_path and os.path.exists(cls_weights_path):
-            self.model.load_state_dict(
-                torch.load(cls_weights_path, weights_only=True,
-                           map_location=self.device))
+            state = torch.load(cls_weights_path, weights_only=True,
+                               map_location=self.device)
+            self.model.load_saveable_state(state)
         self.model.reset()
         self.model.eval()
 
@@ -413,9 +413,9 @@ class BrainAgent:
             float(np.mean(intR[boundary_mask_R]))
             if np.sum(boundary_mask_R) > 0 else 0.0)
 
-        # --- Obstacle pixels (type ≈ 0.75) ---
-        obs_mask_L = np.abs(typeL - 0.75) < 0.1
-        obs_mask_R = np.abs(typeR - 0.75) < 0.1
+        # --- Obstacle pixels (type ≈ 0.88) ---
+        obs_mask_L = np.abs(typeL - 0.88) < 0.1
+        obs_mask_R = np.abs(typeR - 0.88) < 0.1
         obstacle_px_L = float(np.sum(obs_mask_L))
         obstacle_px_R = float(np.sum(obs_mask_R))
 
@@ -850,38 +850,15 @@ class BrainAgent:
         cls_logits = out["cls"]
         cls_probs = F.softmax(cls_logits, dim=1)[0].cpu().numpy()
 
-        # 4b. Obstacle-aware correction: large rocks flood the type channel
-        #     with obstacle pixels (0.75), which the classifier may confuse
-        #     with enemy signal.  Count ground-truth type pixels to discount
-        #     false enemy classification when rocks dominate the retina.
+        # 4b. Count enemy pixels from the type channel (ground truth)
         typeL_raw = out["retL_full"][0, 400:].cpu().numpy()
         typeR_raw = out["retR_full"][0, 400:].cpu().numpy()
-        OBSTACLE_TYPE_VAL = 0.75
-        ENEMY_TYPE_VAL_CHECK = 0.5
-        obs_px = (np.sum(np.abs(typeL_raw - OBSTACLE_TYPE_VAL) < 0.1)
-                  + np.sum(np.abs(typeR_raw - OBSTACLE_TYPE_VAL) < 0.1))
-        enemy_px = (np.sum(np.abs(typeL_raw - ENEMY_TYPE_VAL_CHECK) < 0.1)
-                    + np.sum(np.abs(typeR_raw - ENEMY_TYPE_VAL_CHECK) < 0.1))
-        if obs_px > 10 and enemy_px < 5:
-            # Heavy obstacle presence with few real enemy pixels → false alarm
-            discount = min(0.35, obs_px * 0.008)
-            cls_probs[2] = max(0.02, cls_probs[2] - discount)
-            cls_probs[4] += discount * 0.7   # shift mass to environment
-            cls_probs[0] += discount * 0.3   # rest to nothing
-            cls_probs /= cls_probs.sum() + 1e-8
-
-        # 4c. Retinal alarm: boost enemy probability from direct pixel evidence
-        #     (must run BEFORE goal selection at step 9 so FLEE can trigger)
         ENEMY_TYPE_VAL = 0.5
         enemy_px_L = np.sum(np.abs(typeL_raw - ENEMY_TYPE_VAL) < 0.1)
         enemy_px_R = np.sum(np.abs(typeR_raw - ENEMY_TYPE_VAL) < 0.1)
         self._enemy_pixels_total = int(enemy_px_L + enemy_px_R)
         self._enemy_pixels_L = int(enemy_px_L)
         self._enemy_pixels_R = int(enemy_px_R)
-        if self._enemy_pixels_total >= 2:
-            alarm_boost = min(0.6, self._enemy_pixels_total * 0.08)
-            cls_probs[2] = min(1.0, cls_probs[2] + alarm_boost)
-            cls_probs /= cls_probs.sum() + 1e-8
 
         # 4d. Extract retinal features for active inference (Phase 1)
         if self.use_active_inference:
@@ -953,6 +930,16 @@ class BrainAgent:
             if self.allostasis is not None:
                 self.allostasis.stress = min(
                     1.0, self.allostasis.stress + 0.1 * threat_arousal)
+
+        # 7b4. Final pixel-evidence cap on p_enemy
+        #      The classifier + amygdala boost can hallucinate threats in
+        #      complex multi-entity scenes.  Cap p_enemy based on actual
+        #      enemy pixels in the type channel (ground truth).
+        #      Need ~25 pixels for full confidence; 0 pixels → cap at 0.02.
+        max_p_enemy = max(0.02, min(1.0, self._enemy_pixels_total / 25.0))
+        if cls_probs[2] > max_p_enemy:
+            cls_probs[2] = max_p_enemy
+            cls_probs /= cls_probs.sum() + 1e-8
 
         # 7c. Sleep/wake modulation (Step 23)
         sleep_state = None
@@ -1141,7 +1128,7 @@ class BrainAgent:
         #     ≥ 90%: prefer socializing (well-fed fish joins conspecifics)
         _energy_r = energy / getattr(env, 'energy_max', 100.0)
         if _energy_r < 0.90:
-            forage_drive = 0.5 * (0.90 - _energy_r) / 0.90  # 0→0.5 ramp
+            forage_drive = 0.7 * (0.90 - _energy_r) / 0.90  # 0→0.7 ramp
             current_bonus[GOAL_FORAGE] -= forage_drive       # lower EFE = preferred
             current_bonus[GOAL_SOCIAL] += forage_drive * 0.3  # suppress social
         else:
@@ -1220,8 +1207,8 @@ class BrainAgent:
         # 12b. Obstacle repulsion — steer away from rock-heavy side
         typeL_t = out["retL_full"][0, 400:].cpu().numpy()
         typeR_t = out["retR_full"][0, 400:].cpu().numpy()
-        obs_px_L = float(np.sum(np.abs(typeL_t - 0.75) < 0.1))
-        obs_px_R = float(np.sum(np.abs(typeR_t - 0.75) < 0.1))
+        obs_px_L = float(np.sum(np.abs(typeL_t - 0.88) < 0.1))
+        obs_px_R = float(np.sum(np.abs(typeR_t - 0.88) < 0.1))
         food_px_L = float(np.sum(np.abs(typeL_t - 1.0) < 0.1))
         food_px_R = float(np.sum(np.abs(typeR_t - 1.0) < 0.1))
         food_px_total = food_px_L + food_px_R
@@ -1744,7 +1731,8 @@ class BrainAgent:
                 _threat_boost = 1.0 + 2.0 * _ta  # up to 3x
         self.hebbian.update(self.model, _rpe, _dopa, threat_boost=_threat_boost)
         # PE-driven feedback learning (every step, independent of RPE)
-        self.hebbian.update_feedback(self.model)
+        if not getattr(self, '_skip_fb_update', False):
+            self.hebbian.update_feedback(self.model)
         hebb_stats = self.hebbian.get_stats()
         self.last_diagnostics["hebb_updates"] = hebb_stats["hebb_updates"]
         self.last_diagnostics["hebb_dw_norm"] = hebb_stats["hebb_dw_norm"]

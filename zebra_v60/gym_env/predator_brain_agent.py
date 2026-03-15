@@ -295,8 +295,8 @@ class PredatorBrainAgent:
                 raw_turn = raw_turn * 0.4 + food_turn * 0.6
 
         # 11d. Obstacle repulsion
-        obs_px_L = float(np.sum(np.abs(typeL_raw - 0.75) < 0.1))
-        obs_px_R = float(np.sum(np.abs(typeR_raw - 0.75) < 0.1))
+        obs_px_L = float(np.sum(np.abs(typeL_raw - 0.88) < 0.1))
+        obs_px_R = float(np.sum(np.abs(typeR_raw - 0.88) < 0.1))
         obs_total = obs_px_L + obs_px_R
         if obs_total > 5:
             obs_repulsion = -0.6 * (obs_px_R - obs_px_L) / obs_total

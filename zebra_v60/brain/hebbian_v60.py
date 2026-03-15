@@ -146,7 +146,7 @@ class HebbianPlasticity:
         self._total_dw_norm = total_dw
 
     def update_feedback(self, model, eta_fb=2e-4, max_dw_fb=0.003,
-                        max_w_fb=0.15):
+                        max_w_fb=0.10):
         """PE-driven anti-Hebbian update for feedback weights (W_FB).
 
         Runs every step, independent of RPE/reward. Directly minimizes
@@ -154,32 +154,33 @@ class HebbianPlasticity:
 
         dW_FB = -eta_fb * outer(fb_source, pred_error)
 
-        W_FB is clamped to [-max_w_fb, max_w_fb] (tighter than W_FF)
-        to prevent feedback overshoot in non-stationary environments.
+        Layer-specific learning rates (sensory layers are noisier):
+          OT_F: 0.3x (high-dimensional visual input, slower adaptation)
+          PT_L: 0.6x
+          PC_per, PC_int: 1.0x (abstract layers, faster adaptation)
         """
         fb_total = 0.0
 
         with torch.no_grad():
+            # (layer, fb_source, eta_scale)
             fb_pairs = [
-                (model.OT_F, model.PT_L.v_s),      # PT → OT_F
-                (model.PT_L, model.PC_per.v_s),     # PC_per → PT
-                (model.PC_per, model.PC_int.v_s),   # PC_int → PC_per
-                (model.PC_int, model.DA.v_s),       # DA → PC_int
+                (model.OT_F, model.PT_L.v_s, 0.3),
+                (model.PT_L, model.PC_per.v_s, 0.6),
+                (model.PC_per, model.PC_int.v_s, 1.0),
+                (model.PC_int, model.DA.v_s, 1.0),
             ]
 
-            for layer, fb_source in fb_pairs:
+            for layer, fb_source, eta_scale in fb_pairs:
                 if layer.W_FB is None:
                     continue
                 pe = layer.pred_error
                 if pe is None:
                     continue
 
-                # Direct anti-Hebbian: push W_FB to reduce PE
-                dW = -eta_fb * (fb_source.t() @ pe)
+                dW = -(eta_fb * eta_scale) * (fb_source.t() @ pe)
                 dW.clamp_(-max_dw_fb, max_dw_fb)
                 layer.W_FB.data += dW
                 layer.W_FB.data *= self.decay
-                # Tight clamp for W_FB to prevent feedback overshoot
                 layer.W_FB.data.clamp_(-max_w_fb, max_w_fb)
                 fb_total += dW.abs().sum().item()
 
