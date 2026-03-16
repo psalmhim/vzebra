@@ -241,17 +241,47 @@ The basic turn signal is computed from intensity-channel asymmetry:
 %===================================================================
 \section{Predictive Coding and Precision (Step 2)}\label{sec:precision}
 
-\subsection{Free Energy}
+Under the Bayesian brain hypothesis~\cite{friston2010,clark2013}, the brain
+maintains a generative model of its sensory environment and minimizes
+\emph{variational free energy}---an upper bound on surprise
+$\mathcal{S} = -\ln p(\mathbf{o})$---by adjusting both its internal model
+(perception) and its actions (active inference).
+Predictive coding~\cite{rao1999} implements this minimization through a
+hierarchy of prediction errors, where each cortical layer predicts the
+activity of the layer below and updates its representation based on
+the mismatch~\cite{bogacz2017}.
 
-At the tectal fusion level, free energy is computed as precision-weighted
-prediction error:
-\begin{equation}\label{eq:freeenergy}
-  F = \tfrac{1}{2}\,\overline{\pi}_\text{OT}\,
-      \bigl\|\mathbf{o}_\text{fused} - \mathbf{o}_F\,\mathbf{W}_{OTF}^\top\bigr\|^2,
+\subsection{Free Energy and Surprise}
+
+Variational free energy $F$ upper-bounds Bayesian surprise:
+\begin{equation}\label{eq:surprise_bound}
+  \mathcal{S}(\mathbf{o}) = -\ln p(\mathbf{o}) \;\leq\; F
+    = D_\text{KL}\!\bigl(q(\boldsymbol{\theta})\,\|\,p(\boldsymbol{\theta}|\mathbf{o})\bigr)
+    - \ln p(\mathbf{o})
+    = \underbrace{\mathbb{E}_q\bigl[-\ln p(\mathbf{o}|\boldsymbol{\theta})\bigr]}_{\text{prediction error}}
+    + \underbrace{D_\text{KL}\!\bigl(q(\boldsymbol{\theta})\,\|\,p(\boldsymbol{\theta})\bigr)}_{\text{complexity}}.
 \end{equation}
+Under a Gaussian generative model with precision $\pi$, the prediction error
+term reduces to precision-weighted squared error:
+\begin{equation}\label{eq:freeenergy}
+  F \approx \tfrac{1}{2}\sum_l \pi_l\,
+      \bigl\|\boldsymbol{\varepsilon}^{(l)}\bigr\|^2
+    + \text{const.}
+\end{equation}
+At the tectal fusion level (before Step~25 upgrades this to two-compartment PE):
+$F_\text{OT} = \tfrac{1}{2}\,\overline{\pi}_\text{OT}\,
+\|\mathbf{o}_\text{fused} - \mathbf{o}_F\,\mathbf{W}_{OTF}^\top\|^2$,
 where $\overline{\pi}_\text{OT} = \text{mean}(\sigma(\boldsymbol{\gamma}_\text{OT}))$.
 
-\subsection{Precision Units}
+\subsection{Precision as Empirical Bayes}
+
+Precision $\pi$ controls the gain of prediction errors: high precision
+amplifies errors (confident processing), low precision attenuates them
+(uncertain, exploratory processing).
+Under empirical Bayes, precision is itself inferred from data by
+optimizing free energy with respect to $\pi$, yielding
+$\hat{\pi} \propto 1/\text{Var}[\varepsilon]$---the inverse of prediction
+error variance~\cite{feldman2010}.
 
 Each precision unit maintains a learnable logit $\boldsymbol{\gamma}$ with
 output $\pi = \sigma(\boldsymbol{\gamma})$, updated as:
@@ -263,6 +293,11 @@ where $|\varepsilon|$ is the mean absolute error, $\beta = 0.1$ is the target
 error level, $\nu = ||\varepsilon|(t) - |\varepsilon|(t{-}1)|$ is the novelty
 signal, and $\alpha_\pi = 0.05$.
 Precision is clamped: $\gamma \in [-3, 3]$.
+
+The novelty term implements \emph{Bayesian surprise}~\cite{itti2009}:
+abrupt changes in prediction error signal a regime change in the
+generative model, triggering a precision dip that temporarily broadens
+the posterior and enables rapid model updating.
 
 Two precision units operate at different hierarchical levels:
 \begin{itemize}[nosep]
@@ -1056,11 +1091,19 @@ where $\pi(g)$ is the current goal posterior and $c$ is the confidence.
 
 Step~16 introduces a variational autoencoder (VAE) world model that learns a
 latent belief state and enables forward-simulation planning.
+In the language of active inference, the VAE implements \emph{amortized
+variational inference}~\cite{kingma2014}: the encoder learns an approximate
+posterior $q_\phi(\mathbf{z}|\mathbf{o})$ over hidden causes, while the
+decoder provides a generative (likelihood) model $p_\theta(\mathbf{o}|\mathbf{z})$.
+Training maximizes the evidence lower bound (ELBO), which is equivalent to
+minimizing variational free energy---the same objective that drives
+perception, learning, and action throughout the architecture.
 
 \subsection{Multi-Modal Belief State}
 
-The latent state $\mathbf{z} \in \mathbb{R}^{16}$ encodes fused tectal output
-plus a 13-dimensional multi-modal state context:
+The latent state $\mathbf{z} \in \mathbb{R}^{16}$ serves as the agent's
+\emph{Bayesian belief} about the hidden state of the world, encoding fused
+tectal output plus a 13-dimensional multi-modal state context:
 \begin{equation}\label{eq:state_ctx}
 \mathbf{s}_\text{ctx} = \bigl[
   \underbrace{x,\, y,\, \theta/\pi}_\text{proprioceptive},\;
@@ -1075,50 +1118,93 @@ plus a 13-dimensional multi-modal state context:
 \subsection{VAE Architecture}
 
 The encoder maps pooled tectal output (800$\to$64 via learned projection)
-concatenated with $\mathbf{s}_\text{ctx}$ to a latent distribution:
+concatenated with $\mathbf{s}_\text{ctx}$ to a latent distribution---the
+\emph{recognition model} (approximate posterior):
 \begin{equation}\label{eq:vae_enc}
-  [\text{pool}(\mathbf{o}_F)\;\|\;\mathbf{s}_\text{ctx}]
-  \;\xrightarrow{77 \to 48 \to 16}\;
-  (\boldsymbol{\mu},\; \log\boldsymbol{\sigma}^2),
+  q_\phi(\mathbf{z}|\mathbf{o}) = \mathcal{N}(\boldsymbol{\mu}_\phi,\;
+    \text{diag}(\boldsymbol{\sigma}_\phi^2)),
   \quad
-  \mathbf{z} = \boldsymbol{\mu} + \boldsymbol{\sigma}\odot\boldsymbol{\epsilon}.
+  [\text{pool}(\mathbf{o}_F)\;\|\;\mathbf{s}_\text{ctx}]
+  \;\xrightarrow{77 \to 48}\;
+  (\boldsymbol{\mu},\; \log\boldsymbol{\sigma}^2).
 \end{equation}
-The decoder reconstructs the pooled tectal output:
-$\hat{\mathbf{o}}_\text{pool} = f_\text{dec}(\mathbf{z})$.
-Training uses the ELBO objective:
-$\mathcal{L}_\text{VAE} = \text{MSE}(\hat{\mathbf{o}}_\text{pool}, \mathbf{o}_\text{pool})
- + 0.1\,D_\text{KL}(q(\mathbf{z}|\mathbf{x})\,\|\,p(\mathbf{z}))$.
+Sampling uses the \emph{reparameterization trick}~\cite{kingma2014}:
+$\mathbf{z} = \boldsymbol{\mu} + \boldsymbol{\sigma}\odot\boldsymbol{\epsilon}$,
+$\boldsymbol{\epsilon} \sim \mathcal{N}(0, \mathbf{I})$,
+which decouples stochasticity from the computational graph and enables
+gradient-based learning of the posterior parameters.
 
-\subsection{Transition Model}
+The decoder (generative/likelihood model) reconstructs the pooled tectal output:
+$p_\theta(\mathbf{o}|\mathbf{z}): \hat{\mathbf{o}}_\text{pool} = f_\text{dec}(\mathbf{z})$.
+Training maximizes the ELBO, equivalently minimizing variational free energy:
+\begin{equation}\label{eq:elbo}
+  \mathcal{L}_\text{VAE} =
+    \underbrace{\text{MSE}(\hat{\mathbf{o}}, \mathbf{o})}_{\text{accuracy: } -\mathbb{E}_q[\ln p(\mathbf{o}|\mathbf{z})]}
+    + \underbrace{0.1\,D_\text{KL}\!\bigl(q(\mathbf{z}|\mathbf{o})\,\|\,p(\mathbf{z})\bigr)}_{\text{complexity: information bottleneck}}.
+\end{equation}
+The KL term acts as an \emph{information bottleneck}~\cite{tishby2000}:
+it penalizes the mutual information $I(\mathbf{o}; \mathbf{z})$ between
+observations and beliefs, forcing the latent code to retain only
+task-relevant information.
+The $\beta = 0.1$ coefficient relaxes this constraint relative to a
+full VAE ($\beta=1$), prioritizing reconstruction accuracy over
+compression---appropriate for a world model that must preserve
+fine-grained sensory detail for planning.
 
-A residual MLP predicts next-step latent state conditioned on action context
+\subsection{Transition Model as State-Space Dynamics}
+
+The transition model implements the generative model's dynamics:
+$p(\mathbf{z}_{t+1}|\mathbf{z}_t, \mathbf{a}_t)$,
+predicting next-step latent state conditioned on action context
 $\mathbf{a} = [\tau,\, v,\, g_1,\, g_2,\, g_3]$:
 \begin{equation}\label{eq:transition}
-  \mathbf{z}' = \mathbf{z} + 0.3\,\tanh\!\bigl(f_\text{trans}([\mathbf{z}\;\|\;\mathbf{a}])\bigr).
+  \mathbf{z}_{t+1} = \mathbf{z}_t + 0.3\,\tanh\!\bigl(f_\text{trans}([\mathbf{z}_t\;\|\;\mathbf{a}_t])\bigr).
 \end{equation}
+The residual form $\mathbf{z}' = \mathbf{z} + \Delta\mathbf{z}$ is
+analogous to a discretized continuous-time dynamical system, where the
+network learns the state derivative.
+This connects to classical state-space models and Kalman filtering:
+the agent maintains a belief about hidden states and propagates it
+forward through a learned dynamics model~\cite{friston2010}.
 
 \subsection{Associative Memory}
 
-64 RBF nodes in latent space store food availability and risk:
+The associative memory implements a nonparametric Bayesian prior over the
+latent space, storing the agent's accumulated experience as a kernel density
+estimate of $p(\text{food}, \text{risk}\,|\,\mathbf{z})$.
+64 RBF nodes provide a Gaussian mixture model:
 \begin{equation}\label{eq:assoc_mem}
   w_i(\mathbf{z}) = \exp\!\Bigl(-\frac{\|\mathbf{z} - \mathbf{c}_i\|^2}{2\sigma_k^2}\Bigr),
   \quad
   \hat{f}(\mathbf{z}) = \frac{\sum_i w_i\,f_i}{\sum_i w_i},
 \end{equation}
-with online allocation and centroid drift.
+with online allocation (new nodes created when
+$\max_i w_i < \text{threshold}$, analogous to a Dirichlet process) and
+centroid drift (Hebbian adaptation of $\mathbf{c}_i$ toward visited
+locations).
 
 \subsection{Planning via Forward Simulation}
 
 For each goal $g$, a stereotyped action sequence is rolled out through the
-transition model for 3 steps.  The expected free energy combines pragmatic
-(food, risk) and epistemic (novelty, reconstruction uncertainty) terms:
+transition model for 3 steps.  The expected free energy decomposes into
+pragmatic (utility) and epistemic (information gain) terms, following
+the standard active inference formulation~\cite{friston2017,parr2022}:
 \begin{equation}\label{eq:vae_plan}
-  G_g = \underbrace{\alpha_f\,\hat{f}_g + \alpha_r\,\hat{r}_g}_\text{pragmatic}
-      + \underbrace{w_\epsilon^{(g)}\,(0.6\,\bar{n}_g + 0.4\,\bar{u}_g)}_\text{epistemic},
+  G_g = \underbrace{\alpha_f\,\hat{f}_g + \alpha_r\,\hat{r}_g}_{\text{pragmatic: }-\mathbb{E}[\ln p(\mathbf{o}|\mathbf{z}, g)]}
+      + \underbrace{w_\epsilon^{(g)}\,(0.6\,\bar{n}_g + 0.4\,\bar{u}_g)}_{\text{epistemic: }-I(\mathbf{o};\mathbf{z}|g)},
 \end{equation}
-where $w_\epsilon = [-0.15,\,-0.05,\,-0.5]$ for \textsc{forage}, \textsc{flee},
-\textsc{explore} respectively.  The planning bonus $G_\text{plan}$ ramps
-linearly from $0 \to 0.3$ after 200 warmup steps and is added to the raw EFE.
+where the epistemic term approximates the \emph{expected information gain}
+(mutual information between future observations and latent states):
+novelty $\bar{n}_g$ captures model uncertainty (how unfamiliar the
+predicted state is to the associative memory), and reconstruction
+uncertainty $\bar{u}_g$ captures decoder confidence (how well the
+generative model can reconstruct observations from the predicted latent).
+The weights $w_\epsilon = [-0.15,\,-0.05,\,-0.5]$ for \textsc{forage},
+\textsc{flee}, \textsc{explore} encode the prior that exploration
+should maximize epistemic value while foraging should maximize pragmatic
+value~\cite{friston2017}.
+The planning bonus $G_\text{plan}$ ramps linearly from $0 \to 0.3$ after
+200 warmup steps and is added to the raw EFE.
 
 \begin{figure}[H]
   \centering
@@ -1158,8 +1244,13 @@ Each cell stores:
 
 \subsection{Path Integration}
 
-Dead reckoning maintains an internal position estimate using motor efference
-copy:
+Path integration implements a form of \emph{Bayesian filtering}: the agent
+maintains a belief about its position by combining proprioceptive
+predictions (process model) with visual observations (measurement
+model)~\cite{mcnaughton2006,etienne2004}.
+
+The \emph{prediction step} (dead reckoning) propagates the position belief
+using motor efference copy:
 \begin{equation}\label{eq:path_integration}
 \begin{aligned}
   \hat{\theta}(t{+}1) &= \hat{\theta}(t) + \kappa\,\dot{\theta}_\text{motor}, \\
@@ -1167,17 +1258,31 @@ copy:
     + \kappa\,v\,[\cos\hat{\theta},\;\sin\hat{\theta}]^\top,
 \end{aligned}
 \end{equation}
-where $\kappa = 0.8$ ($<1$ to model noisy dead reckoning).  Visual landmark
-fixes correct the path-integrated estimate with weight $0.3$:
+where $\kappa = 0.8$ ($<1$ to model noisy dead reckoning, equivalent to
+a fixed-gain Kalman filter prediction with process noise).
+
+The \emph{update step} (landmark correction) fuses the proprioceptive
+prediction with visual boundary observations:
 \begin{equation}\label{eq:pi_correction}
-  \hat{\mathbf{p}} \leftarrow \hat{\mathbf{p}} + 0.3\,(\mathbf{p}_\text{visual} - \hat{\mathbf{p}}).
+  \hat{\mathbf{p}} \leftarrow (1-K)\,\hat{\mathbf{p}} + K\,\mathbf{p}_\text{visual},
+  \quad K = 0.3.
 \end{equation}
+The correction weight $K = 0.3$ serves as the \emph{Kalman gain}: it
+determines the relative trust placed in visual measurements versus
+proprioceptive predictions, reflecting the noise ratio between
+the two information sources~\cite{mcnaughton2006}.
 
 \subsection{Replay (Sharp-Wave Ripple Analog)}
 
 Every 50 steps, the last 10 trajectory entries are replayed with
 $0.5\times$ attenuated learning---analogous to hippocampal sharp-wave ripple
 consolidation during awake immobility.
+The attenuation implements a Bayesian weighting: replayed observations
+carry less precision than direct experience, reflecting the increased
+uncertainty of recalled versus perceived information.
+This offline belief updating is a form of \emph{Bayesian model
+averaging}: the agent's spatial prior is refined by re-evaluating past
+evidence under the current generative model~\cite{moser2008}.
 
 \subsection{Spatial Planning}
 
@@ -1219,9 +1324,17 @@ System stability        & no NaN & --- & \textcolor{forage}{PASS} \\
 %===================================================================
 \section{Allostatic Interoception (Step 18)}\label{sec:allostasis}
 
-Step~18 introduces predictive tracking of three internal (interoceptive)
-variables---hunger, fatigue, and stress---that bias goal selection via
-allostatic error signals, linking homeostatic regulation to active inference.
+Step~18 extends predictive coding to the interoceptive domain, implementing
+the \emph{interoceptive inference} framework of Seth and
+Friston~\cite{seth2016,barrett2015}.
+Three internal (interoceptive) variables---hunger, fatigue, and
+stress---are tracked by predictive models that generate
+\emph{interoceptive prediction errors}, which bias goal selection via
+allostatic regulation.
+Just as exteroceptive prediction errors (Section~\ref{sec:precision})
+drive perceptual inference, interoceptive prediction errors drive
+\emph{motivated behavior}: the organism acts to minimize the discrepancy
+between predicted and desired body states~\cite{pezzulo2015,craig2002}.
 
 \subsection{Allostatic Variables}
 
@@ -1244,27 +1357,52 @@ allostatic error signals, linking homeostatic regulation to active inference.
 where $E$ is energy, $v$ is speed, $d_p$ is predator distance in pixels,
 and $\hat{\cdot}$ denotes the EMA-predicted value.
 
-\subsection{Allostatic Error}
+\subsection{Interoceptive Prediction Error}
 
-Each variable has a homeostatic setpoint $h^* = 0.3$, $f^* = 0.2$,
-$\sigma^* = 0.1$.  The allostatic error:
+Each variable has a homeostatic setpoint (prior preferred state):
+$h^* = 0.3$, $f^* = 0.2$, $\sigma^* = 0.1$.
+The \emph{interoceptive prediction error}:
 \begin{equation}\label{eq:allo_error}
-  e_x = \hat{x} - x^*,
+  \varepsilon_x^\text{intero} = \hat{x} - x^*,
 \end{equation}
-drives goal modulation when positive (i.e., predicted state exceeds setpoint).
+measures the divergence between the predicted interoceptive state $\hat{x}$
+and the prior (setpoint) $x^*$.
+This is structurally identical to the exteroceptive prediction error
+(Eq.~\ref{eq:pred_error}): the brain uses the same free-energy-minimizing
+computation for both external perception and internal state
+monitoring~\cite{seth2016}.
+Positive $\varepsilon^\text{intero}$ signals that the predicted body state
+deviates from homeostatic equilibrium, driving action (active inference) to
+restore the organism to its preferred state.
 
-\subsection{Goal Prior Bias}
+\subsection{Prior Preference Modulation}
 
-Allostatic errors generate additive EFE biases:
+Interoceptive prediction errors modulate the \emph{prior preferences}
+over goal outcomes, implementing the active inference principle that
+organisms act to fulfill their generative model's
+predictions~\cite{friston2010,pezzulo2015}:
 \begin{equation}\label{eq:allo_bias}
 \begin{aligned}
-  \Delta G_\textsc{forage}  &= -\lambda\,\max(0, e_h), &\quad &\text{(hunger} \to \text{forage)} \\
-  \Delta G_\textsc{flee}    &= -\lambda\,\max(0, e_\sigma), &\quad &\text{(stress} \to \text{flee)} \\
-  \Delta G_\textsc{explore} &= -\lambda\,\max(0, e_f), &\quad &\text{(fatigue} \to \text{rest/explore)}
+  \Delta G_\textsc{forage}  &= -\lambda\,\max(0, \varepsilon_h^\text{intero}), &\quad &\text{(hunger PE} \to \text{forage)} \\
+  \Delta G_\textsc{flee}    &= -\lambda\,\max(0, \varepsilon_\sigma^\text{intero}), &\quad &\text{(stress PE} \to \text{flee)} \\
+  \Delta G_\textsc{explore} &= -\lambda\,\max(0, \varepsilon_f^\text{intero}), &\quad &\text{(fatigue PE} \to \text{rest/explore)}
 \end{aligned}
 \end{equation}
-with $\lambda = 0.15$ (increased from $0.08$ in Step~20 for stronger
-interoceptive drive).  Lower $\Delta G$ makes the goal more attractive.
+with $\lambda = 0.15$.
+Lower $\Delta G$ makes the goal more attractive.
+Additionally, the EFE engine tightens the precision of preferred outcomes
+under allostatic pressure, implementing precision modulation
+of interoceptive priors:
+\begin{equation}\label{eq:allo_precision}
+  \sigma_E = \frac{\sigma_{E,0}}{1 + 3\,\max(0,\; h - 0.5)},
+  \quad
+  \sigma_S = \frac{\sigma_{S,0}}{1 + 2\,\sigma_\text{stress}},
+\end{equation}
+where tighter $\sigma$ (higher precision) makes the agent more sensitive
+to energy loss during foraging or threat proximity during
+fleeing---consistent with the principle that stressed organisms
+allocate more precision to survival-relevant
+channels~\cite{stephan2016}.
 
 \subsection{Fatigue Speed Cap}
 
@@ -2019,9 +2157,23 @@ additive somatic bias via a learned linear projection:
   \text{att}^{(l)} = \mathbf{m}\,\mathbf{W}_\text{proj}^{(l)},
   \quad \mathbf{W}_\text{proj}^{(l)} \in \mathbb{R}^{8 \times n_l}.
 \end{equation}
+Under the Bayesian brain hypothesis, attention is \emph{precision
+optimization}: the brain allocates computational resources (gain) to
+sensory channels in proportion to their expected reliability and
+task-relevance~\cite{feldman2010}.
+The additive somatic bias implements this by selectively
+increasing the excitability of neurons whose activity is relevant to the
+current goal, effectively increasing the precision (signal-to-noise ratio)
+of goal-relevant prediction errors while leaving irrelevant channels
+unmodulated.
 Following Lee et al., the additive mechanism (Eq.~\ref{eq:soma})
 outperforms both multiplicative gain and precision-weighting approaches
 for selective attention in spiking networks.
+The slow neuromodulatory dynamics ($\tau_\text{att} = 0.93$,
+half-life $\approx 14$ steps) implement a time-scale separation between
+fast sensory processing and slow attentional modulation, consistent with
+the neuromodulatory timescales of cholinergic and noradrenergic systems
+that mediate biological attention~\cite{feldman2010}.
 
 \subsection{Homeostatic Gain Control}\label{sec:gain_control}
 
@@ -2045,21 +2197,42 @@ regulation~\cite{turrigiano2004}.
 \subsection{PE-Driven Feedback Learning}\label{sec:feedback_learning}
 
 The feedback weights $\mathbf{W}_\text{FB}$ are updated every timestep by
-a prediction-error-driven anti-Hebbian rule, independent of reward:
-\begin{equation}\label{eq:anti_hebbian}
+a prediction-error-driven anti-Hebbian rule, independent of reward.
+This rule follows directly from minimizing variational free energy
+(Eq.~\ref{eq:freeenergy}) with respect to the generative model
+parameters~\cite{bogacz2017,rao1999}:
+\begin{equation}\label{eq:fe_gradient}
+  \frac{\partial F}{\partial \mathbf{W}_\text{FB}^{(l)}}
+  = \pi_l\;\bigl(\mathbf{h}^{(l+1)}\bigr)^\top\boldsymbol{\varepsilon}^{(l)}
+  \quad\Longrightarrow\quad
   \Delta\mathbf{W}_\text{FB}^{(l)} =
     -\eta_\text{fb}\;\bigl(\mathbf{h}^{(l+1)}\bigr)^\top
     \boldsymbol{\varepsilon}^{(l)},
-  \quad \eta_\text{fb} = 2 \times 10^{-4},
 \end{equation}
-with per-element clamp $|\Delta W| \leq 0.003$ and weight clamp
+with $\eta_\text{fb} = 2 \times 10^{-4}$,
+per-element clamp $|\Delta W| \leq 0.003$, and weight clamp
 $|W_\text{FB}| \leq 0.10$ to prevent feedback overshoot.
+The anti-Hebbian form (negative sign) arises because the
+feedback weights parameterize the \emph{generative model}: they predict
+lower-layer activity from higher-layer representations.
+Reducing PE improves the generative model's predictions, which is
+equivalent to minimizing free energy~\cite{friston2010}.
+
 Layer-specific learning rates reduce noise in high-dimensional sensory
 layers: OT$_\text{F}$ uses $0.3\times$, PT$_\text{L}$ uses $0.6\times$,
 and PC layers use $1.0\times$ the base rate.
+This implements an approximate \emph{natural gradient}: sensory layers
+have higher-dimensional parameter spaces with noisier gradients,
+requiring smaller effective step sizes to maintain stable
+learning~\cite{bogacz2017}.
+
 This is distinct from the RPE-gated feedforward Hebbian rule
-(Eq.~\ref{eq:hebbian}): feedforward learning is reward-modulated;
-feedback learning is purely predictive.
+(Eq.~\ref{eq:hebbian}): feedforward learning is reward-modulated
+(recognition model); feedback learning is purely predictive
+(generative model).
+This separation mirrors the distinction in predictive coding between
+\emph{perceptual inference} (fast, feedforward) and \emph{perceptual
+learning} (slow, feedback)~\cite{rao1999,clark2013}.
 
 The feedforward Hebbian rule (Eq.~\ref{eq:hebbian}) is further improved
 with a linear warmup over the first 50 steps to prevent early weight
@@ -2523,26 +2696,43 @@ Key findings:
     free-energy and reinforcement-learning frameworks by adapting EFE component
     weights via temporal-difference error, enabling the agent to learn which
     aspects of expected free energy are most predictive of future reward.
-  \item \textbf{Generative world model}: The VAE world model (Step~16) with
-    associative memory enables forward-simulation planning, allowing the agent
-    to evaluate candidate actions before executing them---a hallmark of
-    model-based decision making.
-    VAE loss and transition loss both decrease online, confirming that the
-    agent learns a useful latent dynamics model during normal behavior.
-  \item \textbf{Hippocampal spatial cognition}: Place cells (Step~17) with
-    path integration and sharp-wave-ripple-like replay provide a spatial map
-    that supports goal-directed navigation.
-    Path integration error remains below 13\,px in an 800$\times$600 arena,
-    and food-associated place cells develop higher food-rate values, indicating
-    spatial memory formation.
-  \item \textbf{Allostatic homeostasis}: Interoceptive tracking of hunger,
-    fatigue, and stress (Step~18) closes the loop between body state and
-    goal selection.
-    Allostatic error signals bias the EFE prior, causing the agent to shift
-    toward foraging when hungry, fleeing when stressed, and moderating
-    locomotor output when fatigued.
-    This mirrors biological findings that interoceptive prediction errors
-    drive motivated behavior~\cite{seth2016,stephan2016}.
+  \item \textbf{Generative world model and variational inference}:
+    The VAE world model (Step~16) implements the core active inference
+    principle: the agent maintains an approximate posterior
+    $q(\mathbf{z}|\mathbf{o})$ over hidden world states and plans by
+    simulating future trajectories through a learned generative model.
+    The ELBO training objective (Eq.~\ref{eq:elbo}) is equivalent to
+    minimizing variational free energy, unifying perception (encoder),
+    generation (decoder), and prediction (transition model) under a
+    single information-theoretic objective.
+    The information bottleneck interpretation of the KL term ensures that
+    latent beliefs retain only task-relevant information, implementing
+    efficient Bayesian compression of high-dimensional sensory
+    streams~\cite{tishby2000}.
+  \item \textbf{Hippocampal spatial cognition as Bayesian filtering}:
+    Place cells (Step~17) with path integration implement a Kalman-like
+    Bayesian filter that fuses noisy proprioceptive predictions
+    (dead reckoning, $\kappa = 0.8$) with visual landmark measurements
+    (Kalman gain $K = 0.3$).
+    Sharp-wave-ripple-like replay with attenuated precision ($0.5\times$)
+    implements offline Bayesian model averaging, refining the spatial
+    prior under the current generative model.
+    Path integration error remains below 13\,px, and food-associated place
+    cells develop higher food-rate values, indicating Bayesian spatial
+    memory formation~\cite{mcnaughton2006}.
+  \item \textbf{Interoceptive inference and allostatic free energy}:
+    Step~18 demonstrates that the predictive coding framework
+    extends naturally from exteroceptive to interoceptive domains:
+    the same computation (prediction $-$ observation $=$ PE) that drives
+    visual perception also drives homeostatic regulation.
+    Interoceptive prediction errors bias EFE priors, while precision
+    modulation (Eq.~\ref{eq:allo_precision}) tightens preferred-outcome
+    distributions under allostatic stress, making the agent increasingly
+    sensitive to survival-relevant signals.
+    This implements the embodied active inference principle that
+    organisms minimize free energy across \emph{all} Markov blanket
+    boundaries---not just the sensory
+    surface~\cite{seth2016,stephan2016,pezzulo2015}.
   \item \textbf{Comparative evaluation}: The full evaluation (Step~19) shows
     that adding world models, RL critics, and allostatic regulation
     produces distinct behavioral signatures compared to the baseline brain,
@@ -2592,20 +2782,32 @@ Key findings:
     apical (top-down) compartments.  The apical--somatic mismatch
     provides a principled prediction error signal that drives both
     free energy computation and feedback weight learning.
-    Crucially, the feedback learning rule (Eq.~\ref{eq:anti_hebbian})
-    operates every timestep independently of reward---implementing
-    true predictive coding rather than reward-gated prediction.
+    Crucially, the feedback learning rule (Eq.~\ref{eq:fe_gradient})
+    is \emph{derived from the free energy gradient}
+    $\partial F / \partial \mathbf{W}_\text{FB}$, operating every
+    timestep independently of reward---implementing true predictive
+    coding~\cite{rao1999} rather than reward-gated prediction.
+    The separation between reward-modulated feedforward learning
+    (recognition model) and reward-independent feedback learning
+    (generative model) reflects the fundamental distinction in
+    predictive coding between perceptual inference and perceptual
+    learning~\cite{bogacz2017}.
     Homeostatic gain control (Eq.~\ref{eq:gain_control}) prevents
     cascading activity growth, and cross-episode PE convergence ($-27\%$
     over three episodes) confirms the system learns environmental
     regularities.
-  \item \textbf{Goal-driven selective attention}: The additive attention
-    mechanism (Eq.~\ref{eq:soma}) implements late-selection attention
-    consistent with findings in Lee et al.\ that additive somatic bias
-    outperforms multiplicative gain modulation in spiking networks.
+  \item \textbf{Attention as precision optimization}: The additive
+    attention mechanism (Eq.~\ref{eq:soma}) implements the Bayesian brain
+    principle that attention is \emph{precision
+    optimization}~\cite{feldman2010}: the brain allocates gain to
+    sensory channels in proportion to their expected task-relevance.
+    The slow neuromodulatory dynamics ($\tau = 0.93$, half-life 14 steps)
+    enforce a time-scale separation between fast sensory inference and
+    slow attentional modulation, consistent with cholinergic/noradrenergic
+    timescales in biological attention systems.
     Attention selectivity of 15.7$\times$ during flee and 3.8$\times$
-    during foraging demonstrates that goal context effectively modulates
-    neural processing throughout the hierarchy.
+    during foraging demonstrates that goal-driven precision weighting
+    effectively modulates neural processing throughout the hierarchy.
   \item \textbf{Bayesian survival trade-off}: Step~26 introduces a
     principled competition between predator avoidance and energy
     acquisition through starvation-risk-modulated EFE
@@ -2634,6 +2836,16 @@ Key findings:
     sensory processing---a prediction of predictive coding
     theory~\cite{rao1999,clark2013}.
 \end{enumerate}
+
+Taken together, the twenty-six steps demonstrate that the free energy
+principle provides a \emph{unified computational language} for the
+diverse functions of the vertebrate brain: exteroceptive perception
+(predictive coding), interoceptive regulation (allostatic inference),
+goal selection (expected free energy), attention (precision optimization),
+learning (free energy gradient descent), and planning (generative model
+simulation) are all instances of the same variational objective
+applied at different levels of the neural hierarchy and across different
+Markov blanket boundaries~\cite{friston2010,parr2022}.
 
 The model's modular design allows future extensions: additional sensory
 modalities, social behavior with multiple agents, multi-agent shoal dynamics,
@@ -2771,6 +2983,28 @@ Figures are auto-generated by running:
   ``Dendritic cortical microcircuits approximate the backpropagation
   algorithm,''
   \textit{Advances in Neural Information Processing Systems}, vol.~31, 2018.
+
+\bibitem{feldman2010}
+  H.~Feldman, K.~J.~Friston,
+  ``Attention, uncertainty, and free-energy,''
+  \textit{Frontiers in Human Neuroscience}, vol.~4, 215, 2010.
+
+\bibitem{itti2009}
+  L.~Itti, P.~F.~Baldi,
+  ``Bayesian surprise attracts human attention,''
+  \textit{Vision Research}, vol.~49, no.~10, pp.~1295--1306, 2009.
+
+\bibitem{tishby2000}
+  N.~Tishby, F.~C.~Pereira, W.~Bialek,
+  ``The information bottleneck method,''
+  \textit{Proc.\ 37th Allerton Conference on Communication, Control,
+  and Computing}, pp.~368--377, 2000.
+
+\bibitem{dacosta2020}
+  L.~Da~Costa et~al.,
+  ``Active inference on discrete state-spaces:
+  A synthesis,''
+  \textit{Journal of Mathematical Psychology}, vol.~99, 102447, 2020.
 \end{thebibliography}
 
 \end{document}
