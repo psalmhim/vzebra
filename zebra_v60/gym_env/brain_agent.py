@@ -234,6 +234,11 @@ class BrainAgent:
         self._enemy_pixels_L = 0
         self._enemy_pixels_R = 0
 
+        # Stuck detection: track position history near obstacles
+        self._stuck_counter = 0
+        self._prev_pos = None
+        self._obs_stuck_force_explore = False
+
         # Patch memory: tracks food eaten per plankton patch
         self._patch_visit_counts = {}
 
@@ -786,10 +791,16 @@ class BrainAgent:
             risk_weight = 0.4 - 0.2 * urgency  # reduced: foraging requires risk tolerance
             gain_weight = 0.6 + 0.4 * urgency  # more urgent → value gain more
 
+            # Fix E: exclude occluded food entirely when not urgently hungry
+            #        (urgency < 0.5 = energy > ~50%). Starving fish may still
+            #        attempt to reach food behind rocks.
+            if occluded > 0 and urgency < 0.5:
+                continue  # skip this food entirely — find unblocked food
+
             prospect_score = (
                 cost_weight * (metabolic_cost / 20.0)  # normalized
                 + risk_weight * risk
-                + occluded  # penalty for food behind rocks
+                + occluded  # penalty for food behind rocks (only when starving)
                 - gain_weight * (gain / 20.0) * affordable
                 - patch_bonus  # productive patches are preferred
             )
@@ -1176,6 +1187,30 @@ class BrainAgent:
             effective_goal = choice
             shortcut_active = False
 
+        # 10c. Stuck detection — if fish barely moves near obstacles, force EXPLORE
+        #      to navigate around instead of persisting (Fix C)
+        _fish_x = getattr(env, 'fish_x', 0.0)
+        _fish_y = getattr(env, 'fish_y', 0.0)
+        if self._prev_pos is not None:
+            dx_stuck = _fish_x - self._prev_pos[0]
+            dy_stuck = _fish_y - self._prev_pos[1]
+            dist_moved = math.sqrt(dx_stuck * dx_stuck + dy_stuck * dy_stuck)
+            # Stuck if barely moved AND obstacle pixels visible
+            if dist_moved < 1.5 and self._enemy_pixels_total == 0:
+                # Check if obstacles are visible (from last diagnostics)
+                _obs_last = self.last_diagnostics.get("obs_total", 0)
+                if _obs_last > 10:
+                    self._stuck_counter += 1
+                else:
+                    self._stuck_counter = max(0, self._stuck_counter - 1)
+            else:
+                self._stuck_counter = max(0, self._stuck_counter - 2)
+        self._prev_pos = (_fish_x, _fish_y)
+
+        if self._stuck_counter > 8:
+            effective_goal = GOAL_EXPLORE
+            self._stuck_counter = 0  # reset after forcing explore
+
         # 11. Goal-conditioned behavior
         approach_gain, speed_mod_brain, explore_mod, turn_strategy = \
             goal_to_behavior(effective_goal, cls_probs, posterior, confidence,
@@ -1213,12 +1248,20 @@ class BrainAgent:
         food_px_R = float(np.sum(np.abs(typeR_t - 1.0) < 0.1))
         food_px_total = food_px_L + food_px_R
         obs_total = obs_px_L + obs_px_R
+        _center_escape = 0.0  # post-gain center-obstacle escape only (Fix A)
         if obs_total > 3:
             obs_repulsion = -1.2 * (obs_px_R - obs_px_L) / (obs_total + 1e-8)
-            # Strong center-push when obstacle fills both eyes
             if obs_total > 15:
                 obs_repulsion *= 1.5
             raw_turn = raw_turn + obs_repulsion
+            # Fix A: center-obstacle escape — when rock centered ahead
+            # (both eyes equally covered), add escape turn as post-gain
+            # so it isn't dampened by low approach_gain
+            obs_asymmetry = abs(obs_px_R - obs_px_L)
+            if obs_total > 20 and obs_asymmetry < 5:
+                _last_turn = self.last_diagnostics.get("turn_rate", 0.0)
+                escape_dir = 1.0 if _last_turn >= 0 else -1.0
+                _center_escape = escape_dir * 0.6 * (obs_total / 400.0)
 
         # 12c. Food-directed navigation (FORAGE mode)
         #      Three regimes:
@@ -1277,24 +1320,25 @@ class BrainAgent:
                 explore_mod = max(explore_mod, 1.5)
                 _olfactory_turn = 0.5 * _scaled_diff
 
-        # 12d. Obstacle braking — when rocks densely cover both eyes, the
-        #      directional repulsion cancels out. Add a forward-facing escape
-        #      turn and reduce speed to prevent running into rock walls.
-        #      Suppress braking/escape when foraging toward a known food target.
-        obs_frac = obs_total / 800.0  # fraction of retina covered by rocks
+        # 12d. Obstacle braking — when rocks densely cover retina, brake
+        #      and add escape turn. Fix F: no longer suppressed by foraging
+        #      override — rocks must be respected even when pursuing food.
+        # 12d. Obstacle braking + escape turn at high coverage
+        obs_frac = obs_total / 800.0
         _foraging_with_target = (effective_goal == GOAL_FORAGE
                                  and abs(_olfactory_turn) > 0.05)
         if obs_frac > 0.5:
-            if _foraging_with_target:
-                # Foraging with olfactory target: minimal braking, no escape turn
+            if _foraging_with_target and obs_frac < 0.7:
+                # Fix F: allow foraging through moderate obstacles,
+                # but NOT through dense walls (>70% coverage)
                 speed_mod_brain *= max(0.7, 1.0 - 0.2 * obs_frac)
             else:
-                # No food target: full braking + escape turn
+                # Full braking + escape turn
                 speed_mod_brain *= max(0.3, 1.0 - obs_frac)
                 if obs_px_L > obs_px_R:
-                    raw_turn += 0.4 * obs_frac
-                else:
-                    raw_turn -= 0.4 * obs_frac
+                    _center_escape += 0.4 * obs_frac
+                elif obs_px_R > obs_px_L:
+                    _center_escape -= 0.4 * obs_frac
 
         # 12e. Cover-seeking during FLEE — steer toward the far side of
         #      a rock that shields from the predator (only when TTC allows
@@ -1360,8 +1404,10 @@ class BrainAgent:
                 _cover_turn = -np.clip(cover_diff * 1.5, -0.6, 0.6)
                 threat["cover_target"] = best_target
 
-        # 13. Smoothed turn
-        turn = self.smoother.step(raw_turn * approach_gain)
+        # 13. Smoothed turn — center_escape added post-gain (Fix A)
+        #     so centered-rock escape isn't dampened by approach_gain
+        turn = self.smoother.step(
+            raw_turn * approach_gain + _center_escape)
 
         # 14. BG gating
         valL_eff = valL - 0.1 * turn
@@ -1587,6 +1633,8 @@ class BrainAgent:
             "F_accuracy": getattr(self.model, '_accuracy_term', 0.0),
             "F_complexity": getattr(self.model, '_complexity_term', 0.0),
             "bayesian_surprise": getattr(self.model, '_bayesian_surprise', 0.0),
+            "obs_total": obs_total,
+            "stuck_counter": self._stuck_counter,
             "cms": cms,
             "bg_gate": bg_gate,
             "eye_pos": eye_pos,

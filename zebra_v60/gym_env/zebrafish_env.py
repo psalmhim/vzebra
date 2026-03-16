@@ -980,13 +980,13 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                         push_dir = 1.0 if dy > 0 else -1.0
                         self.fish_y += push_dir * (overlap_y + push_margin)
 
-                    # Deflect heading away from rock center
+                    # Deflect heading away from rock center (Fix D: 0.7 gain)
                     away_angle = math.atan2(dy, dx)
                     angle_diff = away_angle - self.fish_heading
                     angle_diff = math.atan2(
                         math.sin(angle_diff), math.cos(angle_diff))
-                    # Blend heading toward "away from rock" direction
-                    self.fish_heading += 0.4 * angle_diff
+                    # Strong heading deflection to prevent re-approach
+                    self.fish_heading += 0.7 * angle_diff
                     self.fish_heading = math.atan2(
                         math.sin(self.fish_heading),
                         math.cos(self.fish_heading))
