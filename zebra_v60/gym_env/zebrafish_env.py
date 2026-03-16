@@ -802,8 +802,8 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # Below 30% energy: fish weakens, max speed scales down linearly
         # At 30% → cap at 0.7, at 0% → cap at 0.15 (barely moving)
         energy_ratio_now = self.fish_energy / self.energy_max
-        if energy_ratio_now < 0.30:
-            starvation_cap = 0.15 + 0.55 * (energy_ratio_now / 0.30)
+        if energy_ratio_now < 0.20:
+            starvation_cap = 0.15 + 0.55 * (energy_ratio_now / 0.20)
             speed_mod = min(speed_mod, starvation_cap)
 
         # === Fish movement ===
@@ -865,9 +865,9 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # (weakened fish burns reserves faster). Below 30%, severe penalty.
         energy_ratio = self.fish_energy / self.energy_max
         if energy_ratio < 0.30:
-            starvation_mult = 2.0   # critically starving
+            starvation_mult = 1.3   # critically starving
         elif energy_ratio < 0.50:
-            starvation_mult = 1.5   # danger zone
+            starvation_mult = 1.15  # danger zone
         else:
             starvation_mult = 1.0
 
@@ -1646,9 +1646,9 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             # Minimum brightness floor so distant entities remain visible
             floor = 0.18 if t_val > 0.05 else 0.05
             b = max(floor, min(1.0, intensity))
-            if t_val > 0.93:     # food (1.0) — green
+            if t_val > 0.8:      # food (1.0) — green
                 return (int(20 * b), int(220 * b), int(20 * b))
-            elif t_val > 0.8:    # obstacle (0.88) — brown/orange
+            elif t_val > 0.6:    # obstacle (0.75) — brown/orange
                 return (int(180 * b), int(100 * b), int(30 * b))
             elif t_val > 0.4:    # enemy (0.5) — red
                 return (int(220 * b), int(30 * b), int(30 * b))

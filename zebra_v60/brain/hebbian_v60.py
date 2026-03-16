@@ -81,7 +81,21 @@ class HebbianPlasticity:
         total_dw = 0.0
 
         with torch.no_grad():
+            skip_ff = getattr(model, '_skip_ff_update', False)
+
             # === Feedforward weight updates (W_FF) ===
+            if skip_ff:
+                # Only update attention weights, skip all W_FF
+                if hasattr(model, 'attention') and model.attention._last_goal is not None:
+                    att = model.attention
+                    goal = att._last_goal
+                    m_att = att.m
+                    dW = lr * 0.5 * (goal.t() @ m_att)
+                    dW.clamp_(-self.max_dw, self.max_dw)
+                    att.W_att.data += dW
+                    att.W_att.data.clamp_(-0.5, 0.5)
+                self._total_dw_norm = 0.0
+                return
 
             # OT_F: bilateral fused → tectal features
             if hasattr(model, '_last_fused') and hasattr(model, '_last_oF'):

@@ -413,9 +413,9 @@ class BrainAgent:
             float(np.mean(intR[boundary_mask_R]))
             if np.sum(boundary_mask_R) > 0 else 0.0)
 
-        # --- Obstacle pixels (type ≈ 0.88) ---
-        obs_mask_L = np.abs(typeL - 0.88) < 0.1
-        obs_mask_R = np.abs(typeR - 0.88) < 0.1
+        # --- Obstacle pixels (type ≈ 0.75) ---
+        obs_mask_L = np.abs(typeL - 0.75) < 0.1
+        obs_mask_R = np.abs(typeR - 0.75) < 0.1
         obstacle_px_L = float(np.sum(obs_mask_L))
         obstacle_px_R = float(np.sum(obs_mask_R))
 
@@ -1207,8 +1207,8 @@ class BrainAgent:
         # 12b. Obstacle repulsion — steer away from rock-heavy side
         typeL_t = out["retL_full"][0, 400:].cpu().numpy()
         typeR_t = out["retR_full"][0, 400:].cpu().numpy()
-        obs_px_L = float(np.sum(np.abs(typeL_t - 0.88) < 0.1))
-        obs_px_R = float(np.sum(np.abs(typeR_t - 0.88) < 0.1))
+        obs_px_L = float(np.sum(np.abs(typeL_t - 0.75) < 0.1))
+        obs_px_R = float(np.sum(np.abs(typeR_t - 0.75) < 0.1))
         food_px_L = float(np.sum(np.abs(typeL_t - 1.0) < 0.1))
         food_px_R = float(np.sum(np.abs(typeR_t - 1.0) < 0.1))
         food_px_total = food_px_L + food_px_R

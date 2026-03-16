@@ -87,7 +87,7 @@ def make_single_entity_scene(world, entity_class, fish_pos, heading):
     return entity_class
 
 
-def run_step11(n_epochs=150, samples_per_epoch=100, lr=0.01, n_integration=3):
+def run_step11(n_epochs=250, samples_per_epoch=150, lr=0.01, n_integration=3):
     print("=" * 60)
     print("Step 11: Object Classification Training")
     print("=" * 60)
@@ -109,6 +109,9 @@ def run_step11(n_epochs=150, samples_per_epoch=100, lr=0.01, n_integration=3):
 
     optimizer = torch.optim.Adam(trainable_params, lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs)
+
+    # Class weights: 3x for environment (hardest class)
+    class_weights = torch.tensor([1.0, 1.0, 1.0, 1.0, 3.0], device=device)
 
     loss_hist = []
     acc_hist = []
@@ -140,15 +143,16 @@ def run_step11(n_epochs=150, samples_per_epoch=100, lr=0.01, n_integration=3):
             else:
                 goal_probs = torch.tensor([[0.0, 0.0, 1.0, 0.0]], device=device)
 
-            # Multi-step integration
-            for _ in range(n_integration):
+            # Multi-step integration (extra steps for environment class)
+            n_steps = 8 if target_class == CLASS_ENVIRONMENT else n_integration
+            for _ in range(n_steps):
                 out = model.forward(fish_pos, heading, world,
                                     goal_probs=goal_probs)
 
-            # Classification loss
+            # Classification loss (class-weighted)
             cls_logits = out["cls"]  # [1, 5]
             target = torch.tensor([target_class], device=device)
-            loss = F.cross_entropy(cls_logits, target)
+            loss = F.cross_entropy(cls_logits, target, weight=class_weights)
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(trainable_params, 1.0)
@@ -204,7 +208,8 @@ def run_step11(n_epochs=150, samples_per_epoch=100, lr=0.01, n_integration=3):
             goal_probs = torch.tensor([[0.0, 0.0, 1.0, 0.0]], device=device)
 
         with torch.no_grad():
-            for _ in range(n_integration):
+            n_steps = 8 if target_class == CLASS_ENVIRONMENT else n_integration
+            for _ in range(n_steps):
                 out = model.forward(fish_pos, heading, world,
                                     goal_probs=goal_probs)
             pred = out["cls"].argmax(dim=1).item()

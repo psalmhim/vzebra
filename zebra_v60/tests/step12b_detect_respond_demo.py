@@ -58,9 +58,9 @@ def compute_valence_turn(out):
     typeL = out["retL_full"][0, 400:].cpu().numpy()  # [400]
     typeR = out["retR_full"][0, 400:].cpu().numpy()  # [400]
 
-    # Food pixels: type ≈ 1.0 (threshold > 0.93 to avoid obstacle 0.88)
-    food_L = float(np.sum(typeL > 0.93))
-    food_R = float(np.sum(typeR > 0.93))
+    # Food pixels: type ≈ 1.0 (threshold > 0.75 to avoid obstacle 0.75)
+    food_L = float(np.sum(typeL > 0.75))
+    food_R = float(np.sum(typeR > 0.75))
 
     # Enemy pixels: type ≈ 0.5 (0.35 < type < 0.65)
     enemy_L = float(np.sum((typeL > 0.35) & (typeL < 0.65)))
