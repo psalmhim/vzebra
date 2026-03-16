@@ -104,33 +104,49 @@ class GoalPolicy_v60:
 
         uncertainty = 1.0 - 0.5 * (pi_OT + pi_PC)
 
-        # FORAGE: attractive when food is visible
+        # --- Bayesian survival trade-off ---
+        # Starvation risk: ramps from 0 at 50% energy to 1.0 at 0%
+        starvation_risk = max(0.0, (0.50 - energy_ratio) / 0.50)
+        # Critical zone (<30%): quadratic urgency ramp
+        if energy_ratio < 0.30:
+            starvation_risk = starvation_risk ** 0.5  # sharper curve
+
+        # FORAGE: attractive when food visible OR energy is low
+        #   - starvation_risk lowers EFE (makes foraging urgent)
+        #   - predator proximity adds foraging cost (risk of being caught)
+        forage_predator_cost = 0.15 * p_enemy  # foraging near predator is risky
         g_forage = (0.2 * uncertainty
                     - 0.8 * p_food
                     + 0.2 * (0.5 - dopa)
-                    + 0.15)
+                    + 0.15
+                    - 0.6 * starvation_risk     # starving → forage urgency
+                    + forage_predator_cost)      # predator → foraging cost
 
         # FLEE: attractive when enemy is detected
-        # Gaze/TTC/energy modulation for realistic escape urgency
-        energy_penalty = 0.1 * max(0, 1.0 - energy_ratio * 2)
+        #   - starvation_risk raises EFE (fleeing costs energy → death risk)
+        #   - flee speed drain = 2.5-3.5x base → burns reserves fast
         gaze_boost = -0.3 * pred_facing_score * p_enemy
         ttc_boost = -0.2 * max(0, 1.0 - ttc / 50.0) if ttc < 50 else 0.0
+        flee_energy_cost = 0.4 * starvation_risk  # fleeing when starving → death
         g_flee = (0.1 * cms
                   - 0.8 * p_enemy
                   + 0.2
-                  + energy_penalty + gaze_boost + ttc_boost)
+                  + flee_energy_cost             # energy cost of fleeing
+                  + gaze_boost + ttc_boost)
 
         # EXPLORE: attractive when seeing nothing/environment
         g_explore = (0.3 * uncertainty
                      - 0.5 * (p_nothing + p_environ)
                      + 0.1 * cms
-                     + 0.2)
+                     + 0.2
+                     + 0.2 * starvation_risk)    # don't explore when starving
 
         # SOCIAL: attractive when colleagues visible, aversive when enemy near
         g_social = (0.2 * uncertainty
                     - 0.6 * p_colleague
                     + 0.15 * p_enemy
-                    + 0.25)
+                    + 0.25
+                    + 0.15 * starvation_risk)    # don't socialize when starving
 
         return np.array([g_forage, g_flee, g_explore, g_social])
 
@@ -175,20 +191,36 @@ class GoalPolicy_v60:
         exp_logits = np.exp(logits)
         posterior = exp_logits / (exp_logits.sum() + 1e-12)
 
-        # Emergency override: if p_enemy > 0.35, force FLEE
+        # Survival trade-off: Bayesian model comparison
+        # Both predator and starvation are death risks — compare urgencies
         p_enemy = cls_probs[2]
         p_food = cls_probs[1]
         p_colleague = cls_probs[3] if len(cls_probs) > 3 else 0.0
-        if p_enemy > 0.35:
+        starvation_urgency = max(0.0, (0.50 - energy_ratio) / 0.50)
+
+        if p_enemy > 0.35 and starvation_urgency < 0.6:
+            # Predator threat + adequate energy → hard FLEE
             choice = GOAL_FLEE
             self.last_choice = choice
             self.timer = 0
-        # Emergency FORAGE: critically low energy with declining trend
-        elif hunger > 0.7 and hunger_error > 0.3:
+        elif p_enemy > 0.35 and starvation_urgency >= 0.6:
+            # BOTH threats active — Bayesian model comparison
+            # Let the EFE softmax decide: flee (risk starvation) vs forage
+            # (risk predator). The compute_efe() already weighted both risks.
+            choice = int(np.argmax(posterior))
+            self.last_choice = choice
+            self.timer = 0
+        elif starvation_urgency > 0.7:
+            # Critical starvation, no immediate predator → force FORAGE
             choice = GOAL_FORAGE
             self.last_choice = choice
             self.timer = 0
-        elif (self.last_choice == GOAL_FLEE and p_enemy < 0.15
+        elif hunger > 0.6 and hunger_error > 0.2:
+            # Moderate hunger with declining trend → FORAGE
+            choice = GOAL_FORAGE
+            self.last_choice = choice
+            self.timer = 0
+        elif (self.last_choice == GOAL_FLEE and p_enemy < 0.20
               and self.timer >= 3):
             # Early exit from FLEE when no enemy detected
             choice = int(np.argmax(posterior))
@@ -321,17 +353,24 @@ class SpikingGoalSelector(nn.Module):
         p_nothing = cls_probs[0]
         uncertainty = 1.0 - 0.5 * (pi_OT + pi_PC)
 
+        # Bayesian survival trade-off (same as GoalPolicy_v60)
+        starvation_risk = max(0.0, (0.50 - energy_ratio) / 0.50)
+        if energy_ratio < 0.30:
+            starvation_risk = starvation_risk ** 0.5
+
+        forage_predator_cost = 0.15 * p_enemy
         g_forage = (0.2 * uncertainty - 0.8 * p_food
-                    + 0.2 * (0.5 - dopa) + 0.15)
-        energy_penalty = 0.1 * max(0, 1.0 - energy_ratio * 2)
+                    + 0.2 * (0.5 - dopa) + 0.15
+                    - 0.6 * starvation_risk + forage_predator_cost)
         gaze_boost = -0.3 * pred_facing_score * p_enemy
         ttc_boost = -0.2 * max(0, 1.0 - ttc / 50.0) if ttc < 50 else 0.0
+        flee_energy_cost = 0.4 * starvation_risk
         g_flee = (0.1 * cms - 0.8 * p_enemy + 0.2
-                  + energy_penalty + gaze_boost + ttc_boost)
+                  + flee_energy_cost + gaze_boost + ttc_boost)
         g_explore = (0.3 * uncertainty - 0.5 * (p_nothing + p_environ)
-                     + 0.1 * cms + 0.2)
+                     + 0.1 * cms + 0.2 + 0.2 * starvation_risk)
         g_social = (0.2 * uncertainty - 0.6 * p_colleague
-                    + 0.15 * p_enemy + 0.25)
+                    + 0.15 * p_enemy + 0.25 + 0.15 * starvation_risk)
 
         return np.array([g_forage, g_flee, g_explore, g_social])
 
@@ -363,11 +402,21 @@ class SpikingGoalSelector(nn.Module):
                              device=self.device).unsqueeze(0)
         excitation = -self.beta * efe_t
 
-        # Emergency override: inject strong current for survival
+        # Survival override: inject current proportional to urgency
+        # Both threats compete through WTA dynamics (Bayesian model comparison)
         p_enemy = cls_probs[2]
+        starvation_urgency = max(0.0, (0.50 - energy_ratio) / 0.50)
+
         if p_enemy > 0.35:
-            excitation[0, GOAL_FLEE] += 5.0
-        if hunger > 0.7 and hunger_error > 0.3:
+            # Scale FLEE injection by how safe energy is
+            # Full boost (5.0) when energy adequate, reduced when starving
+            flee_boost = 5.0 * max(0.3, 1.0 - starvation_urgency * 0.7)
+            excitation[0, GOAL_FLEE] += flee_boost
+        if starvation_urgency > 0.4:
+            # Starvation current: ramps from 2.0 at 30% to 5.0 at 0%
+            forage_boost = 2.0 + 3.0 * starvation_urgency
+            excitation[0, GOAL_FORAGE] += forage_boost
+        elif hunger > 0.6 and hunger_error > 0.2:
             excitation[0, GOAL_FORAGE] += 4.0
 
         # WTA dynamics: v = tau*v + (1-tau)*(excitation + lateral + self)

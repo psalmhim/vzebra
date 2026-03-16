@@ -22,7 +22,7 @@ Pure numpy — no torch dependency.
 class Amygdala:
     """Minimal fear-circuit producing a persistent threat arousal signal."""
 
-    def __init__(self, decay=0.85, rise_rate=0.6, retinal_gain=0.08,
+    def __init__(self, decay=0.75, rise_rate=0.6, retinal_gain=0.08,
                  proximity_range=200.0):
         self.decay = decay
         self.rise_rate = rise_rate

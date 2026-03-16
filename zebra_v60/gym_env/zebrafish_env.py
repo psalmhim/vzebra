@@ -799,8 +799,12 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         speed_mod = float(action[1])
 
         # === Energy-based speed capping (Feature A) ===
-        if self.fish_energy < 20:
-            speed_mod = min(speed_mod, 0.6 * self.fish_energy / 20.0)
+        # Below 30% energy: fish weakens, max speed scales down linearly
+        # At 30% → cap at 0.7, at 0% → cap at 0.15 (barely moving)
+        energy_ratio_now = self.fish_energy / self.energy_max
+        if energy_ratio_now < 0.20:
+            starvation_cap = 0.15 + 0.55 * (energy_ratio_now / 0.20)
+            speed_mod = min(speed_mod, starvation_cap)
 
         # === Fish movement ===
         self.fish_heading += turn_rate * self.fish_turn_max
@@ -856,8 +860,20 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             flee_mult = 2.5 + 1.0 * self._panic_intensity
         else:
             flee_mult = 1.0
+
+        # Starvation pressure: below 50% energy, metabolic cost rises
+        # (weakened fish burns reserves faster). Below 30%, severe penalty.
+        energy_ratio = self.fish_energy / self.energy_max
+        if energy_ratio < 0.30:
+            starvation_mult = 1.3   # critically starving
+        elif energy_ratio < 0.50:
+            starvation_mult = 1.15  # danger zone
+        else:
+            starvation_mult = 1.0
+
         self.fish_energy -= (self.energy_drain_base
-                             + self.energy_drain_speed * speed_mod * flee_mult)
+                             + self.energy_drain_speed * speed_mod * flee_mult
+                             ) * starvation_mult
         self.fish_energy = max(0.0, self.fish_energy)
 
         # === Check predator catch ===

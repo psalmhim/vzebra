@@ -1,3 +1,21 @@
+"""
+Zebrafish SNN v60 — Two-Compartment Predictive Coding with Attention.
+
+Based on Lee, Lee & Park (2026) "Modulation of bias in predictive-coding
+spiking neural networks for selective attention."
+
+Each trainable neuron has two compartments:
+  - Soma (V_s): integrates bottom-up feedforward input + bounded apical
+    contribution + attention bias
+  - Apical dendrite (V_a): integrates top-down feedback from the next
+    higher layer (1-step delayed)
+
+Prediction error = V_a - V_s (apical-somatic mismatch).
+Attention = additive somatic bias from goal-driven attention neurons.
+
+OT_L / OT_R remain as simple TwoComp (frozen topographic maps).
+"""
+
 import torch
 import torch.nn as nn
 from .retina_sampling_v60 import sample_retina_binocular_v60
@@ -6,15 +24,210 @@ from .pc_precision_v60 import PrecisionUnit
 from .lateral_inhibition_v60 import lateral_inhibition_pair
 from .saccade_module_v60 import SaccadeStabilizer
 
+
+# ---------------------------------------------------------------------------
+# Neuron models
+# ---------------------------------------------------------------------------
+
 class TwoComp(nn.Module):
+    """Original single-compartment leaky integrator (used for frozen OT_L/OT_R)."""
+
     def __init__(self, n_in, n_out, device="cpu"):
         super().__init__()
         self.W = nn.Parameter(0.01 * torch.randn(n_in, n_out, device=device))
         self.v = torch.zeros(1, n_out, device=device)
         self.device = device
+
     def step(self, x):
-        self.v = 0.8*self.v + 0.2*(x @ self.W)
+        self.v = 0.8 * self.v + 0.2 * (x @ self.W)
         return self.v
+
+
+class PredictiveTwoComp(nn.Module):
+    """Two-compartment predictive coding neuron with attention modulation.
+
+    Dynamics (per timestep):
+        V_a = tau_a * V_a + (1 - tau_a) * (fb @ W_FB)        # apical
+        V_s = tau_s * V_s + (1 - tau_s) * (x @ W_FF + f(V_a) + alpha * m)  # soma
+        PE  = V_a - V_s                                       # prediction error
+
+    f_apical(x) = 0.5 * (sigmoid(x) - 0.5)  bounded to [-0.25, +0.25]
+
+    The apical compartment is updated AFTER the somatic step using the
+    current higher-layer output, so feedback is effectively 1-step delayed.
+    """
+
+    TARGET_RMS = 5.0  # homeostatic gain control target
+
+    def __init__(self, n_in, n_out, n_fb=0, device="cpu",
+                 tau_s=0.8, tau_a=0.65, alpha_att=0.1):
+        super().__init__()
+        self.n_in = n_in
+        self.n_out = n_out
+        self.device = device
+        self.tau_s = tau_s
+        self.tau_a = tau_a
+        self.alpha_att = alpha_att
+
+        # Feedforward weight (same role as old TwoComp.W)
+        self.W_FF = nn.Parameter(
+            0.01 * torch.randn(n_in, n_out, device=device))
+
+        # Feedback weight (top-down from higher layer)
+        # 2x W_FF scale: feedback source has fewer neurons than feedforward,
+        # so W_FB must be larger to produce comparable apical drive
+        if n_fb > 0:
+            self.W_FB = nn.Parameter(
+                0.02 * torch.randn(n_fb, n_out, device=device))
+        else:
+            self.W_FB = None
+
+        # State tensors (not parameters — reset each episode)
+        self.v_s = torch.zeros(1, n_out, device=device)       # somatic
+        self.v_a = torch.zeros(1, n_out, device=device)       # apical
+        self.m_att = torch.zeros(1, n_out, device=device)     # attention mod
+        self.pred_error = torch.zeros(1, n_out, device=device)
+
+        # Backward-compatible alias
+        self.v = self.v_s
+
+    def reset(self):
+        """Reset all membrane states to zero."""
+        self.v_s = torch.zeros(1, self.n_out, device=self.device)
+        self.v_a = torch.zeros(1, self.n_out, device=self.device)
+        self.m_att = torch.zeros(1, self.n_out, device=self.device)
+        self.pred_error = torch.zeros(1, self.n_out, device=self.device)
+        self.v = self.v_s
+
+    @staticmethod
+    def f_apical(x):
+        """Bounded apical-to-soma coupling: [-0.25, +0.25]."""
+        return 0.5 * (torch.sigmoid(x) - 0.5)
+
+    def step(self, x, att_proj=None):
+        """Somatic forward step (bottom-up + apical + attention).
+
+        Args:
+            x: bottom-up input [1, n_in]
+            att_proj: per-neuron attention projection [1, n_out] or None
+        Returns:
+            v_s: somatic membrane potential [1, n_out]
+        """
+        # Attention modulator update (slow dynamics)
+        if att_proj is not None:
+            self.m_att = 0.9 * self.m_att + 0.1 * att_proj
+
+        # Bounded apical contribution (from previous step's feedback)
+        apical_drive = self.f_apical(self.v_a)
+
+        # Somatic integration: feedforward + apical + attention
+        ff_drive = x @ self.W_FF
+        self.v_s = (self.tau_s * self.v_s
+                    + (1.0 - self.tau_s) * ff_drive
+                    + apical_drive
+                    + self.alpha_att * self.m_att)
+        # Divisive normalization (homeostatic gain control):
+        # prevents cascading activity growth up the hierarchy.
+        # Biologically: neurons maintain a target firing rate.
+        v_rms = (self.v_s ** 2).mean().sqrt()
+        if v_rms > self.TARGET_RMS:
+            self.v_s = self.v_s * (self.TARGET_RMS / v_rms)
+
+        # Compute prediction error (apical prediction - somatic evidence)
+        self.pred_error = self.v_a - self.v_s
+
+        # Keep backward-compatible .v alias
+        self.v = self.v_s
+        return self.v_s
+
+    def update_apical(self, fb):
+        """Update apical dendrite with top-down feedback.
+
+        Called AFTER the feedforward pass, so this feedback takes effect
+        on the NEXT timestep's somatic computation (1-step delay).
+
+        Args:
+            fb: feedback from the next higher layer [1, n_fb]
+        """
+        if self.W_FB is not None:
+            self.v_a = (self.tau_a * self.v_a
+                        + (1.0 - self.tau_a) * (fb @ self.W_FB))
+            # Clamp apical to prevent runaway
+            self.v_a = torch.clamp(self.v_a, -5.0, 5.0)
+
+
+class AttentionModulator(nn.Module):
+    """Goal-driven attention modulation for the SNN hierarchy.
+
+    Maps 4 goal probabilities → 8 attention neurons → per-layer projections.
+    Implements slow neuromodulatory dynamics (tau_att >> tau_s).
+
+    Based on Lee et al.: attention as additive somatic excitability bias.
+    """
+
+    N_GOALS = 4
+    N_ATT = 8  # 2 attention neurons per goal
+
+    def __init__(self, n_goals=4, device="cpu"):
+        super().__init__()
+        self.device = device
+
+        # Goal → attention neuron weights
+        # Structured init: each goal gets 2 dedicated neurons
+        W_att_init = torch.zeros(n_goals, self.N_ATT, device=device)
+        for g in range(n_goals):
+            W_att_init[g, g * 2] = 0.1
+            W_att_init[g, g * 2 + 1] = 0.1
+        self.W_att = nn.Parameter(W_att_init)
+
+        # Attention neuron state (slow dynamics)
+        self.m = torch.zeros(1, self.N_ATT, device=device)
+        self.tau_att = 0.93   # slow: ~14 step half-life
+
+        # Per-layer projection weights
+        self.W_proj = nn.ModuleDict()
+        self._last_goal = None
+
+        self.to(device)
+
+    def register_layer(self, name, n_out):
+        """Register a target layer for attention projection."""
+        self.W_proj[name] = nn.Linear(self.N_ATT, n_out, bias=False)
+        nn.init.normal_(self.W_proj[name].weight, std=0.01)
+        self.W_proj[name].to(self.device)
+
+    def step(self, goal_probs):
+        """Update attention neuron state.
+
+        Args:
+            goal_probs: [1, 4] goal probability tensor
+        Returns:
+            m: [1, N_ATT] attention neuron activations
+        """
+        self._last_goal = goal_probs.detach()
+        drive = goal_probs @ self.W_att   # [1, N_ATT]
+        self.m = self.tau_att * self.m + (1.0 - self.tau_att) * drive
+        return self.m
+
+    def project(self, layer_name):
+        """Project attention state to a specific layer.
+
+        Returns:
+            [1, n_out] attention signal for that layer, or None
+        """
+        if layer_name not in self.W_proj:
+            return None
+        return self.W_proj[layer_name](self.m)  # [1, n_out]
+
+    def reset(self):
+        """Reset attention neuron state."""
+        self.m = torch.zeros(1, self.N_ATT, device=self.device)
+        self._last_goal = None
+
+
+# ---------------------------------------------------------------------------
+# Main SNN model
+# ---------------------------------------------------------------------------
 
 class ZebrafishSNN_v60(nn.Module):
     def __init__(self, device="cpu"):
@@ -26,34 +239,45 @@ class ZebrafishSNN_v60(nn.Module):
         self.OTL = 600
         self.OTR = 600
         self.OTF = 800
-        self.PT  = 400
+        self.PT = 400
         self.PC_PER = 120
         self.PC_INT = 30
 
-        # OT left/right receive full 800-dim retinal input
+        # --- Frozen layers (simple TwoComp, topographic map) ---
         self.OT_L = TwoComp(self.RET, self.OTL, device)
         self.OT_R = TwoComp(self.RET, self.OTR, device)
-        self.OT_F = TwoComp(self.OTL+self.OTR, self.OTF, device)
-        self.PT_L = TwoComp(self.OTF, self.PT, device)
-        self.PC_per = TwoComp(self.PT, self.PC_PER, device)
-        self.PC_int = TwoComp(self.PC_PER, self.PC_INT, device)
+
+        # --- Trainable layers (PredictiveTwoComp with feedback + attention) ---
+        self.OT_F = PredictiveTwoComp(
+            self.OTL + self.OTR, self.OTF, n_fb=self.PT, device=device)
+        self.PT_L = PredictiveTwoComp(
+            self.OTF, self.PT, n_fb=self.PC_PER, device=device)
+        self.PC_per = PredictiveTwoComp(
+            self.PT, self.PC_PER, n_fb=self.PC_INT, device=device)
+        self.PC_int = PredictiveTwoComp(
+            self.PC_PER, self.PC_INT, n_fb=50, device=device)
 
         # precision units
         self.prec_OT = PrecisionUnit(self.OTF, device)
         self.prec_PC = PrecisionUnit(self.PC_PER, device)
 
-        # output heads — TwoComp for temporal smoothing (Level 1 SNN-up)
-        self.mot = TwoComp(self.PC_INT, 200, device)
-        self.eye = TwoComp(self.PC_INT, 100, device)
-        self.DA  = TwoComp(self.PC_INT, 50, device)
+        # output heads (no higher layer → n_fb=0)
+        self.mot = PredictiveTwoComp(self.PC_INT, 200, n_fb=0, device=device)
+        self.eye = PredictiveTwoComp(self.PC_INT, 100, n_fb=0, device=device)
+        self.DA = PredictiveTwoComp(self.PC_INT, 50, n_fb=0, device=device)
 
-        # Classification head: branches from bilateral retinal type channels
-        # Uses type-encoding channels (400 per eye = 800 total) which carry
-        # entity-specific spectral signatures without foveation distortion
-        self.cls_hidden = nn.Linear(800, 64)
-        self.cls_out = nn.Linear(64, 5)
+        # Classification head (800 type pixels + 4 aggregate pixel counts)
+        self.cls_hidden = nn.Linear(804, 128)
+        self.cls_out = nn.Linear(128, 5)
 
         self.saccade = SaccadeStabilizer()
+
+        # Attention modulator
+        self.attention = AttentionModulator(n_goals=4, device=device)
+        self.attention.register_layer("OT_F", self.OTF)
+        self.attention.register_layer("PT_L", self.PT)
+        self.attention.register_layer("PC_per", self.PC_PER)
+        self.attention.register_layer("PC_int", self.PC_INT)
 
         # Move all parameters to the target device
         self.to(device)
@@ -64,59 +288,94 @@ class ZebrafishSNN_v60(nn.Module):
         """Reset all state tensors, detaching from any computation graph."""
         self.OT_L.v = torch.zeros(1, self.OTL, device=self.device)
         self.OT_R.v = torch.zeros(1, self.OTR, device=self.device)
-        self.OT_F.v = torch.zeros(1, self.OTF, device=self.device)
-        self.PT_L.v = torch.zeros(1, self.PT, device=self.device)
-        self.PC_per.v = torch.zeros(1, self.PC_PER, device=self.device)
-        self.PC_int.v = torch.zeros(1, self.PC_INT, device=self.device)
-        # Output heads (Level 1 SNN-up)
-        self.mot.v = torch.zeros(1, 200, device=self.device)
-        self.eye.v = torch.zeros(1, 100, device=self.device)
-        self.DA.v = torch.zeros(1, 50, device=self.device)
+        for layer in [self.OT_F, self.PT_L, self.PC_per, self.PC_int,
+                      self.mot, self.eye, self.DA]:
+            layer.reset()
+        self.attention.reset()
 
-    def forward(self, pos, heading, world, depth_shading=False, depth_scale=80.0,
-                max_dist=200):
+    def forward(self, pos, heading, world, depth_shading=False,
+                depth_scale=80.0, max_dist=200, goal_probs=None):
+        # 1. Retinal sampling
         L, R = sample_retina_binocular_v60(
             pos, heading, world, device=self.device,
             depth_shading=depth_shading, depth_scale=depth_scale,
             max_dist=max_dist)
-        # OT left/right (now 800-dim input with type channel)
+
+        # 2. OT left/right (frozen TwoComp)
         oL = self.OT_L.step(L)
         oR = self.OT_R.step(R)
-        # lateral inhibition
         oL, oR = lateral_inhibition_pair(oL, oR, lam=0.25)
         fused = torch.cat([oL, oR], dim=1)
-        oF = self.OT_F.step(fused)
 
-        # apply precision
+        # 3. Attention modulator (goal-driven)
+        if goal_probs is None:
+            goal_probs = torch.zeros(1, 4, device=self.device)
+        att = self.attention.step(goal_probs)
+
+        # 4. Feedforward pass (soma uses previous step's apical state)
+        att_OTF = self.attention.project("OT_F")
+        oF = self.OT_F.step(fused, att_proj=att_OTF)
+
         pi_OT = self.prec_OT.compute_pi()
         oF_weighted = pi_OT * oF
 
-        pt = self.PT_L.step(oF_weighted)
-        per = self.PC_per.step(pt)
+        att_PT = self.attention.project("PT_L")
+        pt = self.PT_L.step(oF_weighted, att_proj=att_PT)
+
+        att_PC_per = self.attention.project("PC_per")
+        per = self.PC_per.step(pt, att_proj=att_PC_per)
         pi_PC = self.prec_PC.compute_pi()
         per = pi_PC * per
 
-        intent = self.PC_int.step(per)
+        att_PC_int = self.attention.project("PC_int")
+        intent = self.PC_int.step(per, att_proj=att_PC_int)
 
         m = self.mot.step(intent)
         e = self.eye.step(intent)
         d = self.DA.step(intent)
 
-        # Classification from bilateral retinal type channels (no gradient to SNN)
-        # Type channels: L[:, 400:] and R[:, 400:]
-        type_features = torch.cat([L[:, 400:], R[:, 400:]], dim=1)  # [1, 800]
-        cls_h = torch.relu(self.cls_hidden(type_features))
+        # 5. Feedback pass (top-down, update apical for NEXT timestep)
+        self.PC_int.update_apical(d)         # DA → PC_int
+        self.PC_per.update_apical(intent)    # PC_int → PC_per
+        self.PT_L.update_apical(per)         # PC_per → PT_L
+        self.OT_F.update_apical(pt)          # PT_L → OT_F
+
+        # 6. Classification
+        type_L = L[:, 400:]
+        type_R = R[:, 400:]
+        type_features = torch.cat([type_L, type_R], dim=1)  # [1, 800]
+        # Add aggregate pixel counts (obstacle vs enemy disambiguation)
+        obs_count = ((torch.abs(type_L - 0.75) < 0.1).float().sum(dim=1, keepdim=True)
+                     + (torch.abs(type_R - 0.75) < 0.1).float().sum(dim=1, keepdim=True))
+        ene_count = ((torch.abs(type_L - 0.5) < 0.1).float().sum(dim=1, keepdim=True)
+                     + (torch.abs(type_R - 0.5) < 0.1).float().sum(dim=1, keepdim=True))
+        food_count = ((torch.abs(type_L - 1.0) < 0.1).float().sum(dim=1, keepdim=True)
+                      + (torch.abs(type_R - 1.0) < 0.1).float().sum(dim=1, keepdim=True))
+        boundary_count = ((torch.abs(type_L - 0.12) < 0.05).float().sum(dim=1, keepdim=True)
+                          + (torch.abs(type_R - 0.12) < 0.05).float().sum(dim=1, keepdim=True))
+        # Normalize counts to [0, 1] range (max ~400 pixels per eye)
+        scale = 1.0 / 50.0
+        agg = torch.cat([obs_count * scale, ene_count * scale,
+                         food_count * scale, boundary_count * scale], dim=1)
+        cls_input = torch.cat([type_features, agg], dim=1)  # [1, 804]
+        cls_h = torch.relu(self.cls_hidden(cls_input))
         cls = self.cls_out(cls_h)
 
-        # Store intermediate activations for free energy computation
+        # 7. Per-layer prediction errors
+        pe_OTF = self.OT_F.pred_error.abs().mean().item()
+        pe_PT = self.PT_L.pred_error.abs().mean().item()
+        pe_PC_per = self.PC_per.pred_error.abs().mean().item()
+        pe_PC_int = self.PC_int.pred_error.abs().mean().item()
+
+        # 8. Store intermediates for Hebbian / diagnostics
         self._last_oL = oL
         self._last_oR = oR
         self._last_oF = oF
         self._last_fused = fused
         self._last_pi_OT = pi_OT
         self._last_pi_PC = pi_PC
+        self._last_att = att
 
-        # Retinal intensity channels only (first 400 pixels per eye)
         retL_intensity = L[:, :400]
         retR_intensity = R[:, :400]
 
@@ -124,20 +383,26 @@ class ZebrafishSNN_v60(nn.Module):
             "motor": m,
             "eye": e,
             "DA": d,
-            "cls": cls,           # classification logits [1, 5]
+            "cls": cls,
             "retL": retL_intensity,
             "retR": retR_intensity,
-            "retL_full": L,       # full 2-channel [1, 800]
-            "retR_full": R,       # full 2-channel [1, 800]
+            "retL_full": L,
+            "retR_full": R,
             "oL": oL,
             "oR": oR,
             "oF": oF,
             "fused": fused,
-            "pt": pt,             # PT_L output [1, 400]
-            "per": per,           # PC_per output [1, 120]
-            "intent": intent,     # PC_int output [1, 30]
+            "pt": pt,
+            "per": per,
+            "intent": intent,
             "pi_OT": pi_OT.mean().item(),
             "pi_PC": pi_PC.mean().item(),
+            # New predictive coding outputs
+            "pe_OTF": pe_OTF,
+            "pe_PT": pe_PT,
+            "pe_PC_per": pe_PC_per,
+            "pe_PC_int": pe_PC_int,
+            "att_signals": att.detach(),
         }
 
     def get_saveable_state(self):
@@ -145,25 +410,94 @@ class ZebrafishSNN_v60(nn.Module):
         return self.state_dict()
 
     def load_saveable_state(self, state):
-        """Restore learned weights from a checkpoint."""
-        self.load_state_dict(state)
+        """Restore learned weights from a checkpoint.
+
+        Handles old checkpoints that use TwoComp.W or nn.Linear (weight/bias)
+        instead of PredictiveTwoComp.W_FF by remapping parameter names.
+        """
+        has_old_keys = any(
+            (k.endswith('.W') and not k.endswith('.W_FF')
+             and not k.endswith('.W_FB'))
+            or (k.split('.')[0] in ('mot', 'eye', 'DA')
+                and k.endswith('.weight'))
+            for k in state.keys()
+            if k.split('.')[0] in ('OT_F', 'PT_L', 'PC_per', 'PC_int',
+                                   'mot', 'eye', 'DA')
+        )
+        if has_old_keys:
+            remapped = {}
+            remap_layers = {'OT_F', 'PT_L', 'PC_per', 'PC_int',
+                            'mot', 'eye', 'DA'}
+            # Layers that were nn.Linear (weight is transposed vs W_FF)
+            linear_layers = {'mot', 'eye', 'DA'}
+            for k, v in state.items():
+                parts = k.split('.')
+                layer = parts[0]
+                if len(parts) == 2 and layer in remap_layers:
+                    if parts[1] == 'W':
+                        remapped[f"{layer}.W_FF"] = v
+                    elif parts[1] == 'weight' and layer in linear_layers:
+                        remapped[f"{layer}.W_FF"] = v.t()
+                    elif parts[1] == 'bias' and layer in linear_layers:
+                        pass  # drop bias — PredictiveTwoComp has none
+                    else:
+                        remapped[k] = v
+                else:
+                    remapped[k] = v
+            self.load_state_dict(remapped, strict=False)
+            print("[SNN] Migrated old checkpoint → PredictiveTwoComp")
+        else:
+            self.load_state_dict(state, strict=False)
 
     def compute_free_energy(self):
-        """Compute free energy as precision-weighted prediction error at OT level."""
-        if not hasattr(self, '_last_oF'):
-            return 0.0
-        oF = self._last_oF
-        fused = self._last_fused
-        reconstructed = oF @ self.OT_F.W.t()
-        error = fused - reconstructed
-        pi_OT = self._last_pi_OT.mean()
-        F = 0.5 * pi_OT * (error ** 2).mean()
-        return F.item()
+        """Compute variational free energy F as precision-weighted hierarchical PE.
+
+        F = Σ_l (π_l/2) * ||ε_l||²  +  D_KL(q(θ)||p(θ))
+
+        The PE term measures prediction accuracy (how well the generative
+        model explains observations).  The KL term measures complexity
+        (how far the posterior deviates from the prior).  F upper-bounds
+        Bayesian surprise: F ≥ -ln p(o).
+
+        Also computes Bayesian surprise as the absolute change in free
+        energy between timesteps: large ΔF signals a regime change.
+        """
+        accuracy = 0.0
+        # Precision-weighted layers
+        for layer, prec in [(self.OT_F, self.prec_OT),
+                            (self.PC_per, self.prec_PC)]:
+            pe = layer.pred_error
+            if pe is not None:
+                pi = prec.compute_pi().mean().item()
+                accuracy += 0.5 * pi * float((pe ** 2).mean())
+        # Non-precision-weighted layers (implicit π=1)
+        for layer in [self.PT_L, self.PC_int]:
+            pe = layer.pred_error
+            if pe is not None:
+                accuracy += 0.5 * float((pe ** 2).mean())
+
+        # Complexity: KL divergence between current and prior precision
+        # D_KL(π||π_prior) ≈ Σ (γ_i - γ_prior)² / 2 for Gaussian approx
+        complexity = 0.0
+        for prec in [self.prec_OT, self.prec_PC]:
+            complexity += 0.5 * float((prec.gamma.detach() ** 2).mean())
+
+        F = accuracy + 0.01 * complexity  # small weight on complexity
+
+        # Bayesian surprise: |F(t) - F(t-1)|
+        prev_F = getattr(self, '_prev_free_energy', F)
+        self._bayesian_surprise = abs(F - prev_F)
+        self._prev_free_energy = F
+        self._accuracy_term = accuracy
+        self._complexity_term = complexity
+
+        return F
+
 
 @torch.no_grad()
 def enforce_motor_directionality(model):
-    # TwoComp.W shape is [n_in, n_out] = [30, 200] (transposed vs nn.Linear)
-    W = model.mot.W  # shape [30, 200]
+    # PredictiveTwoComp uses W_FF instead of W
+    W = model.mot.W_FF  # shape [30, 200]
     W[:] = 0.0
 
     left_size = model.PC_INT // 2

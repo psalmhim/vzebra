@@ -188,9 +188,9 @@ class BrainAgent:
         # SNN model
         self.model = ZebrafishSNN_v60(device=self.device)
         if cls_weights_path and os.path.exists(cls_weights_path):
-            self.model.load_state_dict(
-                torch.load(cls_weights_path, weights_only=True,
-                           map_location=self.device))
+            state = torch.load(cls_weights_path, weights_only=True,
+                               map_location=self.device)
+            self.model.load_saveable_state(state)
         self.model.reset()
         self.model.eval()
 
@@ -834,10 +834,14 @@ class BrainAgent:
         # 2. Effective heading with eye position
         effective_heading = world_heading + self.ot.eye_pos * 0.25
 
-        # 3. Forward pass through SNN (with depth shading)
+        # 3. Forward pass through SNN (with depth shading + attention)
+        goal_t = torch.tensor(
+            self.goal_vec, dtype=torch.float32,
+            device=self.device).unsqueeze(0)  # [1, 4]
         with torch.no_grad():
             out = self.model.forward(fish_pos, effective_heading, world,
-                                     depth_shading=True)
+                                     depth_shading=True,
+                                     goal_probs=goal_t)
 
         # Store SNN output for neural activity visualization
         self._last_snn_out = out
@@ -846,38 +850,15 @@ class BrainAgent:
         cls_logits = out["cls"]
         cls_probs = F.softmax(cls_logits, dim=1)[0].cpu().numpy()
 
-        # 4b. Obstacle-aware correction: large rocks flood the type channel
-        #     with obstacle pixels (0.75), which the classifier may confuse
-        #     with enemy signal.  Count ground-truth type pixels to discount
-        #     false enemy classification when rocks dominate the retina.
+        # 4b. Count enemy pixels from the type channel (ground truth)
         typeL_raw = out["retL_full"][0, 400:].cpu().numpy()
         typeR_raw = out["retR_full"][0, 400:].cpu().numpy()
-        OBSTACLE_TYPE_VAL = 0.75
-        ENEMY_TYPE_VAL_CHECK = 0.5
-        obs_px = (np.sum(np.abs(typeL_raw - OBSTACLE_TYPE_VAL) < 0.1)
-                  + np.sum(np.abs(typeR_raw - OBSTACLE_TYPE_VAL) < 0.1))
-        enemy_px = (np.sum(np.abs(typeL_raw - ENEMY_TYPE_VAL_CHECK) < 0.1)
-                    + np.sum(np.abs(typeR_raw - ENEMY_TYPE_VAL_CHECK) < 0.1))
-        if obs_px > 10 and enemy_px < 5:
-            # Heavy obstacle presence with few real enemy pixels → false alarm
-            discount = min(0.35, obs_px * 0.008)
-            cls_probs[2] = max(0.02, cls_probs[2] - discount)
-            cls_probs[4] += discount * 0.7   # shift mass to environment
-            cls_probs[0] += discount * 0.3   # rest to nothing
-            cls_probs /= cls_probs.sum() + 1e-8
-
-        # 4c. Retinal alarm: boost enemy probability from direct pixel evidence
-        #     (must run BEFORE goal selection at step 9 so FLEE can trigger)
         ENEMY_TYPE_VAL = 0.5
         enemy_px_L = np.sum(np.abs(typeL_raw - ENEMY_TYPE_VAL) < 0.1)
         enemy_px_R = np.sum(np.abs(typeR_raw - ENEMY_TYPE_VAL) < 0.1)
         self._enemy_pixels_total = int(enemy_px_L + enemy_px_R)
         self._enemy_pixels_L = int(enemy_px_L)
         self._enemy_pixels_R = int(enemy_px_R)
-        if self._enemy_pixels_total >= 2:
-            alarm_boost = min(0.6, self._enemy_pixels_total * 0.08)
-            cls_probs[2] = min(1.0, cls_probs[2] + alarm_boost)
-            cls_probs /= cls_probs.sum() + 1e-8
 
         # 4d. Extract retinal features for active inference (Phase 1)
         if self.use_active_inference:
@@ -949,6 +930,16 @@ class BrainAgent:
             if self.allostasis is not None:
                 self.allostasis.stress = min(
                     1.0, self.allostasis.stress + 0.1 * threat_arousal)
+
+        # 7b4. Final pixel-evidence cap on p_enemy
+        #      The classifier + amygdala boost can hallucinate threats in
+        #      complex multi-entity scenes.  Cap p_enemy based on actual
+        #      enemy pixels in the type channel (ground truth).
+        #      Need ~25 pixels for full confidence; 0 pixels → cap at 0.02.
+        max_p_enemy = max(0.02, min(1.0, self._enemy_pixels_total / 25.0))
+        if cls_probs[2] > max_p_enemy:
+            cls_probs[2] = max_p_enemy
+            cls_probs /= cls_probs.sum() + 1e-8
 
         # 7c. Sleep/wake modulation (Step 23)
         sleep_state = None
@@ -1137,7 +1128,7 @@ class BrainAgent:
         #     ≥ 90%: prefer socializing (well-fed fish joins conspecifics)
         _energy_r = energy / getattr(env, 'energy_max', 100.0)
         if _energy_r < 0.90:
-            forage_drive = 0.5 * (0.90 - _energy_r) / 0.90  # 0→0.5 ramp
+            forage_drive = 0.7 * (0.90 - _energy_r) / 0.90  # 0→0.7 ramp
             current_bonus[GOAL_FORAGE] -= forage_drive       # lower EFE = preferred
             current_bonus[GOAL_SOCIAL] += forage_drive * 0.3  # suppress social
         else:
@@ -1467,20 +1458,20 @@ class BrainAgent:
         # Pass food prospects to env for target highlight rendering
         env._food_prospects = food_prospects
 
-        # 17. Precision update (freeze gamma during sleep — Step 23)
-        oF = out["oF"]
+        # 17. Precision update — driven by prediction error (predictive coding)
         _precision_frozen = (sleep_state is not None
                              and sleep_state["is_sleeping"]
                              and sleep_state["precision_freeze"])
-        if self.prev_oF is not None and not _precision_frozen:
-            error_OT = oF - self.prev_oF
-            self.model.prec_OT.update_precision(error_OT)
-            self.model.prec_PC.update_precision(
-                torch.tensor([[F_visual]], device=self.device))
+        if not _precision_frozen:
+            pe_OT = self.model.OT_F.pred_error
+            if pe_OT is not None:
+                self.model.prec_OT.update_precision(pe_OT)
+            pe_PC = self.model.PC_per.pred_error
+            if pe_PC is not None:
+                self.model.prec_PC.update_precision(pe_PC)
             with torch.no_grad():
                 self.model.prec_OT.gamma.data += 0.008 * (dopa - 0.5)
                 self.model.prec_PC.gamma.data += 0.008 * (dopa - 0.5)
-        self.prev_oF = oF.clone()
 
         # 18. Compute gym action
         # Negate turn: brain computes in world coords (y-up), gym uses y-down
@@ -1593,6 +1584,9 @@ class BrainAgent:
             "dopa": dopa,
             "rpe": rpe,
             "F_visual": F_visual,
+            "F_accuracy": getattr(self.model, '_accuracy_term', 0.0),
+            "F_complexity": getattr(self.model, '_complexity_term', 0.0),
+            "bayesian_surprise": getattr(self.model, '_bayesian_surprise', 0.0),
             "cms": cms,
             "bg_gate": bg_gate,
             "eye_pos": eye_pos,
@@ -1617,6 +1611,12 @@ class BrainAgent:
             "experience": experience,
             "explore_bonus": explore_bonus,
             "threat": threat,
+            # Predictive coding diagnostics
+            "pe_OTF": out.get("pe_OTF", 0.0),
+            "pe_PT": out.get("pe_PT", 0.0),
+            "pe_PC_per": out.get("pe_PC_per", 0.0),
+            "pe_PC_int": out.get("pe_PC_int", 0.0),
+            "att_signals": out.get("att_signals", None),
         }
 
         # VAE diagnostics (Step 16)
@@ -1733,9 +1733,13 @@ class BrainAgent:
             if _ta > 0.3:
                 _threat_boost = 1.0 + 2.0 * _ta  # up to 3x
         self.hebbian.update(self.model, _rpe, _dopa, threat_boost=_threat_boost)
+        # PE-driven feedback learning (every step, independent of RPE)
+        if not getattr(self, '_skip_fb_update', False):
+            self.hebbian.update_feedback(self.model)
         hebb_stats = self.hebbian.get_stats()
         self.last_diagnostics["hebb_updates"] = hebb_stats["hebb_updates"]
         self.last_diagnostics["hebb_dw_norm"] = hebb_stats["hebb_dw_norm"]
+        self.last_diagnostics["hebb_fb_dw_norm"] = hebb_stats["hebb_fb_dw_norm"]
         self.last_diagnostics["escape_successes"] = hebb_stats["escape_successes"]
         self.last_diagnostics["escape_failures"] = hebb_stats["escape_failures"]
         self.last_diagnostics["threat_boost"] = _threat_boost
