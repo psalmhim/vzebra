@@ -128,20 +128,30 @@ class ThreatDecoder(nn.Module):
 # ---------------------------------------------------------------------------
 
 class AssociativeMemory:
-    """RBF kernel memory mapping latent z → (food_rate, risk).
+    """Nonparametric Bayesian prior over latent space: z → (food_rate, risk).
 
-    64 nodes, each storing (centroid[16], food_rate, risk, visit_count).
-    Hebbian-style online updates with centroid drift.
+    Implements a kernel density estimate using 64 RBF nodes, with
+    Dirichlet-process-inspired online allocation: new nodes are created
+    when no existing node matches the observation (analogous to the CRP
+    "new table" probability), and least-visited nodes are recycled when
+    capacity is reached.
+
+    The concentration parameter α controls the allocation threshold:
+    higher α creates new nodes more readily (broader coverage, sparser
+    representation); lower α consolidates observations into fewer nodes
+    (denser, more compressed representation).
     """
 
     def __init__(self, n_nodes=64, latent_dim=16, kernel_width=2.0,
-                 match_threshold=3.0, ema_rate=0.1, drift_rate=0.02):
+                 match_threshold=3.0, ema_rate=0.1, drift_rate=0.02,
+                 concentration=1.0):
         self.n_nodes = n_nodes
         self.latent_dim = latent_dim
         self.kernel_width = kernel_width
         self.match_threshold = match_threshold
         self.ema_rate = ema_rate
         self.drift_rate = drift_rate
+        self.concentration = concentration  # DP-like concentration (α)
 
         self.centroids = np.zeros((n_nodes, latent_dim), dtype=np.float32)
         self.food_rate = np.zeros(n_nodes, dtype=np.float32)
@@ -201,7 +211,14 @@ class AssociativeMemory:
         best_idx = int(np.argmax(w[:max(self.n_allocated, 1)]))
         best_w = w[best_idx] if self.n_allocated > 0 else 0.0
 
-        if best_w < np.exp(-self.match_threshold ** 2 / 2.0):
+        # CRP-like allocation: p(new) ∝ α / (n + α)
+        # Higher concentration → more willing to create new nodes
+        total_visits = float(self.visit_count[:self.n_allocated].sum()) + 1e-8
+        crp_threshold = self.concentration / (total_visits + self.concentration)
+        match_threshold = np.exp(-self.match_threshold ** 2 / 2.0)
+        # Allocate if: poor match AND CRP probability favors new node
+        if best_w < match_threshold or (best_w < 0.5 and
+                                         np.random.random() < crp_threshold):
             # No close match — allocate or recycle
             if self.n_allocated < self.n_nodes:
                 idx = self.n_allocated
@@ -432,6 +449,8 @@ class VAEWorldModel:
         self.vae_optimizer.step()
 
         self._last_vae_loss = float(loss.item())
+        self._last_recon_loss = float(recon_loss.item())
+        self._last_kl_loss = float(kl_loss.item())
 
     def train_from_buffer(self):
         """Train ELBO from existing buffer samples only (no push).
