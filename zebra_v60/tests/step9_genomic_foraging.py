@@ -125,7 +125,7 @@ def run_foraging(model, label, T=600, swim_speed=1.5, turn_gain=0.15,
 
         oL_mean = float(out["oL"].abs().mean())
         oR_mean = float(out["oR"].abs().mean())
-        eaten = world.try_eat(fish_x, fish_y)
+        eaten, _ = world.try_eat(fish_x, fish_y)
         dopa, rpe, valL, valR = dopa_sys.step(F_visual, oL_mean, oR_mean,
                                                eaten=eaten)
 

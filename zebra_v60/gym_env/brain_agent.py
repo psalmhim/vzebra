@@ -495,6 +495,19 @@ class BrainAgent:
 
         # TTC from approach rate: approach_rate=0.5 means neutral
         closing_speed = max(0.0, (approach_rate - 0.5) * 2.0)
+
+        # Blend with binocular speed estimate (Step 27b)
+        bino_speed = getattr(self, '_estimated_pred_speed', 0.0)
+        if bino_speed > 0.05:
+            closing_speed = 0.7 * closing_speed + 0.3 * bino_speed * 2.0
+
+        # Binocular depth improves proximity estimate
+        enemy_depth = (self._binocular_depth.get("enemy_depth")
+                       if hasattr(self, '_binocular_depth') else None)
+        if enemy_depth is not None:
+            bino_proximity = min(1.0, max(0.0, 1.0 - enemy_depth / 200.0))
+            proximity = 0.6 * proximity + 0.4 * bino_proximity
+
         headroom = max(0.0, 1.0 - proximity)
         if closing_speed > 0.05:
             ttc = (headroom / closing_speed) * 40.0
@@ -656,14 +669,28 @@ class BrainAgent:
         uy = dy / dist
         closing_speed = -(pred_vx * ux + pred_vy * uy)
 
+        # Blend with binocular-derived speed estimate (Step 27b)
+        bino_speed = getattr(self, '_estimated_pred_speed', 0.0)
+        if bino_speed > 0.05:
+            # Binocular speed is 0-1 normalized; scale to px/step
+            closing_speed = 0.7 * closing_speed + 0.3 * bino_speed * 5.0
+
         # Subtract fish retreat speed
         fish_retreat = env.fish_speed * max(0.0, math.cos(
             env.fish_heading - math.atan2(-dy, -dx)))
         net_closing = closing_speed - fish_retreat
 
-        # TTC
+        # Use binocular depth for distance if available (Step 27b)
+        enemy_depth = (self._binocular_depth.get("enemy_depth")
+                       if hasattr(self, '_binocular_depth') else None)
+        effective_dist = dist
+        if enemy_depth is not None:
+            # Binocular depth is in world units; blend with ground truth
+            effective_dist = 0.6 * dist + 0.4 * enemy_depth
+
+        # TTC using effective distance
         if net_closing > 0.1:
-            ttc = dist / net_closing
+            ttc = effective_dist / net_closing
         else:
             ttc = 999.0
 

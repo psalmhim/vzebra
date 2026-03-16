@@ -148,7 +148,7 @@ def run_step7(T=500, swim_speed=1.5, turn_gain=0.15):
         heading = math.atan2(math.sin(heading), math.cos(heading))
 
         # Try to eat food
-        eaten = world.try_eat(fish_x, fish_y)
+        eaten, _ = world.try_eat(fish_x, fish_y)
         if eaten > 0:
             total_eaten += eaten
             eaten_times.append(t)

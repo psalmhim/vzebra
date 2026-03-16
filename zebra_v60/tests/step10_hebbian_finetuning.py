@@ -165,7 +165,7 @@ def run_foraging_with_hebbian(model, label, hebbian=None,
         oR_mean = float(out["oR"].abs().mean())
 
         # Check eating BEFORE dopamine update
-        eaten = world.try_eat(fish_x, fish_y)
+        eaten, _ = world.try_eat(fish_x, fish_y)
         dopa, rpe, valL, valR = dopa_sys.step(F_visual, oL_mean, oR_mean,
                                                eaten=eaten)
 
