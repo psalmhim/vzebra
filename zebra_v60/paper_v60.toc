@@ -99,67 +99,71 @@
 \contentsline {paragraph}{Reachability scoring.}{39}{section*.45}%
 \contentsline {paragraph}{Olfactory heading cue.}{39}{section*.46}%
 \contentsline {subsection}{\numberline {18.2}Retinal Obstacle Navigation}{39}{subsection.18.2}%
-\contentsline {paragraph}{1. Obstacle repulsion.}{39}{section*.47}%
-\contentsline {paragraph}{2. Obstacle braking.}{39}{section*.48}%
-\contentsline {paragraph}{3. Foraging without retinal food.}{40}{section*.49}%
+\contentsline {paragraph}{1. Bilateral repulsion.}{39}{section*.47}%
+\contentsline {paragraph}{2. Center-obstacle escape.}{39}{section*.48}%
+\contentsline {paragraph}{3. Obstacle braking.}{40}{section*.49}%
+\contentsline {paragraph}{4. Stuck detection.}{40}{section*.50}%
+\contentsline {paragraph}{5. Occluded food exclusion.}{40}{section*.51}%
+\contentsline {paragraph}{6. Physics rebound.}{40}{section*.52}%
+\contentsline {paragraph}{7. Foraging without retinal food.}{40}{section*.53}%
 \contentsline {subsection}{\numberline {18.3}Rock Formation Environment}{40}{subsection.18.3}%
 \contentsline {section}{\numberline {19}Curriculum RL Training (Step 22)}{40}{section.19}%
 \contentsline {section}{\numberline {20}Sleep--Wake Consolidation (Step 23)}{40}{section.20}%
-\contentsline {section}{\numberline {21}Active Inference Through Generative Models (Step 24)}{40}{section.21}%
+\contentsline {section}{\numberline {21}Active Inference Through Generative Models (Step 24)}{41}{section.21}%
 \contentsline {subsection}{\numberline {21.1}Retinal Feature Extractor}{41}{subsection.21.1}%
-\contentsline {paragraph}{Pixel counts.}{41}{section*.50}%
-\contentsline {paragraph}{Intensity mean (distance proxy).}{41}{section*.51}%
-\contentsline {paragraph}{Lateral bias (bearing).}{41}{section*.52}%
-\contentsline {paragraph}{Angular spread (facing proxy).}{41}{section*.53}%
-\contentsline {paragraph}{Temporal dynamics.}{41}{section*.54}%
-\contentsline {subsection}{\numberline {21.2}VAE Threat Decoder}{41}{subsection.21.2}%
-\contentsline {paragraph}{Blended threat inference.}{42}{section*.55}%
+\contentsline {paragraph}{Pixel counts.}{41}{section*.54}%
+\contentsline {paragraph}{Intensity mean (distance proxy).}{41}{section*.55}%
+\contentsline {paragraph}{Lateral bias (bearing).}{41}{section*.56}%
+\contentsline {paragraph}{Angular spread (facing proxy).}{41}{section*.57}%
+\contentsline {paragraph}{Temporal dynamics.}{42}{section*.58}%
+\contentsline {subsection}{\numberline {21.2}VAE Threat Decoder}{42}{subsection.21.2}%
+\contentsline {paragraph}{Blended threat inference.}{42}{section*.59}%
 \contentsline {subsection}{\numberline {21.3}Threat Assessment from Belief}{42}{subsection.21.3}%
-\contentsline {paragraph}{Facing detection.}{42}{section*.56}%
-\contentsline {paragraph}{Time-to-contact (TTC).}{42}{section*.57}%
-\contentsline {paragraph}{Panic level.}{42}{section*.58}%
-\contentsline {paragraph}{Predator distance proxy (for allostasis).}{42}{section*.59}%
+\contentsline {paragraph}{Facing detection.}{42}{section*.60}%
+\contentsline {paragraph}{Time-to-contact (TTC).}{42}{section*.61}%
+\contentsline {paragraph}{Panic level.}{43}{section*.62}%
+\contentsline {paragraph}{Predator distance proxy (for allostasis).}{43}{section*.63}%
 \contentsline {subsection}{\numberline {21.4}Interoceptive Energy Model}{43}{subsection.21.4}%
-\contentsline {paragraph}{Motor efference prediction.}{43}{section*.60}%
-\contentsline {paragraph}{Noisy interoceptive observation.}{43}{section*.61}%
-\contentsline {paragraph}{Bayesian belief update.}{43}{section*.62}%
+\contentsline {paragraph}{Motor efference prediction.}{43}{section*.64}%
+\contentsline {paragraph}{Noisy interoceptive observation.}{43}{section*.65}%
+\contentsline {paragraph}{Bayesian belief update.}{43}{section*.66}%
 \contentsline {subsection}{\numberline {21.5}Position from Path Integration with Boundary Correction}{43}{subsection.21.5}%
-\contentsline {paragraph}{Calibrated path integration.}{43}{section*.63}%
-\contentsline {paragraph}{Boundary-pixel wall distance.}{43}{section*.64}%
-\contentsline {paragraph}{Position correction.}{44}{section*.65}%
+\contentsline {paragraph}{Calibrated path integration.}{43}{section*.67}%
+\contentsline {paragraph}{Boundary-pixel wall distance.}{44}{section*.68}%
+\contentsline {paragraph}{Position correction.}{44}{section*.69}%
 \contentsline {subsection}{\numberline {21.6}State Context and Memory Updates}{44}{subsection.21.6}%
 \contentsline {subsection}{\numberline {21.7}Backward Compatibility}{44}{subsection.21.7}%
 \contentsline {subsection}{\numberline {21.8}Verification}{44}{subsection.21.8}%
-\contentsline {paragraph}{Energy belief accuracy.}{44}{section*.66}%
-\contentsline {paragraph}{Position drift.}{44}{section*.67}%
-\contentsline {paragraph}{Survival comparison.}{45}{section*.68}%
-\contentsline {paragraph}{Inference validation mode.}{45}{section*.69}%
+\contentsline {paragraph}{Energy belief accuracy.}{44}{section*.70}%
+\contentsline {paragraph}{Position drift.}{45}{section*.71}%
+\contentsline {paragraph}{Survival comparison.}{45}{section*.72}%
+\contentsline {paragraph}{Inference validation mode.}{45}{section*.73}%
 \contentsline {section}{\numberline {22}Predictive Coding with Selective Attention (Step 25)}{45}{section.22}%
 \contentsline {subsection}{\numberline {22.1}Two-Compartment Predictive Neuron}{45}{subsection.22.1}%
-\contentsline {paragraph}{Soma $\mathbf {v}_s$.}{45}{section*.70}%
-\contentsline {paragraph}{Apical dendrite $\mathbf {v}_a$.}{45}{section*.71}%
-\contentsline {paragraph}{Prediction error.}{45}{section*.72}%
-\contentsline {paragraph}{Feedback hierarchy.}{46}{section*.73}%
+\contentsline {paragraph}{Soma $\mathbf {v}_s$.}{45}{section*.74}%
+\contentsline {paragraph}{Apical dendrite $\mathbf {v}_a$.}{45}{section*.75}%
+\contentsline {paragraph}{Prediction error.}{45}{section*.76}%
+\contentsline {paragraph}{Feedback hierarchy.}{46}{section*.77}%
 \contentsline {subsection}{\numberline {22.2}Goal-Driven Attention Modulator}{46}{subsection.22.2}%
-\contentsline {paragraph}{Attention neurons.}{46}{section*.74}%
-\contentsline {paragraph}{Per-layer projection.}{46}{section*.75}%
+\contentsline {paragraph}{Attention neurons.}{46}{section*.78}%
+\contentsline {paragraph}{Per-layer projection.}{46}{section*.79}%
 \contentsline {subsection}{\numberline {22.3}Homeostatic Gain Control}{46}{subsection.22.3}%
 \contentsline {subsection}{\numberline {22.4}PE-Driven Feedback Learning}{46}{subsection.22.4}%
 \contentsline {subsection}{\numberline {22.5}Attention Weight Learning}{47}{subsection.22.5}%
 \contentsline {subsection}{\numberline {22.6}Parameter Summary}{47}{subsection.22.6}%
 \contentsline {subsection}{\numberline {22.7}Verification}{47}{subsection.22.7}%
-\contentsline {paragraph}{PE convergence within episodes.}{47}{section*.76}%
-\contentsline {paragraph}{PE convergence across episodes.}{47}{section*.77}%
-\contentsline {paragraph}{Attention selectivity.}{47}{section*.78}%
-\contentsline {paragraph}{Behavioral improvement.}{48}{section*.79}%
+\contentsline {paragraph}{PE convergence within episodes.}{47}{section*.80}%
+\contentsline {paragraph}{PE convergence across episodes.}{47}{section*.81}%
+\contentsline {paragraph}{Attention selectivity.}{47}{section*.82}%
+\contentsline {paragraph}{Behavioral improvement.}{48}{section*.83}%
 \contentsline {section}{\numberline {23}Online Feedback Weight Training (Step 26)}{48}{section.23}%
 \contentsline {subsection}{\numberline {23.1}Enhanced Classifier}{48}{subsection.23.1}%
 \contentsline {subsection}{\numberline {23.2}Bayesian Survival Trade-off}{48}{subsection.23.2}%
 \contentsline {subsection}{\numberline {23.3}Layer-Wise Online W\textsubscript {FB} Training}{48}{subsection.23.3}%
-\contentsline {paragraph}{Frozen feedforward path.}{49}{section*.80}%
+\contentsline {paragraph}{Frozen feedforward path.}{49}{section*.84}%
 \contentsline {subsection}{\numberline {23.4}Verification}{49}{subsection.23.4}%
 \contentsline {section}{\numberline {24}Summary of Architecture}{49}{section.24}%
 \contentsline {subsection}{\numberline {24.1}Computational Framework Mapping}{50}{subsection.24.1}%
-\contentsline {paragraph}{Framework integration.}{52}{section*.84}%
+\contentsline {paragraph}{Framework integration.}{52}{section*.88}%
 \contentsline {section}{\numberline {25}Discussion}{52}{section.25}%
 \contentsline {section}{\numberline {26}Code Availability}{54}{section.26}%

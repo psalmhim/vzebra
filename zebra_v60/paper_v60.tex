@@ -1483,23 +1483,24 @@ Place Cell  & place cell & \checkmark & \checkmark \\
 \toprule
 Config & Steps & Eaten & Final Energy & Memory Nodes \\
 \midrule
-Baseline    & 800 & 6  & 76.8 & 0  \\
-Full Brain  & 800 & 10 & 73.3 & 28 \\
-Place Cell  & 800 & 9  & 90.7 & 23 \\
+Baseline    & 800 & 5  & 85.6 & 0  \\
+Full Brain  & 800 & 6  & 97.7 & 19 \\
+Place Cell  & 800 & 8  & 84.4 & 23 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 With the full pipeline---amygdala fear circuit, Bayesian survival trade-off,
-enhanced classifier, and online feedback training (Steps~20--26)---all three
-configurations survive the full 800 steps and forage successfully.
-The Full Brain configuration achieves 10 food items with 28 memory nodes.
-The Place Cell configuration achieves 9 food items with the highest final
-energy (90.7), demonstrating that spatial memory combined with softened
-starvation mechanics enables efficient food-patch return.
-The Baseline configuration eats 6 food items even without world models or
-allostasis, indicating that the improved classifier and survival trade-off
-benefit all configurations.
+enhanced classifier, online feedback training, and improved obstacle
+navigation (Steps~20--26)---all three configurations survive the full
+800 steps and forage successfully.
+The Full Brain configuration achieves 6 food items with the highest final
+energy (97.7), demonstrating energy-efficient foraging.
+The Place Cell configuration achieves 8 food items, indicating that
+spatial memory supports reliable food-patch return.
+The goal distribution shows balanced behavior: \textsc{forage} 42.4\%,
+\textsc{explore} 50.4\%, with appropriate goal switching driven by
+interoceptive and exteroceptive signals.
 
 \begin{figure}[H]
   \centering
@@ -1648,26 +1649,62 @@ Rock formations are rendered as multi-lobe AABB clusters with a 10-unit
 detection margin in the world model.
 Three obstacle-aware mechanisms operate on the retinal type channels:
 
-\paragraph{1. Obstacle repulsion.}
-When total obstacle pixels exceed 5, a bilateral repulsion signal
+\paragraph{1. Bilateral repulsion.}
+When total obstacle pixels exceed 3, a bilateral repulsion signal
 steers the fish away from the rock-heavy side:
 \begin{equation}\label{eq:obs_repulsion}
-  \tau_\text{obs} = -0.6 \cdot \frac{n_R^\text{obs} - n_L^\text{obs}}
-                                     {n_R^\text{obs} + n_L^\text{obs}}.
+  \tau_\text{obs} = -1.2 \cdot \frac{n_R^\text{obs} - n_L^\text{obs}}
+                                     {n_R^\text{obs} + n_L^\text{obs}},
+  \quad \times 1.5 \text{ if } n_\text{obs} > 15.
 \end{equation}
 
-\paragraph{2. Obstacle braking.}
-When the obstacle fraction exceeds 50\% of the retina:
+\paragraph{2. Center-obstacle escape.}
+When a rock is directly ahead (both eyes equally covered:
+$|n_R - n_L| < 5$ and $n_\text{obs} > 20$), the bilateral repulsion
+cancels to near-zero.  A dedicated escape mechanism adds a post-gain
+turn signal in a consistent direction (matching the fish's recent turn
+history), bypassing approach-gain damping:
+\begin{equation}\label{eq:center_escape}
+  \tau_\text{escape} = \text{sign}(\dot{\theta}_\text{prev}) \cdot 0.6
+    \cdot \frac{n_\text{obs}}{400}.
+\end{equation}
+This solves the ``forward deadlock'' where a centered rock produces no
+lateral asymmetry signal.
+
+\paragraph{3. Obstacle braking.}
+When the obstacle fraction exceeds 50\%:
 \begin{equation}\label{eq:obs_braking}
   s_\text{mod} \leftarrow s_\text{mod} \cdot
   \begin{cases}
-    \max(0.7,\; 1 - 0.2\,f_\text{obs}) & \text{foraging with olfactory target}, \\
-    \max(0.3,\; 1 - f_\text{obs})       & \text{otherwise},
+    \max(0.7,\; 1 - 0.2\,f_\text{obs}) & \text{foraging}, f_\text{obs} < 0.7, \\
+    \max(0.3,\; 1 - f_\text{obs})       & \text{otherwise (dense wall)},
   \end{cases}
 \end{equation}
-where $f_\text{obs} = (n_L^\text{obs} + n_R^\text{obs}) / 800$.
+where $f_\text{obs} = n_\text{obs} / 800$.
+Foraging fish can push through moderate obstacle coverage ($< 70\%$)
+to reach nearby food, but dense rock walls ($\geq 70\%$) trigger
+full braking regardless of goal.
 
-\paragraph{3. Foraging without retinal food.}
+\paragraph{4. Stuck detection.}
+A position-history monitor counts consecutive steps where the fish
+barely moves ($< 1.5$\,px) while obstacle pixels are visible.
+After 8 stuck steps, the goal policy is overridden to \textsc{explore},
+forcing the fish to navigate around rather than persist at the obstacle.
+
+\paragraph{5. Occluded food exclusion.}
+When energy urgency is low ($< 0.5$, corresponding to $> 50\%$ energy),
+food items occluded by rocks are excluded entirely from the prospect
+list (Eq.~\ref{eq:prospect}).
+The fish seeks unblocked food instead of attempting to push through
+rocks.  Only a starving fish ($u \geq 0.5$) will attempt to reach
+occluded food, accepting the obstacle as a necessary cost.
+
+\paragraph{6. Physics rebound.}
+On collision with a rock AABB, the heading is deflected toward the
+away-from-center direction with gain $0.7$ (increased from $0.4$),
+producing a stronger angular push that prevents immediate re-approach.
+
+\paragraph{7. Foraging without retinal food.}
 When \textsc{forage} is active but no food pixels are visible:
 the approach gain is reduced (preventing rock attraction),
 exploration noise is increased, and the olfactory heading cue

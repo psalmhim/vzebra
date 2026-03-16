@@ -59,6 +59,14 @@
 - **EFE precision modulation**: σ_E tightens under hunger, σ_S tightens under stress
 - **DP-like memory**: AssociativeMemory with CRP allocation (concentration α)
 
+## Obstacle Navigation (brain_agent.py section 12b-12d)
+- **Bilateral repulsion**: steer away from rock-heavy eye, 1.5x amplification above 15 pixels
+- **Center-escape**: post-gain escape turn when rock centered ahead (|L-R| < 5, total > 20)
+- **Stuck detection**: 8+ steps barely moving near obstacle → force EXPLORE
+- **Occluded food exclusion**: skip food behind rocks when urgency < 0.5
+- **Physics rebound**: heading deflection gain 0.7 on collision
+- **Foraging override**: preserved for moderate coverage (<70%), removed at dense walls
+
 ## Bayesian Survival Trade-off (goal_policy_v60.py)
 - `starvation_risk = max(0, (0.50 - energy_ratio) / 0.50)` modulates all 4 goals
 - FORAGE urgency increases, FLEE/EXPLORE/SOCIAL become costly when starving

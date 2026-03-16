@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.11.19)  16 MAR 2026 20:26
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2025.11.19)  16 MAR 2026 22:02
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1113,7 +1113,7 @@ Package pdftex.def Info: ../plots/v60_step18_allostatic_interoception.png  used
 File: ../plots/v60_step19_full_evaluation.png Graphic file (type png)
 <use ../plots/v60_step19_full_evaluation.png>
 Package pdftex.def Info: ../plots/v60_step19_full_evaluation.png  used on input
- line 1506.
+ line 1507.
 (pdftex.def)             Requested size: 432.48051pt x 629.83183pt.
 
 
@@ -1128,7 +1128,7 @@ Package pdftex.def Info: ../plots/v60_step19_full_evaluation.png  used on input
 [40]
 
 [41]
-Overfull \hbox (46.24059pt too wide) in paragraph at lines 1864--1869
+Overfull \hbox (46.24059pt too wide) in paragraph at lines 1901--1906
 \OT1/cmr/m/n/10.95 De-rived quantities---previously com-puted from \OT1/cmtt/m/
 n/10.95 env.pred[]x/y\OT1/cmr/m/n/10.95 , \OT1/cmtt/m/n/10.95 env.pred[]heading
 \OT1/cmr/m/n/10.95 , and \OT1/cmtt/m/n/10.95 env.pred[]speed\OT1/cmr/m/n/10.95 
@@ -1136,17 +1136,17 @@ n/10.95 env.pred[]x/y\OT1/cmr/m/n/10.95 , \OT1/cmtt/m/n/10.95 env.pred[]heading
  []
 
 
-Overfull \hbox (1.31067pt too wide) in paragraph at lines 1904--1911
+
+[42]
+Overfull \hbox (1.31067pt too wide) in paragraph at lines 1941--1948
 \OT1/cmr/m/n/10.95 In bi-o-log-i-cal sys-tems, en-ergy state is not known pre-c
 isely but in-ferred from in-te-ro-cep-tive signals---
  []
 
 
 
-[42]
-
 [43]
-Overfull \hbox (4.0782pt too wide) in paragraph at lines 2018--2021
+Overfull \hbox (4.0782pt too wide) in paragraph at lines 2055--2058
 []\OT1/cmr/m/n/10.95 Associative mem-ory and place cell risk up-dates use the r
 eti-nal prox-im-ity es-ti-mate $[](1\OML/cmm/m/it/10.95 ; n=\OT1/cmr/m/n/10.95 
 50)$
@@ -1155,13 +1155,15 @@ eti-nal prox-im-ity es-ti-mate $[](1\OML/cmm/m/it/10.95 ; n=\OT1/cmr/m/n/10.95
 
 
 [44]
-Overfull \hbox (9.34604pt too wide) in paragraph at lines 2079--2084
+Overfull \hbox (9.34604pt too wide) in paragraph at lines 2116--2121
 \OT1/cmr/m/n/10.95 Step 25 re-places the single-compartment leaky in-te-gra-tor
 s of train-able lay-ers with \OT1/cmr/m/it/10.95 two-compartment
  []
 
 
-Overfull \hbox (65.32564pt too wide) in paragraph at lines 2141--2144
+
+[45]
+Overfull \hbox (65.32564pt too wide) in paragraph at lines 2178--2181
 \OT1/cmr/m/n/10.95 A ded-i-cated at-ten-tion mod-ule maps the 4-dimensional goa
 l prob-a-bil-ity vec-tor $\OT1/cmr/bx/n/10.95 g \OT1/cmr/m/n/10.95 = [\OML/cmm/
 m/it/10.95 p[];  p[];  p[];  p[]\OT1/cmr/m/n/10.95 ]$
@@ -1169,10 +1171,8 @@ m/it/10.95 p[];  p[];  p[];  p[]\OT1/cmr/m/n/10.95 ]$
 
 
 
-[45]
-
 [46]
-Overfull \hbox (5.90686pt too wide) in paragraph at lines 2284--2287
+Overfull \hbox (5.90686pt too wide) in paragraph at lines 2321--2324
  []\OT1/cmr/bx/n/10.95 PE con-ver-gence across episodes.[] \OT1/cmr/m/n/10.95 R
 un-ning three con-sec-u-tive episodes with per-sis-tent weights
  []
@@ -1182,19 +1182,19 @@ un-ning three con-sec-u-tive episodes with per-sis-tent weights
 [47]
 
 LaTeX Warning: Reference `eq:anti_hebbian' on page 48 undefined on input line 2
-316.
+353.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\mathsurround' on input line 2358.
+(hyperref)                removing `\mathsurround' on input line 2395.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `\z@' on input line 2358.
+(hyperref)                removing `\z@' on input line 2395.
 
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
-(hyperref)                removing `subscript' on input line 2358.
+(hyperref)                removing `subscript' on input line 2395.
 
 
 
@@ -1202,32 +1202,32 @@ Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 
 Package pgf Warning: Returning node center instead of a point on node border. D
 id you specify a point identical to the center of node ``habit''? on input line
- 2482.
+ 2519.
 
 
-Overfull \hbox (241.80222pt too wide) in paragraph at lines 2515--2522
+Overfull \hbox (241.80222pt too wide) in paragraph at lines 2552--2559
  [][] 
  []
 
 
 
 [49]
-Underfull \hbox (badness 5592) in paragraph at lines 2590--2591
+Underfull \hbox (badness 5592) in paragraph at lines 2627--2628
 []\OT1/cmr/m/n/10 Winner-take-all via in-hibitory in-
  []
 
 
-Underfull \hbox (badness 5592) in paragraph at lines 2591--2592
+Underfull \hbox (badness 5592) in paragraph at lines 2628--2629
 []\OT1/cmr/m/n/10 Convolutional read-out trained on
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 2603--2604
+Underfull \hbox (badness 10000) in paragraph at lines 2640--2641
 []\OT1/cmr/m/n/10 Saccade/pursuit dy-nam-ics +
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 2638--2639
+Underfull \hbox (badness 10000) in paragraph at lines 2675--2676
 []\OT1/cmr/m/n/10 Layer-wise precision-weighted PE
  []
 
@@ -1239,7 +1239,7 @@ Overfull \vbox (279.19449pt too high) has occurred while \output is active []
 
 
 [51]
-Overfull \hbox (13.6258pt too wide) in paragraph at lines 2695--2699
+Overfull \hbox (13.6258pt too wide) in paragraph at lines 2732--2736
 []\OT1/cmr/bx/n/10.95 Online EFE adap-ta-tion\OT1/cmr/m/n/10.95 : The RL critic
  (Step 15) bridges the free-energy and reinforcement-
  []
@@ -1249,9 +1249,9 @@ Overfull \hbox (13.6258pt too wide) in paragraph at lines 2695--2699
 [52]
 
 [53]
-Overfull \hbox (3.80365pt too wide) in paragraph at lines 2811--2819
+Overfull \hbox (3.80365pt too wide) in paragraph at lines 2848--2856
 \OT1/cmr/m/n/10.95 preda-tor avoid-ance and en-ergy ac-qui-si-tion through star
-vation-risk-modulated EFE (Eq. []92[]).
+vation-risk-modulated EFE (Eq. []93[]).
  []
 
 
@@ -1265,7 +1265,7 @@ pdfTeX warning (ext4): destination with the same identifier (name{cite.dacosta2
 020}) has been already used, duplicate ignored
 <argument> ...shipout:D \box_use:N \l_shipout_box 
                                                   \__shipout_drop_firstpage_...
-l.3010 \end{document}
+l.3047 \end{document}
                      ] (./paper_v60.aux)
  ***********
 LaTeX2e <2024-11-01> patch level 2
@@ -1282,10 +1282,10 @@ Package rerunfilecheck Info: File `paper_v60.out' has not changed.
 (rerunfilecheck)             Checksum: 9A0DA920EA5D093C76C8A89385800BDF;21822.
  ) 
 Here is how much of TeX's memory you used:
- 28146 strings out of 473190
- 551148 string characters out of 5715799
- 972816 words of memory out of 5000000
- 50557 multiletter control sequences out of 15000+600000
+ 28153 strings out of 473190
+ 551244 string characters out of 5715799
+ 972910 words of memory out of 5000000
+ 50559 multiletter control sequences out of 15000+600000
  576371 words of font info for 101 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
  84i,18n,91p,599b,840s stack positions out of 10000i,1000n,20000p,200000b,200000s
@@ -1318,10 +1318,10 @@ type1/public/amsfonts/cm/cmtt12.pfb></usr/local/texlive/2025/texmf-dist/fonts/t
 ype1/public/amsfonts/symbols/msam10.pfb></usr/local/texlive/2025/texmf-dist/fon
 ts/type1/public/amsfonts/symbols/msbm10.pfb></usr/local/texlive/2025/texmf-dist
 /fonts/type1/public/cm-super/sfrm1095.pfb>
-Output written on paper_v60.pdf (56 pages, 5571459 bytes).
+Output written on paper_v60.pdf (56 pages, 5589752 bytes).
 PDF statistics:
- 1500 PDF objects out of 1728 (max. 8388607)
- 1332 compressed objects within 14 object streams
- 405 named destinations out of 1000 (max. 500000)
+ 1507 PDF objects out of 1728 (max. 8388607)
+ 1339 compressed objects within 14 object streams
+ 410 named destinations out of 1000 (max. 500000)
  1012 words of extra memory for PDF output out of 10000 (max. 10000000)
 
