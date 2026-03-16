@@ -8,152 +8,158 @@
 \contentsline {subsection}{\numberline {3.3}Lateral Inhibition}{6}{subsection.3.3}%
 \contentsline {subsection}{\numberline {3.4}Retinal Turn Signal}{6}{subsection.3.4}%
 \contentsline {section}{\numberline {4}Predictive Coding and Precision (Step 2)}{6}{section.4}%
-\contentsline {subsection}{\numberline {4.1}Free Energy}{6}{subsection.4.1}%
-\contentsline {subsection}{\numberline {4.2}Precision Units}{6}{subsection.4.2}%
-\contentsline {section}{\numberline {5}Neuromodulation}{6}{section.5}%
-\contentsline {subsection}{\numberline {5.1}Dopamine System (Step 3)}{6}{subsection.5.1}%
+\contentsline {subsection}{\numberline {4.1}Free Energy and Surprise}{6}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Precision as Empirical Bayes}{7}{subsection.4.2}%
+\contentsline {section}{\numberline {5}Neuromodulation}{7}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Dopamine System (Step 3)}{7}{subsection.5.1}%
 \contentsline {paragraph}{Pseudo-reward.}{7}{section*.2}%
 \contentsline {paragraph}{Value learning and RPE.}{7}{section*.3}%
 \contentsline {paragraph}{Dopamine level.}{7}{section*.4}%
 \contentsline {paragraph}{Bilateral valence.}{7}{section*.5}%
 \contentsline {paragraph}{Dopamine--precision coupling.}{7}{section*.6}%
-\contentsline {subsection}{\numberline {5.2}Cross-Modal Salience --- Thalamus (Step 6)}{7}{subsection.5.2}%
-\contentsline {section}{\numberline {6}Motor Control}{7}{section.6}%
-\contentsline {subsection}{\numberline {6.1}Basal Ganglia Gating (Step 4)}{7}{subsection.6.1}%
-\contentsline {paragraph}{Drive.}{7}{section*.7}%
-\contentsline {paragraph}{Momentum integration.}{7}{section*.8}%
-\contentsline {paragraph}{State update with dopamine-gated leak.}{7}{section*.9}%
-\contentsline {paragraph}{Gate output.}{7}{section*.10}%
+\contentsline {subsection}{\numberline {5.2}Cross-Modal Salience --- Thalamus (Step 6)}{8}{subsection.5.2}%
+\contentsline {section}{\numberline {6}Motor Control}{8}{section.6}%
+\contentsline {subsection}{\numberline {6.1}Basal Ganglia Gating (Step 4)}{8}{subsection.6.1}%
+\contentsline {paragraph}{Drive.}{8}{section*.7}%
+\contentsline {paragraph}{Momentum integration.}{8}{section*.8}%
+\contentsline {paragraph}{State update with dopamine-gated leak.}{8}{section*.9}%
+\contentsline {paragraph}{Gate output.}{8}{section*.10}%
 \contentsline {paragraph}{Exploratory switching.}{8}{section*.11}%
 \contentsline {subsection}{\numberline {6.2}Optic Tectum Eye Control (Step 5)}{8}{subsection.6.2}%
 \contentsline {subsection}{\numberline {6.3}Closed-Loop Locomotion (Step 7)}{8}{subsection.6.3}%
-\contentsline {section}{\numberline {7}Learning}{8}{section.7}%
-\contentsline {subsection}{\numberline {7.1}Genomic Pre-training (Step 8)}{8}{subsection.7.1}%
-\contentsline {subsection}{\numberline {7.2}Hebbian Fine-tuning (Step 10)}{8}{subsection.7.2}%
-\contentsline {subsection}{\numberline {7.3}Object Classification (Step 11)}{8}{subsection.7.3}%
+\contentsline {section}{\numberline {7}Learning}{9}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Genomic Pre-training (Step 8)}{9}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Hebbian Fine-tuning (Step 10)}{9}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Object Classification (Step 11)}{9}{subsection.7.3}%
 \contentsline {section}{\numberline {8}Reactive Behavior (Step 12)}{9}{section.8}%
 \contentsline {section}{\numberline {9}Active Inference Policy Selection (Step 13)}{9}{section.9}%
 \contentsline {subsection}{\numberline {9.1}Goal Space}{9}{subsection.9.1}%
-\contentsline {subsection}{\numberline {9.2}Expected Free Energy}{9}{subsection.9.2}%
-\contentsline {subsection}{\numberline {9.3}Policy Posterior}{9}{subsection.9.3}%
-\contentsline {subsection}{\numberline {9.4}Persistence and Emergency Override}{9}{subsection.9.4}%
+\contentsline {subsection}{\numberline {9.2}Expected Free Energy}{10}{subsection.9.2}%
+\contentsline {subsection}{\numberline {9.3}Policy Posterior}{10}{subsection.9.3}%
+\contentsline {subsection}{\numberline {9.4}Persistence and Emergency Override}{10}{subsection.9.4}%
 \contentsline {subsection}{\numberline {9.5}Confidence (Meta-Precision)}{10}{subsection.9.5}%
-\contentsline {subsection}{\numberline {9.6}Goal-to-Behavior Mapping}{10}{subsection.9.6}%
-\contentsline {subsection}{\numberline {9.7}Working Memory}{10}{subsection.9.7}%
-\contentsline {section}{\numberline {10}Simulation Results}{10}{section.10}%
-\contentsline {subsection}{\numberline {10.1}Step 1: Vision Pursuit}{10}{subsection.10.1}%
-\contentsline {subsection}{\numberline {10.2}Step 2: Precision-Adaptive Vision}{11}{subsection.10.2}%
-\contentsline {subsection}{\numberline {10.3}Step 3: Dopamine RPE}{12}{subsection.10.3}%
-\contentsline {subsection}{\numberline {10.4}Step 4: Basal Ganglia Gating}{13}{subsection.10.4}%
-\contentsline {subsection}{\numberline {10.5}Step 5: Optic Tectum Dynamics}{14}{subsection.10.5}%
-\contentsline {subsection}{\numberline {10.6}Step 6: Full Valence Pursuit with CMS}{15}{subsection.10.6}%
-\contentsline {subsection}{\numberline {10.7}Step 7: Closed-Loop Locomotion}{16}{subsection.10.7}%
-\contentsline {subsection}{\numberline {10.8}Step 8: Genomic Pre-training}{17}{subsection.10.8}%
-\contentsline {subsection}{\numberline {10.9}Step 9: Genomic Foraging}{18}{subsection.10.9}%
-\contentsline {subsection}{\numberline {10.10}Step 10: Hebbian Fine-tuning}{18}{subsection.10.10}%
-\contentsline {subsection}{\numberline {10.11}Step 11: Object Classification}{19}{subsection.10.11}%
-\contentsline {subsection}{\numberline {10.12}Step 12: Classification-Guided Behavior}{20}{subsection.10.12}%
-\contentsline {subsection}{\numberline {10.13}Step 13: Active Inference Policy Selection}{21}{subsection.10.13}%
-\contentsline {section}{\numberline {11}Gymnasium Integration (Step 14)}{22}{section.11}%
-\contentsline {subsection}{\numberline {11.1}Coordinate Bridge}{23}{subsection.11.1}%
-\contentsline {subsection}{\numberline {11.2}Energy Homeostasis}{23}{subsection.11.2}%
-\contentsline {subsection}{\numberline {11.3}Depth-Shaded Vision}{23}{subsection.11.3}%
-\contentsline {subsection}{\numberline {11.4}Obstacle Collision Physics}{23}{subsection.11.4}%
-\contentsline {subsection}{\numberline {11.5}Habit Network}{24}{subsection.11.5}%
-\contentsline {paragraph}{Observation discretization.}{24}{section*.28}%
-\contentsline {paragraph}{Streak consolidation.}{24}{section*.29}%
-\contentsline {paragraph}{Shortcut activation.}{24}{section*.30}%
-\contentsline {paragraph}{Decay.}{24}{section*.31}%
-\contentsline {subsection}{\numberline {11.6}Results}{24}{subsection.11.6}%
-\contentsline {section}{\numberline {12}Reinforcement Learning Critic (Step 15)}{25}{section.12}%
-\contentsline {subsection}{\numberline {12.1}Critic Architecture}{26}{subsection.12.1}%
-\contentsline {subsection}{\numberline {12.2}TD Learning}{26}{subsection.12.2}%
-\contentsline {subsection}{\numberline {12.3}EFE Weight Adaptation}{26}{subsection.12.3}%
-\contentsline {section}{\numberline {13}VAE World Model (Step 16)}{27}{section.13}%
-\contentsline {subsection}{\numberline {13.1}Multi-Modal Belief State}{27}{subsection.13.1}%
-\contentsline {subsection}{\numberline {13.2}VAE Architecture}{28}{subsection.13.2}%
-\contentsline {subsection}{\numberline {13.3}Transition Model}{28}{subsection.13.3}%
-\contentsline {subsection}{\numberline {13.4}Associative Memory}{28}{subsection.13.4}%
-\contentsline {subsection}{\numberline {13.5}Planning via Forward Simulation}{28}{subsection.13.5}%
-\contentsline {section}{\numberline {14}Hippocampal Place Cells (Step 17)}{29}{section.14}%
-\contentsline {subsection}{\numberline {14.1}Place Cell Network}{29}{subsection.14.1}%
-\contentsline {subsection}{\numberline {14.2}Path Integration}{30}{subsection.14.2}%
-\contentsline {subsection}{\numberline {14.3}Replay (Sharp-Wave Ripple Analog)}{30}{subsection.14.3}%
-\contentsline {subsection}{\numberline {14.4}Spatial Planning}{30}{subsection.14.4}%
-\contentsline {section}{\numberline {15}Allostatic Interoception (Step 18)}{32}{section.15}%
-\contentsline {subsection}{\numberline {15.1}Allostatic Variables}{32}{subsection.15.1}%
-\contentsline {subsection}{\numberline {15.2}Allostatic Error}{32}{subsection.15.2}%
-\contentsline {subsection}{\numberline {15.3}Goal Prior Bias}{32}{subsection.15.3}%
-\contentsline {subsection}{\numberline {15.4}Fatigue Speed Cap}{32}{subsection.15.4}%
-\contentsline {subsection}{\numberline {15.5}State Context Extension}{32}{subsection.15.5}%
-\contentsline {section}{\numberline {16}Full Evaluation Suite (Step 19)}{34}{section.16}%
-\contentsline {subsection}{\numberline {16.1}Configurations}{34}{subsection.16.1}%
-\contentsline {subsection}{\numberline {16.2}Results}{34}{subsection.16.2}%
-\contentsline {section}{\numberline {17}Amygdala Fear Circuit and Energy Asymmetry (Step 20)}{36}{section.17}%
-\contentsline {subsection}{\numberline {17.1}Amygdala Module}{36}{subsection.17.1}%
-\contentsline {paragraph}{Downstream effects of threat arousal.}{36}{section*.44}%
-\contentsline {subsection}{\numberline {17.2}Flee Energy Cost Asymmetry}{36}{subsection.17.2}%
-\contentsline {subsection}{\numberline {17.3}Nonlinear Hunger Amplification}{36}{subsection.17.3}%
-\contentsline {section}{\numberline {18}Food Prospection and Obstacle Navigation (Step 21)}{37}{section.18}%
-\contentsline {subsection}{\numberline {18.1}Food Prospect Evaluation}{37}{subsection.18.1}%
-\contentsline {paragraph}{Reachability scoring.}{37}{section*.45}%
-\contentsline {paragraph}{Olfactory heading cue.}{37}{section*.46}%
-\contentsline {subsection}{\numberline {18.2}Retinal Obstacle Navigation}{37}{subsection.18.2}%
-\contentsline {paragraph}{1. Obstacle repulsion.}{37}{section*.47}%
-\contentsline {paragraph}{2. Obstacle braking.}{37}{section*.48}%
-\contentsline {paragraph}{3. Foraging without retinal food.}{38}{section*.49}%
-\contentsline {subsection}{\numberline {18.3}Rock Formation Environment}{38}{subsection.18.3}%
-\contentsline {section}{\numberline {19}Curriculum RL Training (Step 22)}{38}{section.19}%
-\contentsline {section}{\numberline {20}Sleep--Wake Consolidation (Step 23)}{38}{section.20}%
-\contentsline {section}{\numberline {21}Active Inference Through Generative Models (Step 24)}{38}{section.21}%
-\contentsline {subsection}{\numberline {21.1}Retinal Feature Extractor}{39}{subsection.21.1}%
-\contentsline {paragraph}{Pixel counts.}{39}{section*.50}%
-\contentsline {paragraph}{Intensity mean (distance proxy).}{39}{section*.51}%
-\contentsline {paragraph}{Lateral bias (bearing).}{39}{section*.52}%
-\contentsline {paragraph}{Angular spread (facing proxy).}{39}{section*.53}%
-\contentsline {paragraph}{Temporal dynamics.}{39}{section*.54}%
-\contentsline {subsection}{\numberline {21.2}VAE Threat Decoder}{39}{subsection.21.2}%
-\contentsline {paragraph}{Blended threat inference.}{40}{section*.55}%
-\contentsline {subsection}{\numberline {21.3}Threat Assessment from Belief}{40}{subsection.21.3}%
-\contentsline {paragraph}{Facing detection.}{40}{section*.56}%
-\contentsline {paragraph}{Time-to-contact (TTC).}{40}{section*.57}%
-\contentsline {paragraph}{Panic level.}{40}{section*.58}%
-\contentsline {paragraph}{Predator distance proxy (for allostasis).}{40}{section*.59}%
-\contentsline {subsection}{\numberline {21.4}Interoceptive Energy Model}{41}{subsection.21.4}%
-\contentsline {paragraph}{Motor efference prediction.}{41}{section*.60}%
-\contentsline {paragraph}{Noisy interoceptive observation.}{41}{section*.61}%
-\contentsline {paragraph}{Bayesian belief update.}{41}{section*.62}%
-\contentsline {subsection}{\numberline {21.5}Position from Path Integration with Boundary Correction}{41}{subsection.21.5}%
-\contentsline {paragraph}{Calibrated path integration.}{41}{section*.63}%
-\contentsline {paragraph}{Boundary-pixel wall distance.}{41}{section*.64}%
-\contentsline {paragraph}{Position correction.}{42}{section*.65}%
-\contentsline {subsection}{\numberline {21.6}State Context and Memory Updates}{42}{subsection.21.6}%
-\contentsline {subsection}{\numberline {21.7}Backward Compatibility}{42}{subsection.21.7}%
-\contentsline {subsection}{\numberline {21.8}Verification}{42}{subsection.21.8}%
-\contentsline {paragraph}{Energy belief accuracy.}{42}{section*.66}%
-\contentsline {paragraph}{Position drift.}{42}{section*.67}%
-\contentsline {paragraph}{Survival comparison.}{43}{section*.68}%
-\contentsline {paragraph}{Inference validation mode.}{43}{section*.69}%
-\contentsline {section}{\numberline {22}Predictive Coding with Selective Attention (Step 25)}{43}{section.22}%
-\contentsline {subsection}{\numberline {22.1}Two-Compartment Predictive Neuron}{43}{subsection.22.1}%
-\contentsline {paragraph}{Soma $\mathbf {v}_s$.}{43}{section*.70}%
-\contentsline {paragraph}{Apical dendrite $\mathbf {v}_a$.}{43}{section*.71}%
-\contentsline {paragraph}{Prediction error.}{43}{section*.72}%
-\contentsline {paragraph}{Feedback hierarchy.}{44}{section*.73}%
-\contentsline {subsection}{\numberline {22.2}Goal-Driven Attention Modulator}{44}{subsection.22.2}%
-\contentsline {paragraph}{Attention neurons.}{44}{section*.74}%
-\contentsline {paragraph}{Per-layer projection.}{44}{section*.75}%
-\contentsline {subsection}{\numberline {22.3}Homeostatic Gain Control}{44}{subsection.22.3}%
-\contentsline {subsection}{\numberline {22.4}PE-Driven Feedback Learning}{44}{subsection.22.4}%
-\contentsline {subsection}{\numberline {22.5}Attention Weight Learning}{45}{subsection.22.5}%
-\contentsline {subsection}{\numberline {22.6}Parameter Summary}{45}{subsection.22.6}%
-\contentsline {subsection}{\numberline {22.7}Verification}{45}{subsection.22.7}%
-\contentsline {paragraph}{PE convergence within episodes.}{45}{section*.76}%
-\contentsline {paragraph}{PE convergence across episodes.}{45}{section*.77}%
-\contentsline {paragraph}{Attention selectivity.}{45}{section*.78}%
-\contentsline {paragraph}{Behavioral improvement.}{45}{section*.79}%
-\contentsline {section}{\numberline {23}Summary of Architecture}{46}{section.23}%
-\contentsline {subsection}{\numberline {23.1}Computational Framework Mapping}{47}{subsection.23.1}%
-\contentsline {paragraph}{Framework integration.}{49}{section*.83}%
-\contentsline {section}{\numberline {24}Discussion}{49}{section.24}%
-\contentsline {section}{\numberline {25}Code Availability}{51}{section.25}%
+\contentsline {subsection}{\numberline {9.6}Goal-to-Behavior Mapping}{11}{subsection.9.6}%
+\contentsline {subsection}{\numberline {9.7}Working Memory}{11}{subsection.9.7}%
+\contentsline {section}{\numberline {10}Simulation Results}{11}{section.10}%
+\contentsline {subsection}{\numberline {10.1}Step 1: Vision Pursuit}{11}{subsection.10.1}%
+\contentsline {subsection}{\numberline {10.2}Step 2: Precision-Adaptive Vision}{12}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}Step 3: Dopamine RPE}{13}{subsection.10.3}%
+\contentsline {subsection}{\numberline {10.4}Step 4: Basal Ganglia Gating}{14}{subsection.10.4}%
+\contentsline {subsection}{\numberline {10.5}Step 5: Optic Tectum Dynamics}{15}{subsection.10.5}%
+\contentsline {subsection}{\numberline {10.6}Step 6: Full Valence Pursuit with CMS}{16}{subsection.10.6}%
+\contentsline {subsection}{\numberline {10.7}Step 7: Closed-Loop Locomotion}{17}{subsection.10.7}%
+\contentsline {subsection}{\numberline {10.8}Step 8: Genomic Pre-training}{18}{subsection.10.8}%
+\contentsline {subsection}{\numberline {10.9}Step 9: Genomic Foraging}{19}{subsection.10.9}%
+\contentsline {subsection}{\numberline {10.10}Step 10: Hebbian Fine-tuning}{19}{subsection.10.10}%
+\contentsline {subsection}{\numberline {10.11}Step 11: Object Classification}{20}{subsection.10.11}%
+\contentsline {subsection}{\numberline {10.12}Step 12: Classification-Guided Behavior}{21}{subsection.10.12}%
+\contentsline {subsection}{\numberline {10.13}Step 13: Active Inference Policy Selection}{22}{subsection.10.13}%
+\contentsline {section}{\numberline {11}Gymnasium Integration (Step 14)}{23}{section.11}%
+\contentsline {subsection}{\numberline {11.1}Coordinate Bridge}{24}{subsection.11.1}%
+\contentsline {subsection}{\numberline {11.2}Energy Homeostasis}{24}{subsection.11.2}%
+\contentsline {subsection}{\numberline {11.3}Depth-Shaded Vision}{24}{subsection.11.3}%
+\contentsline {subsection}{\numberline {11.4}Obstacle Collision Physics}{24}{subsection.11.4}%
+\contentsline {subsection}{\numberline {11.5}Habit Network}{25}{subsection.11.5}%
+\contentsline {paragraph}{Observation discretization.}{25}{section*.28}%
+\contentsline {paragraph}{Streak consolidation.}{25}{section*.29}%
+\contentsline {paragraph}{Shortcut activation.}{25}{section*.30}%
+\contentsline {paragraph}{Decay.}{25}{section*.31}%
+\contentsline {subsection}{\numberline {11.6}Results}{25}{subsection.11.6}%
+\contentsline {section}{\numberline {12}Reinforcement Learning Critic (Step 15)}{26}{section.12}%
+\contentsline {subsection}{\numberline {12.1}Critic Architecture}{27}{subsection.12.1}%
+\contentsline {subsection}{\numberline {12.2}TD Learning}{27}{subsection.12.2}%
+\contentsline {subsection}{\numberline {12.3}EFE Weight Adaptation}{27}{subsection.12.3}%
+\contentsline {section}{\numberline {13}VAE World Model (Step 16)}{28}{section.13}%
+\contentsline {subsection}{\numberline {13.1}Multi-Modal Belief State}{29}{subsection.13.1}%
+\contentsline {subsection}{\numberline {13.2}VAE Architecture}{29}{subsection.13.2}%
+\contentsline {subsection}{\numberline {13.3}Transition Model as State-Space Dynamics}{29}{subsection.13.3}%
+\contentsline {subsection}{\numberline {13.4}Associative Memory}{29}{subsection.13.4}%
+\contentsline {subsection}{\numberline {13.5}Planning via Forward Simulation}{30}{subsection.13.5}%
+\contentsline {section}{\numberline {14}Hippocampal Place Cells (Step 17)}{31}{section.14}%
+\contentsline {subsection}{\numberline {14.1}Place Cell Network}{31}{subsection.14.1}%
+\contentsline {subsection}{\numberline {14.2}Path Integration}{32}{subsection.14.2}%
+\contentsline {subsection}{\numberline {14.3}Replay (Sharp-Wave Ripple Analog)}{32}{subsection.14.3}%
+\contentsline {subsection}{\numberline {14.4}Spatial Planning}{32}{subsection.14.4}%
+\contentsline {section}{\numberline {15}Allostatic Interoception (Step 18)}{34}{section.15}%
+\contentsline {subsection}{\numberline {15.1}Allostatic Variables}{34}{subsection.15.1}%
+\contentsline {subsection}{\numberline {15.2}Interoceptive Prediction Error}{34}{subsection.15.2}%
+\contentsline {subsection}{\numberline {15.3}Prior Preference Modulation}{34}{subsection.15.3}%
+\contentsline {subsection}{\numberline {15.4}Fatigue Speed Cap}{35}{subsection.15.4}%
+\contentsline {subsection}{\numberline {15.5}State Context Extension}{35}{subsection.15.5}%
+\contentsline {section}{\numberline {16}Full Evaluation Suite (Step 19)}{36}{section.16}%
+\contentsline {subsection}{\numberline {16.1}Configurations}{36}{subsection.16.1}%
+\contentsline {subsection}{\numberline {16.2}Results}{36}{subsection.16.2}%
+\contentsline {section}{\numberline {17}Amygdala Fear Circuit and Energy Asymmetry (Step 20)}{38}{section.17}%
+\contentsline {subsection}{\numberline {17.1}Amygdala Module}{38}{subsection.17.1}%
+\contentsline {paragraph}{Downstream effects of threat arousal.}{38}{section*.44}%
+\contentsline {subsection}{\numberline {17.2}Flee Energy Cost Asymmetry}{38}{subsection.17.2}%
+\contentsline {subsection}{\numberline {17.3}Nonlinear Hunger Amplification}{38}{subsection.17.3}%
+\contentsline {section}{\numberline {18}Food Prospection and Obstacle Navigation (Step 21)}{39}{section.18}%
+\contentsline {subsection}{\numberline {18.1}Food Prospect Evaluation}{39}{subsection.18.1}%
+\contentsline {paragraph}{Reachability scoring.}{39}{section*.45}%
+\contentsline {paragraph}{Olfactory heading cue.}{39}{section*.46}%
+\contentsline {subsection}{\numberline {18.2}Retinal Obstacle Navigation}{39}{subsection.18.2}%
+\contentsline {paragraph}{1. Obstacle repulsion.}{39}{section*.47}%
+\contentsline {paragraph}{2. Obstacle braking.}{39}{section*.48}%
+\contentsline {paragraph}{3. Foraging without retinal food.}{40}{section*.49}%
+\contentsline {subsection}{\numberline {18.3}Rock Formation Environment}{40}{subsection.18.3}%
+\contentsline {section}{\numberline {19}Curriculum RL Training (Step 22)}{40}{section.19}%
+\contentsline {section}{\numberline {20}Sleep--Wake Consolidation (Step 23)}{40}{section.20}%
+\contentsline {section}{\numberline {21}Active Inference Through Generative Models (Step 24)}{40}{section.21}%
+\contentsline {subsection}{\numberline {21.1}Retinal Feature Extractor}{41}{subsection.21.1}%
+\contentsline {paragraph}{Pixel counts.}{41}{section*.50}%
+\contentsline {paragraph}{Intensity mean (distance proxy).}{41}{section*.51}%
+\contentsline {paragraph}{Lateral bias (bearing).}{41}{section*.52}%
+\contentsline {paragraph}{Angular spread (facing proxy).}{41}{section*.53}%
+\contentsline {paragraph}{Temporal dynamics.}{41}{section*.54}%
+\contentsline {subsection}{\numberline {21.2}VAE Threat Decoder}{41}{subsection.21.2}%
+\contentsline {paragraph}{Blended threat inference.}{42}{section*.55}%
+\contentsline {subsection}{\numberline {21.3}Threat Assessment from Belief}{42}{subsection.21.3}%
+\contentsline {paragraph}{Facing detection.}{42}{section*.56}%
+\contentsline {paragraph}{Time-to-contact (TTC).}{42}{section*.57}%
+\contentsline {paragraph}{Panic level.}{42}{section*.58}%
+\contentsline {paragraph}{Predator distance proxy (for allostasis).}{42}{section*.59}%
+\contentsline {subsection}{\numberline {21.4}Interoceptive Energy Model}{43}{subsection.21.4}%
+\contentsline {paragraph}{Motor efference prediction.}{43}{section*.60}%
+\contentsline {paragraph}{Noisy interoceptive observation.}{43}{section*.61}%
+\contentsline {paragraph}{Bayesian belief update.}{43}{section*.62}%
+\contentsline {subsection}{\numberline {21.5}Position from Path Integration with Boundary Correction}{43}{subsection.21.5}%
+\contentsline {paragraph}{Calibrated path integration.}{43}{section*.63}%
+\contentsline {paragraph}{Boundary-pixel wall distance.}{43}{section*.64}%
+\contentsline {paragraph}{Position correction.}{44}{section*.65}%
+\contentsline {subsection}{\numberline {21.6}State Context and Memory Updates}{44}{subsection.21.6}%
+\contentsline {subsection}{\numberline {21.7}Backward Compatibility}{44}{subsection.21.7}%
+\contentsline {subsection}{\numberline {21.8}Verification}{44}{subsection.21.8}%
+\contentsline {paragraph}{Energy belief accuracy.}{44}{section*.66}%
+\contentsline {paragraph}{Position drift.}{44}{section*.67}%
+\contentsline {paragraph}{Survival comparison.}{45}{section*.68}%
+\contentsline {paragraph}{Inference validation mode.}{45}{section*.69}%
+\contentsline {section}{\numberline {22}Predictive Coding with Selective Attention (Step 25)}{45}{section.22}%
+\contentsline {subsection}{\numberline {22.1}Two-Compartment Predictive Neuron}{45}{subsection.22.1}%
+\contentsline {paragraph}{Soma $\mathbf {v}_s$.}{45}{section*.70}%
+\contentsline {paragraph}{Apical dendrite $\mathbf {v}_a$.}{45}{section*.71}%
+\contentsline {paragraph}{Prediction error.}{45}{section*.72}%
+\contentsline {paragraph}{Feedback hierarchy.}{46}{section*.73}%
+\contentsline {subsection}{\numberline {22.2}Goal-Driven Attention Modulator}{46}{subsection.22.2}%
+\contentsline {paragraph}{Attention neurons.}{46}{section*.74}%
+\contentsline {paragraph}{Per-layer projection.}{46}{section*.75}%
+\contentsline {subsection}{\numberline {22.3}Homeostatic Gain Control}{46}{subsection.22.3}%
+\contentsline {subsection}{\numberline {22.4}PE-Driven Feedback Learning}{46}{subsection.22.4}%
+\contentsline {subsection}{\numberline {22.5}Attention Weight Learning}{47}{subsection.22.5}%
+\contentsline {subsection}{\numberline {22.6}Parameter Summary}{47}{subsection.22.6}%
+\contentsline {subsection}{\numberline {22.7}Verification}{47}{subsection.22.7}%
+\contentsline {paragraph}{PE convergence within episodes.}{47}{section*.76}%
+\contentsline {paragraph}{PE convergence across episodes.}{47}{section*.77}%
+\contentsline {paragraph}{Attention selectivity.}{47}{section*.78}%
+\contentsline {paragraph}{Behavioral improvement.}{48}{section*.79}%
+\contentsline {section}{\numberline {23}Online Feedback Weight Training (Step 26)}{48}{section.23}%
+\contentsline {subsection}{\numberline {23.1}Enhanced Classifier}{48}{subsection.23.1}%
+\contentsline {subsection}{\numberline {23.2}Bayesian Survival Trade-off}{48}{subsection.23.2}%
+\contentsline {subsection}{\numberline {23.3}Layer-Wise Online W\textsubscript {FB} Training}{48}{subsection.23.3}%
+\contentsline {paragraph}{Frozen feedforward path.}{49}{section*.80}%
+\contentsline {subsection}{\numberline {23.4}Verification}{49}{subsection.23.4}%
+\contentsline {section}{\numberline {24}Summary of Architecture}{49}{section.24}%
+\contentsline {subsection}{\numberline {24.1}Computational Framework Mapping}{50}{subsection.24.1}%
+\contentsline {paragraph}{Framework integration.}{52}{section*.84}%
+\contentsline {section}{\numberline {25}Discussion}{52}{section.25}%
+\contentsline {section}{\numberline {26}Code Availability}{54}{section.26}%

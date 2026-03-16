@@ -51,6 +51,21 @@
 - `brain_agent.py` uses `model.load_saveable_state(state)` (NOT `load_state_dict`)
 - `load_saveable_state()` handles migration from old format (TwoComp.W → W_FF, nn.Linear → W_FF.t())
 
+## Free Energy & Bayesian Brain
+- **Free energy**: F = accuracy (Σ π_l·PE²) + 0.01·complexity (Σ γ²) — upper bounds surprise
+- **Bayesian surprise**: |F(t) - F(t-1)| — regime change detection
+- **Attention = precision optimization**: goal-driven additive somatic bias (Feldman & Friston 2010)
+- **Interoceptive PE**: allostatic errors are prediction errors across the interoceptive Markov blanket
+- **EFE precision modulation**: σ_E tightens under hunger, σ_S tightens under stress
+- **DP-like memory**: AssociativeMemory with CRP allocation (concentration α)
+
+## Bayesian Survival Trade-off (goal_policy_v60.py)
+- `starvation_risk = max(0, (0.50 - energy_ratio) / 0.50)` modulates all 4 goals
+- FORAGE urgency increases, FLEE/EXPLORE/SOCIAL become costly when starving
+- When both predator + starvation active: Bayesian model comparison via EFE softmax
+- Starvation mechanics: 1.3x metabolic cost below 30%, 1.15x below 50% energy
+- Speed cap: below 20% energy, max speed scales down linearly
+
 ## Running
 ```bash
 # Full demo
@@ -63,15 +78,8 @@
 .venv/bin/python -m zebra_v60.tests.step8_genomic_pretraining
 .venv/bin/python -m zebra_v60.tests.step10_hebbian_finetuning
 .venv/bin/python -m zebra_v60.tests.step11_object_classification
+.venv/bin/python -m zebra_v60.tests.step26_wfb_pe_training
 ```
 
-## Bayesian Survival Trade-off (goal_policy_v60.py)
-- `starvation_risk = max(0, (0.50 - energy_ratio) / 0.50)` modulates all 4 goals
-- FORAGE urgency increases, FLEE/EXPLORE/SOCIAL become costly when starving
-- When both predator + starvation active: Bayesian model comparison via EFE softmax
-- Starvation mechanics: 1.3x metabolic cost below 30%, 1.15x below 50% energy
-- Speed cap: below 20% energy, max speed scales down linearly
-
 ## Branches
-- `master` — working v60 with steps 1-24
-- `feat/predictive-coding-attention` — steps 1-26 with predictive coding, attention, Bayesian survival
+- `master` — working v60 with steps 1-26 (predictive coding, attention, Bayesian survival)
