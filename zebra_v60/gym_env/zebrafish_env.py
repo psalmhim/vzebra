@@ -1000,49 +1000,56 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         continuously. Burst-glide pattern with goal-modulated inter-bout
         interval (IBI).
 
+        Key: urgent stimuli (obstacles, threats, nearby food) interrupt
+        the IBI and trigger an immediate bout — real zebrafish do this.
+
         Returns:
             effective speed multiplier for this step
         """
         import random
 
         # Goal-dependent IBI: flee=fast bouts, explore=slow bouts
-        IBI_BY_GOAL = {0: 3, 1: 1, 2: 5, 3: 4}  # FORAGE, FLEE, EXPLORE, SOCIAL
+        IBI_BY_GOAL = {0: 2, 1: 1, 2: 3, 3: 3}  # FORAGE, FLEE, EXPLORE, SOCIAL
         goal = getattr(self, '_bout_goal_mod', 2)
 
-        # C-start override: force immediate burst
-        if speed_mod > 1.2:
+        # C-start or flee burst: force immediate burst, bypass IBI
+        if speed_mod > 1.0:
             self._bout_phase = "BURST"
             self._bout_timer = 3
             self._bout_speed_peak = speed_mod
             self._bout_count += 1
             return speed_mod
 
+        # Urgency detection: interrupt IBI for obstacles, threats, or food
+        urgent = speed_mod > 0.6  # brain is requesting significant speed
+
         if self._bout_phase == "IDLE":
-            if self._bout_ibi_timer > 0:
+            if self._bout_ibi_timer > 0 and not urgent:
                 self._bout_ibi_timer -= 1
-                return speed_mod * 0.05  # minimal drift
-            if speed_mod > 0.15:
+                return speed_mod * 0.2  # slow drift (not stationary)
+            if speed_mod > 0.1:
                 self._bout_phase = "BURST"
-                self._bout_timer = random.randint(3, 5)
+                self._bout_timer = random.randint(3, 4)
                 self._bout_speed_peak = speed_mod
                 self._bout_count += 1
                 return speed_mod
-            return speed_mod * 0.05
+            return speed_mod * 0.2
 
         if self._bout_phase == "BURST":
             self._bout_timer -= 1
             if self._bout_timer <= 0:
                 self._bout_phase = "GLIDE"
-                self._bout_timer = random.randint(2, 3)
-            return self._bout_speed_peak * (0.8 + 0.2 * random.random())
+                self._bout_timer = 2
+            return self._bout_speed_peak * (0.85 + 0.15 * random.random())
 
         if self._bout_phase == "GLIDE":
-            decay = math.exp(-0.5 * (3 - self._bout_timer))
+            # Glide: gradual deceleration but still moving
+            glide_frac = self._bout_timer / 2.0
             self._bout_timer -= 1
             if self._bout_timer <= 0:
                 self._bout_phase = "IDLE"
-                self._bout_ibi_timer = IBI_BY_GOAL.get(goal, 4)
-            return self._bout_speed_peak * decay * 0.5
+                self._bout_ibi_timer = IBI_BY_GOAL.get(goal, 3)
+            return self._bout_speed_peak * (0.3 + 0.4 * glide_frac)
 
         return speed_mod
 

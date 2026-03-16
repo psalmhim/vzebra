@@ -758,6 +758,14 @@ class BrainAgent:
             self._capture_phase = "NONE"
             return None
 
+        # Abort if obstacle blocks approach
+        obs_total = self.last_diagnostics.get("obs_total", 0)
+        if obs_total > 30:
+            self._capture_phase = "NONE"
+            if hasattr(env, '_strike_active'):
+                env._strike_active = False
+            return None
+
         if self._capture_phase == "J_TURN":
             # Orient toward prey: slow precise turn
             self._capture_timer -= 1
