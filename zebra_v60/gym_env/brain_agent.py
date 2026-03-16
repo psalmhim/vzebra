@@ -241,6 +241,24 @@ class BrainAgent:
         self._prev_pos = None
         self._obs_stuck_force_explore = False
 
+        # Looming detector (Feature 3)
+        self._prev_enemy_spread = 0.0
+        self._looming_l_over_v = 999.0
+        self._looming_expansion_rate = 0.0
+        self._looming_triggered = False
+
+        # Mauthner cell C-start escape (Feature 2)
+        self._mauthner_active = False
+        self._mauthner_steps_remaining = 0
+        self._mauthner_turn_direction = 0.0
+        self._mauthner_refractory = 0
+        self._mauthner_total_triggers = 0
+
+        # Prey capture kinematics (Feature 5)
+        self._capture_phase = "NONE"
+        self._capture_timer = 0
+        self._capture_total_strikes = 0
+
         # Patch memory: tracks food eaten per plankton patch
         self._patch_visit_counts = {}
 
@@ -513,6 +531,10 @@ class BrainAgent:
             ttc = (headroom / closing_speed) * 40.0
         else:
             ttc = 999.0
+        # Looming override (Feature 3)
+        if self._looming_triggered:
+            loom_ttc = max(1.0, self._looming_l_over_v * 2.0)
+            ttc = min(ttc, loom_ttc)
 
         # Panic level
         panic_level = 0.0
@@ -636,6 +658,137 @@ class BrainAgent:
 
         return corrected
 
+    # ------------------------------------------------------------------
+    # Feature 3: Looming detector
+    # ------------------------------------------------------------------
+    def _compute_looming(self):
+        """Compute looming signal from enemy pixel expansion rate.
+
+        Uses l/v ratio (angular size / expansion rate) as time-to-collision
+        proxy. Lower l/v = more imminent collision.
+        Biological basis: zebrafish tectal looming-sensitive neurons
+        (Temizer et al. 2015, Dunn et al. 2016).
+        """
+        enemy_px = self._enemy_pixels_total
+        # Approximate angular size from pixel count (20x20 grid, ±80° FOV)
+        theta = (enemy_px / 400.0) * 1.4  # normalize to radians
+
+        d_theta = theta - self._prev_enemy_spread
+        self._prev_enemy_spread = theta
+
+        self._looming_expansion_rate = d_theta
+        if d_theta > 0.005 and enemy_px > 5:
+            self._looming_l_over_v = theta / (d_theta + 1e-6)
+            self._looming_triggered = self._looming_l_over_v < 8.0
+        else:
+            self._looming_l_over_v = 999.0
+            self._looming_triggered = False
+
+    # ------------------------------------------------------------------
+    # Feature 2: Mauthner cell C-start escape
+    # ------------------------------------------------------------------
+    def _check_mauthner_trigger(self, effective_goal):
+        """Check and execute Mauthner cell C-start escape reflex.
+
+        Single reticulospinal neuron fires once → stereotyped C-bend
+        escape away from threat. Overrides all motor commands for 4 steps.
+        Biological basis: Eaton et al. (1977), Korn & Faber (2005).
+
+        Returns:
+            (turn_rate, speed) if C-start active, None otherwise
+        """
+        # Decrement refractory
+        if self._mauthner_refractory > 0:
+            self._mauthner_refractory -= 1
+
+        # Check for ongoing C-start
+        if self._mauthner_active:
+            if self._mauthner_steps_remaining > 2:
+                # Phase 1: C-bend (large turn, minimal forward)
+                result = (self._mauthner_turn_direction * 0.9, 0.2)
+            else:
+                # Phase 2: propulsive stroke (forward escape)
+                result = (self._mauthner_turn_direction * 0.3, 1.3)
+            self._mauthner_steps_remaining -= 1
+            if self._mauthner_steps_remaining <= 0:
+                self._mauthner_active = False
+            return result
+
+        # Trigger new C-start if looming and not in refractory
+        if (self._looming_triggered
+                and self._mauthner_refractory <= 0
+                and self._enemy_pixels_total > 5):
+            self._mauthner_active = True
+            self._mauthner_steps_remaining = 4
+            # Turn AWAY from enemy side
+            if self._enemy_pixels_R > self._enemy_pixels_L:
+                self._mauthner_turn_direction = -1.0  # turn left
+            else:
+                self._mauthner_turn_direction = 1.0   # turn right
+            self._mauthner_refractory = 15
+            self._mauthner_total_triggers += 1
+            return (self._mauthner_turn_direction * 0.9, 0.2)
+
+        return None
+
+    # ------------------------------------------------------------------
+    # Feature 5: Prey capture kinematics
+    # ------------------------------------------------------------------
+    def _update_prey_capture(self, effective_goal, nearest_dist,
+                              food_px_total, food_lateral_bias, env):
+        """Prey capture FSM: J-turn → approach → strike.
+
+        Biological basis: Bianco & Engert (2015), Patterson et al. (2013).
+
+        Returns:
+            (turn, speed) override or None if not in capture sequence
+        """
+        GOAL_FORAGE = 0
+
+        if self._capture_phase == "NONE":
+            if (effective_goal == GOAL_FORAGE
+                    and food_px_total >= 5
+                    and nearest_dist < 80):
+                self._capture_phase = "J_TURN"
+                self._capture_timer = 3
+            return None
+
+        if food_px_total < 2:
+            # Lost sight of prey — abort capture
+            self._capture_phase = "NONE"
+            return None
+
+        if self._capture_phase == "J_TURN":
+            # Orient toward prey: slow precise turn
+            self._capture_timer -= 1
+            if self._capture_timer <= 0:
+                self._capture_phase = "APPROACH"
+                self._capture_timer = 5
+            return (food_lateral_bias * 0.8, 0.3)
+
+        if self._capture_phase == "APPROACH":
+            # Close distance with fine alignment
+            self._capture_timer -= 1
+            if nearest_dist < 35:
+                self._capture_phase = "STRIKE"
+                self._capture_timer = 2
+                self._capture_total_strikes += 1
+                env._strike_active = True
+            elif self._capture_timer <= 0:
+                self._capture_phase = "NONE"
+                return None
+            return (food_lateral_bias * 0.5, 0.5)
+
+        if self._capture_phase == "STRIKE":
+            # Fast lunge — committed trajectory
+            self._capture_timer -= 1
+            if self._capture_timer <= 0:
+                self._capture_phase = "NONE"
+                env._strike_active = False
+            return (0.0, 1.4)
+
+        return None
+
     def _compute_threat_assessment(self, env):
         """Compute predator gaze-awareness and time-to-contact.
 
@@ -693,6 +846,10 @@ class BrainAgent:
             ttc = effective_dist / net_closing
         else:
             ttc = 999.0
+        # Looming override: l/v ratio provides direct TTC estimate (Feature 3)
+        if self._looming_triggered:
+            loom_ttc = max(1.0, self._looming_l_over_v * 2.0)
+            ttc = min(ttc, loom_ttc)
 
         # Panic level: ramps up when predator faces fish AND TTC is short
         panic_level = 0.0
@@ -923,6 +1080,9 @@ class BrainAgent:
             self._estimated_pred_speed = max(
                 0.0, getattr(self, '_estimated_pred_speed', 0.0) - 0.05)
         self._prev_enemy_depth = enemy_depth
+
+        # 4e. Looming detector (Feature 3)
+        self._compute_looming()
 
         # 4d. Extract retinal features for active inference (Phase 1)
         if self.use_active_inference:
@@ -1572,6 +1732,18 @@ class BrainAgent:
                 self.model.prec_OT.gamma.data += 0.008 * (dopa - 0.5)
                 self.model.prec_PC.gamma.data += 0.008 * (dopa - 0.5)
 
+        # 17b. Mauthner C-start escape (Feature 2)
+        _mauthner_result = self._check_mauthner_trigger(effective_goal)
+
+        # 17c. Prey capture kinematics (Feature 5)
+        _capture_result = None
+        if _mauthner_result is None:
+            food_lat_bias = ((food_px_R - food_px_L) / (food_px_total + 1e-8)
+                             if food_px_total > 0 else 0.0)
+            _capture_result = self._update_prey_capture(
+                effective_goal, _nearest_food_gym_dist, food_px_total,
+                food_lat_bias, env)
+
         # 18. Compute gym action
         # Negate turn: brain computes in world coords (y-up), gym uses y-down
         brain_turn = (turn + 0.03 * bg_gate + 0.02 * eye_pos
@@ -1658,8 +1830,21 @@ class BrainAgent:
 
         # Signal flee state to env for energy cost multiplier
         env.set_flee_active(
-            effective_goal == GOAL_FLEE or self._flee_burst_steps > 0,
+            effective_goal == GOAL_FLEE or self._flee_burst_steps > 0
+            or self._mauthner_active,
             panic_intensity=panic_level)
+
+        # Apply Mauthner C-start override (Feature 2)
+        if _mauthner_result is not None:
+            turn_rate = np.clip(_mauthner_result[0], -1.0, 1.0)
+            speed = _mauthner_result[1]
+        # Apply prey capture override (Feature 5)
+        elif _capture_result is not None:
+            turn_rate = np.clip(_capture_result[0], -1.0, 1.0)
+            speed = _capture_result[1]
+
+        # Signal bout goal to env (Feature 1)
+        env._bout_goal_mod = effective_goal
 
         action = np.array([turn_rate, speed], dtype=np.float32)
 
@@ -1690,6 +1875,12 @@ class BrainAgent:
             "stuck_counter": self._stuck_counter,
             "binocular_depth": self._binocular_depth,
             "pred_speed_est": getattr(self, '_estimated_pred_speed', 0.0),
+            "looming_triggered": self._looming_triggered,
+            "looming_l_over_v": self._looming_l_over_v,
+            "mauthner_active": self._mauthner_active,
+            "mauthner_total": self._mauthner_total_triggers,
+            "capture_phase": self._capture_phase,
+            "capture_strikes": self._capture_total_strikes,
             "cms": cms,
             "bg_gate": bg_gate,
             "eye_pos": eye_pos,

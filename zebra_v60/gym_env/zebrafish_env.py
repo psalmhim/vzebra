@@ -135,6 +135,14 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # Empty list → predator drifts harmlessly in PATROL with speed=0.
         self._pred_allowed_states = ["PATROL", "STALK", "HUNT", "AMBUSH"]
 
+        # Swim bout dynamics (biological: 50-100ms bouts at 2-5 Hz)
+        self._bout_phase = "IDLE"
+        self._bout_timer = 0
+        self._bout_speed_peak = 0.0
+        self._bout_ibi_timer = 0  # inter-bout interval
+        self._bout_count = 0
+        self._bout_goal_mod = 2   # default EXPLORE
+
         # Food parameters
         self.food_radius = 4.0
 
@@ -816,11 +824,12 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             starvation_cap = 0.15 + 0.55 * (energy_ratio_now / 0.20)
             speed_mod = min(speed_mod, starvation_cap)
 
-        # === Fish movement ===
+        # === Fish movement (swim bout dynamics) ===
         self.fish_heading += turn_rate * self.fish_turn_max
         self.fish_heading = math.atan2(
             math.sin(self.fish_heading), math.cos(self.fish_heading))
-        self.fish_speed = self.fish_speed_base * speed_mod
+        bout_speed = self._update_bout_state(speed_mod)
+        self.fish_speed = self.fish_speed_base * bout_speed
         self.fish_x += self.fish_speed * math.cos(self.fish_heading)
         self.fish_y += self.fish_speed * math.sin(self.fish_heading)
 
@@ -841,7 +850,10 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # === Colleague movement (Step 20) ===
         self._update_colleagues()
 
-        # === Food eating (multi-size) ===
+        # === Food eating (multi-size, strike-enlarged radius) ===
+        effective_eat_r = self.eat_radius
+        if getattr(self, '_strike_active', False):
+            effective_eat_r = self.eat_radius * 1.4  # Feature 5: strike lunge
         eaten = 0
         energy_gained = 0.0
         remaining = []
@@ -850,7 +862,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             sz = food[2] if len(food) > 2 else "small"
             dx = self.fish_x - fx
             dy = self.fish_y - fy
-            if dx * dx + dy * dy < self.eat_radius ** 2:
+            if dx * dx + dy * dy < effective_eat_r ** 2:
                 eaten += 1
                 energy_gained += self.FOOD_ENERGY.get(sz, 2.0)
             else:
@@ -894,8 +906,9 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         else:
             starvation_mult = 1.0
 
+        actual_speed = self.fish_speed / max(0.01, self.fish_speed_base)
         self.fish_energy -= (self.energy_drain_base
-                             + self.energy_drain_speed * speed_mod * flee_mult
+                             + self.energy_drain_speed * actual_speed * flee_mult
                              ) * starvation_mult
         self.fish_energy = max(0.0, self.fish_energy)
 
@@ -979,6 +992,59 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             self.render()
 
         return obs, reward, terminated, truncated, info
+
+    def _update_bout_state(self, speed_mod):
+        """Swim bout state machine: IDLE → BURST → GLIDE → IDLE.
+
+        Zebrafish larvae swim in discrete bouts (~50-100ms), not
+        continuously. Burst-glide pattern with goal-modulated inter-bout
+        interval (IBI).
+
+        Returns:
+            effective speed multiplier for this step
+        """
+        import random
+
+        # Goal-dependent IBI: flee=fast bouts, explore=slow bouts
+        IBI_BY_GOAL = {0: 3, 1: 1, 2: 5, 3: 4}  # FORAGE, FLEE, EXPLORE, SOCIAL
+        goal = getattr(self, '_bout_goal_mod', 2)
+
+        # C-start override: force immediate burst
+        if speed_mod > 1.2:
+            self._bout_phase = "BURST"
+            self._bout_timer = 3
+            self._bout_speed_peak = speed_mod
+            self._bout_count += 1
+            return speed_mod
+
+        if self._bout_phase == "IDLE":
+            if self._bout_ibi_timer > 0:
+                self._bout_ibi_timer -= 1
+                return speed_mod * 0.05  # minimal drift
+            if speed_mod > 0.15:
+                self._bout_phase = "BURST"
+                self._bout_timer = random.randint(3, 5)
+                self._bout_speed_peak = speed_mod
+                self._bout_count += 1
+                return speed_mod
+            return speed_mod * 0.05
+
+        if self._bout_phase == "BURST":
+            self._bout_timer -= 1
+            if self._bout_timer <= 0:
+                self._bout_phase = "GLIDE"
+                self._bout_timer = random.randint(2, 3)
+            return self._bout_speed_peak * (0.8 + 0.2 * random.random())
+
+        if self._bout_phase == "GLIDE":
+            decay = math.exp(-0.5 * (3 - self._bout_timer))
+            self._bout_timer -= 1
+            if self._bout_timer <= 0:
+                self._bout_phase = "IDLE"
+                self._bout_ibi_timer = IBI_BY_GOAL.get(goal, 4)
+            return self._bout_speed_peak * decay * 0.5
+
+        return speed_mod
 
     def _resolve_obstacle_collisions(self):
         """Push fish out of rock formation AABBs (Feature B).

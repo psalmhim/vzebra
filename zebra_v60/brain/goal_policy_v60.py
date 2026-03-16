@@ -119,7 +119,7 @@ class GoalPolicy_v60:
                     - 0.8 * p_food
                     + 0.2 * (0.5 - dopa)
                     + 0.15
-                    - 0.6 * starvation_risk     # starving → forage urgency
+                    - 0.8 * starvation_risk     # starving → forage urgency
                     + forage_predator_cost)      # predator → foraging cost
 
         # FLEE: attractive when enemy is detected
@@ -127,7 +127,7 @@ class GoalPolicy_v60:
         #   - flee speed drain = 2.5-3.5x base → burns reserves fast
         gaze_boost = -0.3 * pred_facing_score * p_enemy
         ttc_boost = -0.2 * max(0, 1.0 - ttc / 50.0) if ttc < 50 else 0.0
-        flee_energy_cost = 0.4 * starvation_risk  # fleeing when starving → death
+        flee_energy_cost = 0.5 * starvation_risk  # fleeing when starving → death
         g_flee = (0.1 * cms
                   - 0.8 * p_enemy
                   + 0.2
@@ -361,10 +361,10 @@ class SpikingGoalSelector(nn.Module):
         forage_predator_cost = 0.15 * p_enemy
         g_forage = (0.2 * uncertainty - 0.8 * p_food
                     + 0.2 * (0.5 - dopa) + 0.15
-                    - 0.6 * starvation_risk + forage_predator_cost)
+                    - 0.8 * starvation_risk + forage_predator_cost)
         gaze_boost = -0.3 * pred_facing_score * p_enemy
         ttc_boost = -0.2 * max(0, 1.0 - ttc / 50.0) if ttc < 50 else 0.0
-        flee_energy_cost = 0.4 * starvation_risk
+        flee_energy_cost = 0.5 * starvation_risk
         g_flee = (0.1 * cms - 0.8 * p_enemy + 0.2
                   + flee_energy_cost + gaze_boost + ttc_boost)
         g_explore = (0.3 * uncertainty - 0.5 * (p_nothing + p_environ)
