@@ -266,9 +266,9 @@ class ZebrafishSNN_v60(nn.Module):
         self.eye = PredictiveTwoComp(self.PC_INT, 100, n_fb=0, device=device)
         self.DA = PredictiveTwoComp(self.PC_INT, 50, n_fb=0, device=device)
 
-        # Classification head (unchanged)
-        self.cls_hidden = nn.Linear(800, 64)
-        self.cls_out = nn.Linear(64, 5)
+        # Classification head (800 type pixels + 4 aggregate pixel counts)
+        self.cls_hidden = nn.Linear(804, 128)
+        self.cls_out = nn.Linear(128, 5)
 
         self.saccade = SaccadeStabilizer()
 
@@ -340,9 +340,25 @@ class ZebrafishSNN_v60(nn.Module):
         self.PT_L.update_apical(per)         # PC_per → PT_L
         self.OT_F.update_apical(pt)          # PT_L → OT_F
 
-        # 6. Classification (unchanged)
-        type_features = torch.cat([L[:, 400:], R[:, 400:]], dim=1)
-        cls_h = torch.relu(self.cls_hidden(type_features))
+        # 6. Classification
+        type_L = L[:, 400:]
+        type_R = R[:, 400:]
+        type_features = torch.cat([type_L, type_R], dim=1)  # [1, 800]
+        # Add aggregate pixel counts (obstacle vs enemy disambiguation)
+        obs_count = ((torch.abs(type_L - 0.75) < 0.1).float().sum(dim=1, keepdim=True)
+                     + (torch.abs(type_R - 0.75) < 0.1).float().sum(dim=1, keepdim=True))
+        ene_count = ((torch.abs(type_L - 0.5) < 0.1).float().sum(dim=1, keepdim=True)
+                     + (torch.abs(type_R - 0.5) < 0.1).float().sum(dim=1, keepdim=True))
+        food_count = ((torch.abs(type_L - 1.0) < 0.1).float().sum(dim=1, keepdim=True)
+                      + (torch.abs(type_R - 1.0) < 0.1).float().sum(dim=1, keepdim=True))
+        boundary_count = ((torch.abs(type_L - 0.12) < 0.05).float().sum(dim=1, keepdim=True)
+                          + (torch.abs(type_R - 0.12) < 0.05).float().sum(dim=1, keepdim=True))
+        # Normalize counts to [0, 1] range (max ~400 pixels per eye)
+        scale = 1.0 / 50.0
+        agg = torch.cat([obs_count * scale, ene_count * scale,
+                         food_count * scale, boundary_count * scale], dim=1)
+        cls_input = torch.cat([type_features, agg], dim=1)  # [1, 804]
+        cls_h = torch.relu(self.cls_hidden(cls_input))
         cls = self.cls_out(cls_h)
 
         # 7. Per-layer prediction errors
