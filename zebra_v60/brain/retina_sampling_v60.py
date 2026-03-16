@@ -109,3 +109,80 @@ def sample_retina_binocular_v60(position, heading, world, device="cpu",
             idx += 1
 
     return retL.clamp(0, 1), retR.clamp(0, 1)
+
+
+def compute_binocular_depth(typeL, typeR, intL, intR,
+                             eye_offset=np.radians(45)):
+    """Estimate depth to entities using binocular disparity.
+
+    The two eyes are separated by 2*eye_offset (90°). The frontal overlap
+    zone spans approximately ±35° from heading. Within this zone, the same
+    entity may appear in both eyes at different azimuthal positions.
+
+    For each entity type, we compare pixel counts and intensity-weighted
+    positions between eyes to estimate depth.
+
+    Uses monocular intensity cue: brighter = closer (inverse-square falloff).
+
+    Args:
+        typeL, typeR: numpy [400] — entity type channels
+        intL, intR: numpy [400] — intensity channels
+        eye_offset: float — half interocular angle (default 45°)
+
+    Returns:
+        dict with per-entity depth estimates and stereo metrics
+    """
+    n_az = 20
+    half_fov = np.radians(80)
+    az = np.linspace(-half_fov, half_fov, n_az)
+
+    # Overlap zone: left eye indices where ray also falls in right eye FOV
+    # Left eye ray at azim a_L points at heading - eye_offset + a_L
+    # Right eye ray at azim a_R points at heading + eye_offset + a_R
+    # For overlap: heading - eye_offset + a_L = heading + eye_offset + a_R
+    #            → a_L - a_R = 2 * eye_offset
+    # Left eye overlap: a_L > 2*eye_offset - half_fov = 90° - 80° = 10°
+    # → indices where azim > 10° ≈ indices 11..19
+
+    results = {}
+    type_vals = {
+        "food": 1.0, "enemy": 0.5, "obstacle": 0.75,
+        "colleague": 0.25,
+    }
+
+    for name, tval in type_vals.items():
+        tol = 0.1
+        mask_L = np.abs(typeL - tval) < tol
+        mask_R = np.abs(typeR - tval) < tol
+        px_L = float(np.sum(mask_L))
+        px_R = float(np.sum(mask_R))
+
+        if px_L < 1 and px_R < 1:
+            results[f"{name}_depth"] = None
+            continue
+
+        # Monocular depth from intensity: mean intensity of matching pixels
+        # Higher intensity = closer (rays attenuate with distance)
+        int_L_mean = float(np.mean(intL[mask_L])) if px_L > 0 else 0.0
+        int_R_mean = float(np.mean(intR[mask_R])) if px_R > 0 else 0.0
+        mean_int = (int_L_mean * px_L + int_R_mean * px_R) / (px_L + px_R + 1e-8)
+
+        # Binocular cue: pixel count ratio between eyes indicates angular
+        # position. Entity in frontal overlap → both eyes see it.
+        # Entity to one side → only one eye sees it.
+        stereo_overlap = min(px_L, px_R) / (max(px_L, px_R) + 1e-8)
+
+        # Depth estimate: combine intensity (closer=brighter) with
+        # stereo overlap (frontal=closer for zebrafish prey capture)
+        # Map intensity [0,1] → depth [200, 10]
+        mono_depth = max(10.0, 200.0 * (1.0 - mean_int))
+        # Stereo correction: high overlap → reduce depth estimate
+        # (entity in frontal zone is typically closer)
+        stereo_correction = 1.0 - 0.3 * stereo_overlap
+        estimated_depth = mono_depth * stereo_correction
+
+        results[f"{name}_depth"] = estimated_depth
+        results[f"{name}_px"] = px_L + px_R
+        results[f"{name}_stereo"] = stereo_overlap
+
+    return results

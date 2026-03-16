@@ -326,7 +326,8 @@ def run_step12(T=800, swim_speed=1.5, base_turn_gain=0.15):
     ax.plot(pos_x[0], pos_y[0], "ko", markersize=10, label="Start", zorder=6)
     ax.plot(pos_x[-1], pos_y[-1], "ks", markersize=10, label="End", zorder=6)
     # Mark food/enemy/colleague positions
-    for (fx, fy) in world.foods:
+    for food in world.foods:
+        fx, fy = (food["x"], food["y"]) if isinstance(food, dict) else (food[0], food[1])
         ax.plot(fx, fy, "g^", markersize=6, alpha=0.4)
     for (ex, ey) in world.enemies:
         ax.plot(ex, ey, "rv", markersize=8, alpha=0.6)

@@ -79,15 +79,27 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         "render_fps": 30,
     }
 
+    # Food energy values by size
+    FOOD_ENERGY = {"small": 2.0, "large": 5.0}
+
     def __init__(self, render_mode=None, arena_size=800, n_food=15,
                  max_steps=2000, n_colleagues=3, side_panels=False,
-                 use_predator_brain=False):
+                 use_predator_brain=False,
+                 n_food_small=None, n_food_large=None):
         super().__init__()
 
         self.use_predator_brain = use_predator_brain
         self.arena_w = arena_size
         self.arena_h = int(arena_size * 0.75)  # 4:3 aspect ratio
-        self.n_food_init = n_food
+        # Multi-size food: default 20 small + 5 large if not specified
+        if n_food_small is not None or n_food_large is not None:
+            self.n_food_small_init = n_food_small or 20
+            self.n_food_large_init = n_food_large or 5
+            self.n_food_init = self.n_food_small_init + self.n_food_large_init
+        else:
+            self.n_food_init = n_food
+            self.n_food_small_init = max(1, n_food - n_food // 5)
+            self.n_food_large_init = n_food // 5
         self.max_steps = max_steps
         self.render_mode = render_mode
         self.n_colleagues = n_colleagues
@@ -238,29 +250,27 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                           for r in self.rock_formations]
 
         # Food positions (after rocks, so spawning avoids them)
-        # 40% hidden behind rocks, 60% in reachable locations
-        n_hidden = int(self.n_food_init * 0.4)
-        n_visible = self.n_food_init - n_hidden
+        # Multi-size food: large food preferentially in shelter (behind rocks),
+        # small food distributed evenly. 40% hidden, 60% open.
         self.foods = []
 
-        # Hidden food: require rock occlusion from spawn (center)
-        for _ in range(n_hidden):
+        # Large food: mostly shelter patches (higher value, harder to reach)
+        for _ in range(self.n_food_large_init):
             placed = False
             for _attempt in range(100):
                 fx, fy = self._spawn_food_pos()
                 if self._has_rock_occlusion(fx, fy):
-                    self.foods.append([fx, fy])
+                    self.foods.append([fx, fy, "large"])
                     placed = True
                     break
             if not placed:
-                # Fallback: place normally if occlusion not achievable
                 fx, fy = self._spawn_food_pos()
-                self.foods.append([fx, fy])
+                self.foods.append([fx, fy, "large"])
 
-        # Remaining food: spawn in open water (reachable without rock navigation)
-        for _ in range(n_visible):
+        # Small food: mostly open water (easy to find, low energy)
+        for _ in range(self.n_food_small_init):
             fx, fy = self._spawn_food_open()
-            self.foods.append([fx, fy])
+            self.foods.append([fx, fy, "small"])
 
         self.step_count = 0
         self.total_eaten = 0
@@ -831,28 +841,41 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # === Colleague movement (Step 20) ===
         self._update_colleagues()
 
-        # === Food eating ===
+        # === Food eating (multi-size) ===
         eaten = 0
+        energy_gained = 0.0
         remaining = []
-        for fx, fy in self.foods:
+        for food in self.foods:
+            fx, fy = food[0], food[1]
+            sz = food[2] if len(food) > 2 else "small"
             dx = self.fish_x - fx
             dy = self.fish_y - fy
             if dx * dx + dy * dy < self.eat_radius ** 2:
                 eaten += 1
+                energy_gained += self.FOOD_ENERGY.get(sz, 2.0)
             else:
-                remaining.append([fx, fy])
+                remaining.append(food)
         self.foods = remaining
         self.total_eaten += eaten
         self.food_eaten_this_step = eaten
 
-        # Energy gain from eating (Feature A)
+        # Energy gain from eating (variable by food size)
         self.fish_energy = min(self.energy_max,
-                               self.fish_energy + eaten * self.energy_food_gain)
+                               self.fish_energy + energy_gained)
 
-        # Respawn food to maintain density (avoiding obstacles)
-        while len(self.foods) < self.n_food_init:
+        # Respawn food to maintain type ratios
+        n_small = sum(1 for f in self.foods
+                      if (f[2] if len(f) > 2 else "small") == "small")
+        n_large = sum(1 for f in self.foods
+                      if (f[2] if len(f) > 2 else "small") == "large")
+        while n_small < self.n_food_small_init:
+            fx, fy = self._spawn_food_open()
+            self.foods.append([fx, fy, "small"])
+            n_small += 1
+        while n_large < self.n_food_large_init:
             fx, fy = self._spawn_food_pos()
-            self.foods.append([fx, fy])
+            self.foods.append([fx, fy, "large"])
+            n_large += 1
 
         # === Energy drain (Feature A) ===
         # Flee multiplier: escape bursts cost 2.5–3.5x (panic-scaled)
@@ -997,9 +1020,11 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             return None
         best_center = None
         best_count = 0
-        for fx, fy in self.foods:
+        for food in self.foods:
+            fx, fy = food[0], food[1]
             count = 0
-            for fx2, fy2 in self.foods:
+            for food2 in self.foods:
+                fx2, fy2 = food2[0], food2[1]
                 if (fx - fx2) ** 2 + (fy - fy2) ** 2 < 80 ** 2:
                     count += 1
             if count > best_count:
@@ -1133,8 +1158,9 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                 self.pred_state_timer = 0
 
         elif self.pred_state == "HUNT":
-            # Active sprint — burns stamina
-            self.pred_stamina = max(0.0, self.pred_stamina - 0.005)
+            # Active sprint — burns stamina proportional to chase effort
+            _chase_drain = 0.005 * (1.0 + 0.5 * getattr(self, '_last_chase_boost', 0.0))
+            self.pred_stamina = max(0.0, self.pred_stamina - _chase_drain)
             # Give up if exhausted or fish too far
             if self.pred_stamina < 0.03 or dist > self.pred_chase_radius:
                 self.pred_state = "PATROL"
@@ -1210,11 +1236,18 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
             # Faster turning during hunt
             self.pred_heading += np.clip(angle_diff, -0.15, 0.15)
-            # Sprint: faster when close, hunger-boosted
+            # Sprint: faster when close, hunger-boosted, chase-accelerated
             hunger_boost = 1.0 + 0.2 * self.pred_hunger
             dist_factor = min(1.0, dist / 60.0 + 0.6)
-            speed = self.pred_speed * dist_factor * hunger_boost * self.pred_stamina
-            strategy_detail = f"intercept d={dist:.0f} stam={self.pred_stamina:.1f}"
+            # Chase acceleration: up to 1.4x when locked on target
+            aim_quality = max(0.0, 1.0 - abs(angle_diff) / (math.pi * 0.3))
+            chase_boost = 1.0 + 0.4 * aim_quality
+            speed = (self.pred_speed * dist_factor * hunger_boost
+                     * self.pred_stamina * chase_boost)
+            self._last_chase_boost = chase_boost
+            strategy_detail = (f"intercept d={dist:.0f} "
+                               f"stam={self.pred_stamina:.1f} "
+                               f"chase={chase_boost:.2f}")
 
         elif self.pred_state == "AMBUSH":
             # Move toward food cluster and wait
@@ -1309,7 +1342,8 @@ class ZebrafishPreyPredatorEnv(gym.Env):
 
         if len(self.foods) > 0:
             dists = []
-            for ffx, ffy in self.foods:
+            for food in self.foods:
+                ffx, ffy = food[0], food[1]
                 d = math.sqrt((ffx - self.fish_x) ** 2
                               + (ffy - self.fish_y) ** 2)
                 dists.append(d)
@@ -1445,12 +1479,18 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                                (pr, pr), pr)
             surface.blit(glow_surf, (pcx - pr, pcy - pr))
 
-        # Draw food (green circles)
-        for fx, fy in self.foods:
-            pygame.draw.circle(surface, (0, 160, 0),
-                               (int(fx), int(fy)), int(self.food_radius))
-            pygame.draw.circle(surface, (0, 100, 0),
-                               (int(fx), int(fy)), int(self.food_radius), 1)
+        # Draw food (multi-size: small=dim green 3px, large=bright green 6px)
+        for food in self.foods:
+            fx, fy = food[0], food[1]
+            sz = food[2] if len(food) > 2 else "small"
+            if sz == "large":
+                r = 6
+                color, outline = (0, 200, 40), (0, 130, 20)
+            else:
+                r = 3
+                color, outline = (0, 140, 0), (0, 90, 0)
+            pygame.draw.circle(surface, color, (int(fx), int(fy)), r)
+            pygame.draw.circle(surface, outline, (int(fx), int(fy)), r, 1)
 
         # Draw receptive field cones (before fish so they appear behind)
         if self.alive:

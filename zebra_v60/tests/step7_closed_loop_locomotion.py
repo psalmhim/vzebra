@@ -203,7 +203,8 @@ def run_step7(T=500, swim_speed=1.5, turn_gain=0.15):
     for i, et in enumerate(eaten_times):
         ax.plot(pos_x_hist[et], pos_y_hist[et], "y*", markersize=12,
                 zorder=6, label="Eat" if i == 0 else None)
-    for (fx, fy) in world.foods:
+    for food in world.foods:
+        fx, fy = (food["x"], food["y"]) if isinstance(food, dict) else (food[0], food[1])
         ax.plot(fx, fy, "g^", markersize=6, alpha=0.4)
     ax.set_xlim(world.xmin, world.xmax)
     ax.set_ylim(world.ymin, world.ymax)

@@ -18,7 +18,7 @@ ENTITY_PREY = 6
 
 # Visual signatures: (intensity, detection_radius)
 ENTITY_VISUAL = {
-    ENTITY_FOOD:      (1.0,  15),   # bright, small prey
+    ENTITY_FOOD:      (1.0,  15),   # bright, small prey (default radius)
     ENTITY_ENEMY:     (0.75, 45),   # dimmer, 1.5x larger body — visible from far
     ENTITY_COLLEAGUE: (0.50, 18),   # moderate, same-size fish
     ENTITY_BOUNDARY:  (0.30, None), # dull edge signal (detected by ray clipping)
@@ -26,7 +26,29 @@ ENTITY_VISUAL = {
     ENTITY_PREY:      (0.85, 28),   # bright, fish-sized prey (predator's target)
 }
 
+# Multi-size food: detection_radius varies by size
+FOOD_SIZE_RADIUS = {
+    "small": 10,   # plankton: small, many spawned
+    "large": 22,   # artemia/worm: large, few spawned
+}
+
 BACKGROUND_INTENSITY = 0.05
+
+
+def _food_xy(food):
+    """Extract (x, y) from food item (tuple or dict)."""
+    if isinstance(food, dict):
+        return food["x"], food["y"]
+    return food[0], food[1]
+
+
+def _food_size(food):
+    """Extract size from food item, defaulting to 'small'."""
+    if isinstance(food, dict):
+        return food.get("size", "small")
+    if isinstance(food, (list, tuple)) and len(food) > 2:
+        return food[2]
+    return "small"
 
 
 class WorldEnv:
@@ -62,11 +84,11 @@ class WorldEnv:
     # ==================================================================
     # Entity generation
     # ==================================================================
-    def generate_food(self, n):
+    def generate_food(self, n, size="small"):
         for _ in range(n):
             fx = np.random.uniform(self.xmin + 20, self.xmax - 20)
             fy = np.random.uniform(self.ymin + 20, self.ymax - 20)
-            self.foods.append((fx, fy))
+            self.foods.append({"x": fx, "y": fy, "size": size})
 
     def generate_enemies(self, n):
         for _ in range(n):
@@ -95,7 +117,14 @@ class WorldEnv:
         ox, oy = origin
         t = 0.0
 
-        food_r2 = ENTITY_VISUAL[ENTITY_FOOD][1] ** 2
+        # Pre-compute per-food detection radii squared
+        food_r2_list = []
+        for food in self.foods:
+            fx, fy = _food_xy(food)
+            sz = _food_size(food)
+            r = FOOD_SIZE_RADIUS.get(sz, FOOD_SIZE_RADIUS["small"])
+            food_r2_list.append((fx, fy, r * r))
+
         enemy_r2 = ENTITY_VISUAL[ENTITY_ENEMY][1] ** 2
         colleague_r2 = ENTITY_VISUAL[ENTITY_COLLEAGUE][1] ** 2
         prey_r2 = ENTITY_VISUAL[ENTITY_PREY][1] ** 2
@@ -109,9 +138,9 @@ class WorldEnv:
             if x < self.xmin or x > self.xmax or y < self.ymin or y > self.ymax:
                 return ENTITY_VISUAL[ENTITY_BOUNDARY][0], ENTITY_BOUNDARY
 
-            # Food detection (closest first due to smaller radius)
-            for (fx, fy) in self.foods:
-                if (x - fx) ** 2 + (y - fy) ** 2 < food_r2:
+            # Food detection (per-food radius for multi-size support)
+            for fx, fy, fr2 in food_r2_list:
+                if (x - fx) ** 2 + (y - fy) ** 2 < fr2:
                     return ENTITY_VISUAL[ENTITY_FOOD][0], ENTITY_FOOD
 
             # Prey detection (fish seen by predator)
@@ -151,7 +180,14 @@ class WorldEnv:
         ox, oy = origin
         t = 0.0
 
-        food_r2 = ENTITY_VISUAL[ENTITY_FOOD][1] ** 2
+        # Pre-compute per-food detection radii squared
+        food_r2_list = []
+        for food in self.foods:
+            fx, fy = _food_xy(food)
+            sz = _food_size(food)
+            r = FOOD_SIZE_RADIUS.get(sz, FOOD_SIZE_RADIUS["small"])
+            food_r2_list.append((fx, fy, r * r))
+
         enemy_r2 = ENTITY_VISUAL[ENTITY_ENEMY][1] ** 2
         colleague_r2 = ENTITY_VISUAL[ENTITY_COLLEAGUE][1] ** 2
         prey_r2 = ENTITY_VISUAL[ENTITY_PREY][1] ** 2
@@ -165,9 +201,9 @@ class WorldEnv:
             if x < self.xmin or x > self.xmax or y < self.ymin or y > self.ymax:
                 return ENTITY_VISUAL[ENTITY_BOUNDARY][0], ENTITY_BOUNDARY, t
 
-            # Food detection
-            for (fx, fy) in self.foods:
-                if (x - fx) ** 2 + (y - fy) ** 2 < food_r2:
+            # Food detection (per-food radius)
+            for fx, fy, fr2 in food_r2_list:
+                if (x - fx) ** 2 + (y - fy) ** 2 < fr2:
                     return ENTITY_VISUAL[ENTITY_FOOD][0], ENTITY_FOOD, t
 
             # Prey detection (fish seen by predator)
@@ -209,14 +245,17 @@ class WorldEnv:
     def try_eat(self, fish_x, fish_y, eat_radius=18):
         new_foods = []
         eaten = 0
+        eaten_sizes = []
         r2 = eat_radius ** 2
-        for (fx, fy) in self.foods:
+        for food in self.foods:
+            fx, fy = _food_xy(food)
             if (fish_x - fx) ** 2 + (fish_y - fy) ** 2 < r2:
                 eaten += 1
+                eaten_sizes.append(_food_size(food))
                 continue
-            new_foods.append((fx, fy))
+            new_foods.append(food)
         self.foods = new_foods
-        return eaten
+        return eaten, eaten_sizes
 
     # ==================================================================
     # Flee from enemy (check proximity)
@@ -224,7 +263,7 @@ class WorldEnv:
     def check_enemy_proximity(self, fish_x, fish_y, danger_radius=30):
         """Return distance to nearest enemy, or None."""
         min_dist = float('inf')
-        for (ex, ey) in self.enemies:
+        for ex, ey in self.enemies:
             d2 = (fish_x - ex) ** 2 + (fish_y - ey) ** 2
             if d2 < min_dist:
                 min_dist = d2

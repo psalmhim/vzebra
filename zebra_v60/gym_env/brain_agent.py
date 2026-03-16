@@ -66,10 +66,12 @@ class GymWorldBridge:
         world = WorldEnv(xmin=-200, xmax=200, ymin=-150, ymax=150,
                          n_food=0, n_enemies=0, n_colleagues=0)
 
-        # Sync foods
-        for fx, fy in env.foods:
+        # Sync foods (with size for multi-size detection radii)
+        for food in env.foods:
+            fx, fy = food[0], food[1]
+            sz = food[2] if len(food) > 2 else "small"
             wx, wy = self.gym_to_world_pos(fx, fy)
-            world.foods.append((wx, wy))
+            world.foods.append({"x": wx, "y": wy, "size": sz})
 
         # Sync predator as enemy
         px, py = self.gym_to_world_pos(env.pred_x, env.pred_y)
@@ -701,7 +703,8 @@ class BrainAgent:
         pred_wx, pred_wy = self.bridge.gym_to_world_pos(env.pred_x, env.pred_y)
 
         prospects = []
-        for i, (fx, fy) in enumerate(env.foods):
+        for i, food in enumerate(env.foods):
+            fx, fy = food[0], food[1]
             fwx, fwy = self.bridge.gym_to_world_pos(fx, fy)
 
             # Distance from fish to food (world coords)
@@ -725,8 +728,9 @@ class BrainAgent:
             # Risk is high when predator is close to food, normalized 0-1
             risk = max(0.0, 1.0 - pred_dist_to_food / 150.0)
 
-            # Reward: energy gain from eating
-            gain = 15.0
+            # Reward: energy gain (varies by food size)
+            food_sz = food[2] if len(food) > 2 else "small"
+            gain = 5.0 if food_sz == "large" else 2.0
 
             # Patch productivity bonus: food in known-productive patches
             patch_bonus = 0.0
@@ -870,6 +874,28 @@ class BrainAgent:
         self._enemy_pixels_total = int(enemy_px_L + enemy_px_R)
         self._enemy_pixels_L = int(enemy_px_L)
         self._enemy_pixels_R = int(enemy_px_R)
+
+        # 4c. Binocular depth estimation
+        from zebra_v60.brain.retina_sampling_v60 import compute_binocular_depth
+        intL_raw = out["retL_full"][0, :400].cpu().numpy()
+        intR_raw = out["retR_full"][0, :400].cpu().numpy()
+        self._binocular_depth = compute_binocular_depth(
+            typeL_raw, typeR_raw, intL_raw, intR_raw)
+
+        # 4d. Predator speed estimation from binocular depth changes
+        enemy_depth = self._binocular_depth.get("enemy_depth")
+        prev_depth = getattr(self, '_prev_enemy_depth', None)
+        if enemy_depth is not None and prev_depth is not None:
+            # Negative delta = approaching (depth decreasing)
+            depth_delta = enemy_depth - prev_depth
+            approach_rate = max(0.0, -depth_delta / 10.0)  # normalize
+            self._estimated_pred_speed = (
+                0.7 * getattr(self, '_estimated_pred_speed', 0.0)
+                + 0.3 * min(1.0, approach_rate))
+        elif enemy_depth is None:
+            self._estimated_pred_speed = max(
+                0.0, getattr(self, '_estimated_pred_speed', 0.0) - 0.05)
+        self._prev_enemy_depth = enemy_depth
 
         # 4d. Extract retinal features for active inference (Phase 1)
         if self.use_active_inference:
@@ -1635,6 +1661,8 @@ class BrainAgent:
             "bayesian_surprise": getattr(self.model, '_bayesian_surprise', 0.0),
             "obs_total": obs_total,
             "stuck_counter": self._stuck_counter,
+            "binocular_depth": self._binocular_depth,
+            "pred_speed_est": getattr(self, '_estimated_pred_speed', 0.0),
             "cms": cms,
             "bg_gate": bg_gate,
             "eye_pos": eye_pos,

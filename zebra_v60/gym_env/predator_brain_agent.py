@@ -73,9 +73,11 @@ class PredatorWorldBridge:
             world.prey.append((wx, wy))
 
         # Food items visible (for ambush strategy)
-        for food_x, food_y in env.foods:
+        for food in env.foods:
+            food_x, food_y = food[0], food[1]
+            sz = food[2] if len(food) > 2 else "small"
             wx, wy = self.gym_to_world_pos(food_x, food_y)
-            world.foods.append((wx, wy))
+            world.foods.append({"x": wx, "y": wy, "size": sz})
 
         # Obstacles
         rock_formations = getattr(env, 'rock_formations', None)
