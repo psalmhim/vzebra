@@ -27,7 +27,7 @@
 \title{%
   \textbf{A Biologically Grounded Virtual Zebrafish:\\
   From Retinal Sampling to Active Inference Policy Selection}\\[8pt]
-  \large Technical Report --- Zebrafish SNN v60 (Steps 1--25)
+  \large Technical Report --- Zebrafish SNN v60 (Steps 1--26)
 }
 \author{Hae-Jeong Park\\
   Department of Nuclear Medicine \& Cognitive Science\\
@@ -45,7 +45,7 @@ We present a spiking neural network (SNN) model of the larval zebrafish brain
 that implements the full perception--action loop: from binocular retinal
 sampling through tectal processing and predictive coding to locomotor output
 with neuromodulatory control.
-The model is developed in twenty-five progressive steps, each adding a
+The model is developed in twenty-six progressive steps, each adding a
 biologically motivated computational module.
 Steps~1--6 establish visual tracking with precision adaptation, dopamine-based
 reward prediction error, basal ganglia motor gating, optic tectum dynamics,
@@ -88,10 +88,15 @@ predictive coding cells featuring apical dendrite feedback and
 goal-driven additive attention, with homeostatic gain control and
 PE-driven anti-Hebbian feedback learning, reducing prediction error
 64\% and improving survival from 100\% to 60\% catch rate.
+Step~26 adds a Bayesian survival trade-off that weighs starvation risk
+against predator threat in goal selection, an enhanced classifier with
+aggregate pixel-count features achieving 100\% accuracy across all five
+entity classes, and a structured online feedback weight training protocol
+with frozen feedforward path that improves foraging 133\% (6$\to$14 food).
 All modules use biologically plausible local learning rules without
 backpropagation through time.
 In closed-loop simulations, the virtual zebrafish successfully forages for
-food (3--6 items per 800-step episode), avoids predators, navigates around
+food (6--14 items per 800-step episode), avoids predators, navigates around
 rock formations, and explores its environment with goal-appropriate
 behavioral modulation driven by interoceptive and exteroceptive signals.
 \end{abstract}
@@ -110,7 +115,7 @@ avoidance, and social behavior~\cite{ahrens2013,portugues2014}.
 This report documents a computational model---\textbf{ZebrafishSNN\_v60}---that
 recapitulates key neural circuits of the larval zebrafish using a hierarchy of
 spiking neural network layers.
-The model is built incrementally across twenty-four developmental steps, each
+The model is built incrementally across twenty-six developmental steps, each
 introducing one functional module.
 The design philosophy is:
 \begin{enumerate}[nosep]
@@ -151,9 +156,13 @@ The full processing pipeline is:
 \]
 
 A separate classification head branches from the bilateral retinal type
-channels:
+channels, augmented with aggregate pixel-count features
+(Section~\ref{sec:enhanced_cls}):
 \[
-  [\mathbf{L}_{400:},\; \mathbf{R}_{400:}] \;\xrightarrow{800 \to 64 \to 5}\;
+  [\mathbf{L}_{400:},\; \mathbf{R}_{400:},\;
+   \tilde{n}_\text{obs},\; \tilde{n}_\text{ene},\;
+   \tilde{n}_\text{food},\; \tilde{n}_\text{bnd}]
+  \;\xrightarrow{804 \to 128 \to 5}\;
   \text{class logits}.
 \]
 
@@ -191,7 +200,8 @@ Each pixel has two channels:
     \end{equation}
     where $\alpha$ is the azimuthal offset from eye center.
   \item \textbf{Type channel} (unfoveated) carrying entity identity:
-    food$\,{=}\,1.0$, enemy$\,{=}\,0.5$, colleague$\,{=}\,0.25$,
+    food$\,{=}\,1.0$, obstacle$\,{=}\,0.75$, enemy$\,{=}\,0.5$,
+    prey$\,{=}\,0.38$, colleague$\,{=}\,0.25$,
     boundary$\,{=}\,0.12$, none$\,{=}\,0.0$.
 \end{itemize}
 
@@ -385,13 +395,15 @@ and $s_\text{mod}$ is a goal-dependent speed multiplier.
 \subsection{Genomic Pre-training (Step 8)}
 
 Supervised learning mimics evolutionary pre-wiring of the motor pathway.
-Training minimizes:
+Training uses diverse goal contexts (70\% \textsc{forage}, 20\% \textsc{flee},
+10\% \textsc{explore}) to build goal-conditioned motor responses:
 \begin{equation}\label{eq:genomic_loss}
-  \mathcal{L} = \|\hat{\tau} - \tanh(2\alpha_\text{food})\|^2
-    + 0.3\,\|\hat{\phi} - \alpha_\text{food}/\pi\|^2,
+  \mathcal{L} = \|\hat{\tau} - s\,\tanh(2\alpha)\|^2
+    + 0.3\,\|\hat{\phi} - s\,\alpha/\pi\|^2,
 \end{equation}
-where $\hat{\tau}$ is the decoded motor turn and $\hat{\phi}$ the predicted
-eye angle.
+where $\hat{\tau}$ is the decoded motor turn, $\hat{\phi}$ the predicted
+eye angle, $\alpha$ the angle to the entity, and $s = +1$ (approach for food)
+or $s = -1$ (avoid for enemy).
 Adam optimizer with $\text{lr}=0.005$, cosine annealing, gradient clipping at
 1.0, for 120 epochs $\times$ 50 samples.
 
@@ -409,17 +421,22 @@ Applied to OT fusion weights and motor output head.
 
 \subsection{Object Classification (Step 11)}
 
-A two-layer classifier (800$\to$64$\to$5) is trained on bilateral retinal type
-channels using cross-entropy loss:
+A two-layer classifier (804$\to$128$\to$5) is trained on bilateral retinal type
+channels augmented with aggregate pixel counts using class-weighted
+cross-entropy loss:
 \begin{equation}\label{eq:cls_loss}
-  \mathcal{L}_\text{cls} = -\sum_c y_c \log p_c,
+  \mathcal{L}_\text{cls} = -\sum_c w_c\, y_c \log p_c,
   \quad
-  p = \text{softmax}(\mathbf{W}_2\,\text{ReLU}(\mathbf{W}_1\,\mathbf{t}) + \mathbf{b}_2),
+  p = \text{softmax}\bigl(\mathbf{W}_2\,\text{ReLU}(\mathbf{W}_1\,\mathbf{x}_\text{cls})\bigr),
 \end{equation}
-where $\mathbf{t} = [\mathbf{L}_{400:},\;\mathbf{R}_{400:}]$.
+where $\mathbf{x}_\text{cls}$ is the 804-dimensional input defined in
+Eq.~\ref{eq:cls_enhanced} and $w_\text{env} = 3$ (other classes $w = 1$).
 Five classes: nothing, food, enemy, colleague, environment.
-Trained for 150 epochs with $\text{lr} = 0.01$; achieves $> 80\%$ per-class
-accuracy.
+Goal context is matched to entity type during training (e.g., \textsc{forage}
+for food scenes, \textsc{flee} for enemy scenes).
+Trained for 250 epochs $\times$ 150 samples with $\text{lr} = 0.01$
+and 8 integration steps for environment scenes;
+achieves 100\% per-class validation accuracy.
 
 %===================================================================
 \section{Reactive Behavior (Step 12)}\label{sec:reactive}
@@ -446,8 +463,8 @@ goal selection via Expected Free Energy (EFE) minimization.
 
 \subsection{Goal Space}
 
-Three discrete goals: $\mathcal{G} = \{\textsc{forage},\; \textsc{flee},\;
-\textsc{explore}\}$.
+Four discrete goals: $\mathcal{G} = \{\textsc{forage},\; \textsc{flee},\;
+\textsc{explore},\; \textsc{social}\}$.
 
 \subsection{Expected Free Energy}
 
@@ -457,11 +474,16 @@ pragmatic (reward-seeking) terms:
 \boxed{
 \begin{aligned}
   G_\textsc{forage}  &= 0.2\,\mathcal{U} - 0.8\,p_\text{food}
-    + 0.2\,(0.5 - \text{DA}) + 0.15, \\
-  G_\textsc{flee}    &= 0.1\,\text{CMS} - 0.8\,p_\text{enemy} + 0.40, \\
+    + 0.2\,(0.5 - \text{DA}) + 0.15
+    - 0.6\,s^* + 0.15\,p_\text{enemy}, \\
+  G_\textsc{flee}    &= 0.1\,\text{CMS} - 0.8\,p_\text{enemy} + 0.20
+    + 0.4\,s^*, \\
   G_\textsc{explore} &= 0.3\,\mathcal{U}
     - 0.5\,(p_\emptyset + p_\text{env})
-    + 0.1\,\text{CMS} + 0.20,
+    + 0.1\,\text{CMS} + 0.20 + 0.2\,s^*, \\
+  G_\textsc{social}  &= 0.2\,\mathcal{U}
+    - 0.6\,p_\text{colleague}
+    + 0.15\,p_\text{enemy} + 0.25 + 0.15\,s^*,
 \end{aligned}
 }
 \end{equation}
@@ -469,12 +491,18 @@ where $\mathcal{U} = 1 - \tfrac{1}{2}(\pi_\text{OT} + \pi_\text{PC})$ is the
 model uncertainty.
 Lower EFE indicates a more preferred goal.
 
+where $s^*$ is the starvation risk from Eq.~\ref{eq:starvation_risk}
+(Step~26).
 Key design features:
 \begin{itemize}[nosep]
-  \item $G_\textsc{flee}$ has a high baseline ($+0.40$), ensuring it is only
-    selected when $p_\text{enemy}$ is high.
+  \item \textbf{Bayesian survival trade-off}: starvation risk $s^*$ lowers
+    forage EFE (urgency) while raising flee/explore/social EFE (cost).
+    This creates a principled competition between predator avoidance and
+    energy acquisition.
   \item Dopamine modulates $G_\textsc{forage}$: low DA increases foraging drive.
   \item CMS (novelty) promotes both fleeing and exploring.
+  \item $G_\textsc{social}$ attracts toward conspecifics but is suppressed
+    by predator presence and starvation.
 \end{itemize}
 
 \subsection{Policy Posterior}
@@ -490,10 +518,14 @@ The posterior over goals uses a softmax with inverse temperature $\beta = 2.0$:
 A timer-based persistence mechanism prevents goal flickering:
 \begin{itemize}[nosep]
   \item Minimum persistence: 8 steps per goal episode.
-  \item \textbf{Emergency override}: if $p_\text{enemy} > 0.7$, immediately
-    switch to \textsc{flee} (biological fight-or-flight).
+  \item \textbf{Survival override}: if $p_\text{enemy} > 0.35$ and
+    starvation urgency $s < 0.6$, force \textsc{flee}.
+    If both threats are active ($p_\text{enemy} > 0.35$ and $s \geq 0.6$),
+    defer to the EFE softmax posterior for Bayesian model comparison.
+  \item \textbf{Starvation override}: if $s > 0.7$ with no immediate
+    predator, force \textsc{forage}.
   \item \textbf{Context-sensitive early exit}: \textsc{flee} exits early after
-    3 steps if $p_\text{enemy} < 0.2$; \textsc{forage} exits after 4 steps if
+    3 steps if $p_\text{enemy} < 0.20$; \textsc{forage} exits after 4 steps if
     $p_\text{food} < 0.15$.
   \item Re-selection uses $\arg\max \pi(g)$.
 \end{itemize}
@@ -502,7 +534,7 @@ A timer-based persistence mechanism prevents goal flickering:
 
 Entropy-based confidence provides a meta-level precision signal:
 \begin{equation}\label{eq:confidence}
-  \text{conf} = 1 - \frac{H(\boldsymbol{\pi})}{\ln 3},
+  \text{conf} = 1 - \frac{H(\boldsymbol{\pi})}{\ln 4},
   \quad
   H(\boldsymbol{\pi}) = -\sum_i \pi(g_i)\ln\pi(g_i).
 \end{equation}
@@ -520,6 +552,7 @@ Goal & $a_\text{gain}$ & $s_\text{mod}$ & $e_\text{mod}$ \\
 \textsc{forage}  & $1.0 + 0.5\,p_f\,c$ & $1.0 + 0.3\,p_f$   & 0.5 \\
 \textsc{flee}    & $-(0.8 + 0.5\,p_e\,c)$ & $1.3 + 0.4\,p_e$ & 0.3 \\
 \textsc{explore} & 0.8 & 0.9 & $1.5 + 0.5(1{-}c)$ \\
+\textsc{social}  & $0.6 + 0.3\,p_\text{col}\,c$ & 0.9 & 0.8 \\
 \bottomrule
 \end{tabular}
 
@@ -689,9 +722,11 @@ Weight norms show gradual adaptation (\cref{fig:step10}).
 
 \subsection{Step 11: Object Classification}
 
-The classifier achieves $> 80\%$ per-class accuracy on balanced validation.
-Confusion matrix shows strongest discrimination for food and enemy classes
-(\cref{fig:step11}).
+The enhanced classifier with pixel-count features achieves 100\% per-class
+accuracy on balanced validation.
+The aggregate features (obstacle, enemy, food, boundary pixel counts)
+resolve the obstacle--food--enemy confusion that limited earlier architectures
+to $\sim$55\% on environment scenes (\cref{fig:step11}).
 
 \begin{figure}[H]
   \centering
@@ -1310,25 +1345,23 @@ Place Cell  & place cell & \checkmark & \checkmark \\
 \toprule
 Config & Steps & Eaten & Final Energy & Memory Nodes \\
 \midrule
-Baseline    & 800 & 3 & 64.4 & 0  \\
-Full Brain  & 800 & 5 & 86.3 & 44 \\
-Place Cell  & 800 & 4 & 78.4 & 20 \\
+Baseline    & 800 & 6  & 76.8 & 0  \\
+Full Brain  & 800 & 10 & 73.3 & 28 \\
+Place Cell  & 800 & 9  & 90.7 & 23 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-With the addition of the amygdala fear circuit, energy-asymmetric flee cost,
-food prospect evaluation, and obstacle navigation (Steps~20--21), all three
-configurations now successfully forage.
-The Full Brain configuration achieves the highest food intake (5 items),
-maintains the highest final energy (86.3), and builds 44 memory nodes,
-demonstrating that the amygdala--allostasis interaction drives
-energy-efficient foraging.
-The Place Cell configuration achieves 4~items eaten, indicating that
-spatial memory supports successful food-patch return.
-Multi-seed testing (seeds 42, 123, 456, 789, 1000) confirms 4/5
-seeds achieve positive food intake, with an average of 2.8 items eaten
-and a maximum of 6 (seed~1000).
+With the full pipeline---amygdala fear circuit, Bayesian survival trade-off,
+enhanced classifier, and online feedback training (Steps~20--26)---all three
+configurations survive the full 800 steps and forage successfully.
+The Full Brain configuration achieves 10 food items with 28 memory nodes.
+The Place Cell configuration achieves 9 food items with the highest final
+energy (90.7), demonstrating that spatial memory combined with softened
+starvation mechanics enables efficient food-patch return.
+The Baseline configuration eats 6 food items even without world models or
+allostasis, indicating that the improved classifier and survival trade-off
+benefit all configurations.
 
 \begin{figure}[H]
   \centering
@@ -2020,7 +2053,10 @@ a prediction-error-driven anti-Hebbian rule, independent of reward:
   \quad \eta_\text{fb} = 2 \times 10^{-4},
 \end{equation}
 with per-element clamp $|\Delta W| \leq 0.003$ and weight clamp
-$|W_\text{FB}| \leq 0.15$ to prevent feedback overshoot.
+$|W_\text{FB}| \leq 0.10$ to prevent feedback overshoot.
+Layer-specific learning rates reduce noise in high-dimensional sensory
+layers: OT$_\text{F}$ uses $0.3\times$, PT$_\text{L}$ uses $0.6\times$,
+and PC layers use $1.0\times$ the base rate.
 This is distinct from the RPE-gated feedforward Hebbian rule
 (Eq.~\ref{eq:hebbian}): feedforward learning is reward-modulated;
 feedback learning is purely predictive.
@@ -2049,11 +2085,12 @@ Hebbian correlation between goal signals and attention neuron activity:
 \toprule
 Component & Parameters & Notes \\
 \midrule
-$\mathbf{W}_\text{FF}$ (7 layers) & 2,354,609 & Unchanged from Steps 1--24 \\
-$\mathbf{W}_\text{FB}$ (4 layers) & 373,100 & New: top-down feedback \\
-Attention ($\mathbf{W}_\text{att} + \mathbf{W}_\text{proj}$) & 10,832 & New: goal-driven bias \\
+$\mathbf{W}_\text{FF}$ (7 layers) & 2,354,609 & Feedforward pathway \\
+$\mathbf{W}_\text{FB}$ (4 layers) & 373,100 & Top-down feedback \\
+Attention ($\mathbf{W}_\text{att} + \mathbf{W}_\text{proj}$) & 10,832 & Goal-driven bias \\
+Classifier ($804{\to}128{\to}5$) & 103,557 & Enhanced with pixel counts \\
 \midrule
-Total & 2,738,541 & \\
+Total & 2,842,098 & \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -2569,6 +2606,33 @@ Key findings:
     Attention selectivity of 15.7$\times$ during flee and 3.8$\times$
     during foraging demonstrates that goal context effectively modulates
     neural processing throughout the hierarchy.
+  \item \textbf{Bayesian survival trade-off}: Step~26 introduces a
+    principled competition between predator avoidance and energy
+    acquisition through starvation-risk-modulated EFE
+    (Eq.~\ref{eq:starvation_risk}).
+    When both threats are active, the system performs Bayesian model
+    comparison via the EFE softmax posterior rather than hard-coding
+    a flee override---consistent with evidence that zebrafish modulate
+    defensive behavior based on metabolic state~\cite{dunn2016}.
+  \item \textbf{Pixel-count classifier features}: The aggregate pixel
+    counts added in Step~26 (Eq.~\ref{eq:cls_enhanced}) solve a
+    fundamental perceptual challenge: distinguishing spatially extended
+    obstacles from point-like food and enemy entities.
+    This mirrors biological ``size tuning'' in tectal neurons that
+    distinguish looming predators from small prey~\cite{temizer2015}.
+    The improvement from 55\% to 100\% environment classification
+    demonstrates that explicit spatial statistics complement raw
+    pixel-level features.
+  \item \textbf{Frozen-path feedback training}: The key insight of
+    Step~26 is that feedback weight optimization must freeze the
+    feedforward path to prevent representational drift.
+    Without this constraint, Hebbian W$_\text{FF}$ updates during
+    W$_\text{FB}$ training shift the learned representations, degrading
+    classification-dependent behavior (food: 6$\to$3).
+    With frozen W$_\text{FF}$, foraging \emph{improves} (6$\to$14),
+    suggesting that better top-down predictions enhance bottom-up
+    sensory processing---a prediction of predictive coding
+    theory~\cite{rao1999,clark2013}.
 \end{enumerate}
 
 The model's modular design allows future extensions: additional sensory
