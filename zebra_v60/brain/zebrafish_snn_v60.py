@@ -450,24 +450,47 @@ class ZebrafishSNN_v60(nn.Module):
             self.load_state_dict(state, strict=False)
 
     def compute_free_energy(self):
-        """Compute free energy as precision-weighted hierarchical prediction error.
+        """Compute variational free energy F as precision-weighted hierarchical PE.
 
-        F = Σ_l π_l * PE_l²
-        where PE_l = |V_a - V_s| at each layer.
+        F = Σ_l (π_l/2) * ||ε_l||²  +  D_KL(q(θ)||p(θ))
+
+        The PE term measures prediction accuracy (how well the generative
+        model explains observations).  The KL term measures complexity
+        (how far the posterior deviates from the prior).  F upper-bounds
+        Bayesian surprise: F ≥ -ln p(o).
+
+        Also computes Bayesian surprise as the absolute change in free
+        energy between timesteps: large ΔF signals a regime change.
         """
-        F = 0.0
+        accuracy = 0.0
         # Precision-weighted layers
         for layer, prec in [(self.OT_F, self.prec_OT),
                             (self.PC_per, self.prec_PC)]:
             pe = layer.pred_error
             if pe is not None:
                 pi = prec.compute_pi().mean().item()
-                F += 0.5 * pi * float((pe ** 2).mean())
-        # Non-precision-weighted layers
+                accuracy += 0.5 * pi * float((pe ** 2).mean())
+        # Non-precision-weighted layers (implicit π=1)
         for layer in [self.PT_L, self.PC_int]:
             pe = layer.pred_error
             if pe is not None:
-                F += 0.5 * float((pe ** 2).mean())
+                accuracy += 0.5 * float((pe ** 2).mean())
+
+        # Complexity: KL divergence between current and prior precision
+        # D_KL(π||π_prior) ≈ Σ (γ_i - γ_prior)² / 2 for Gaussian approx
+        complexity = 0.0
+        for prec in [self.prec_OT, self.prec_PC]:
+            complexity += 0.5 * float((prec.gamma.detach() ** 2).mean())
+
+        F = accuracy + 0.01 * complexity  # small weight on complexity
+
+        # Bayesian surprise: |F(t) - F(t-1)|
+        prev_F = getattr(self, '_prev_free_energy', F)
+        self._bayesian_surprise = abs(F - prev_F)
+        self._prev_free_energy = F
+        self._accuracy_term = accuracy
+        self._complexity_term = complexity
+
         return F
 
 
