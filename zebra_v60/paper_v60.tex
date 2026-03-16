@@ -2100,6 +2100,99 @@ changes every step---but converges across episodes as feedback weights
 accumulate experience.
 
 %===================================================================
+\section{Online Feedback Weight Training (Step 26)}\label{sec:wfb_training}
+
+Step~25 introduced feedback weights $\mathbf{W}_\text{FB}$ with PE-driven
+anti-Hebbian updates running every timestep (Eq.~\ref{eq:anti_hebbian}).
+Step~26 extends this with a structured, layer-wise online training protocol
+that explicitly minimizes prediction error while preserving behavioral
+performance.
+
+\subsection{Enhanced Classifier}\label{sec:enhanced_cls}
+
+The object classifier head is enhanced with aggregate pixel-count features
+that disambiguate spatially extended obstacles from point-like entities
+(food, enemy).  Instead of 800 raw type-channel pixels, the classifier
+receives a 804-dimensional input:
+\begin{equation}\label{eq:cls_enhanced}
+  \mathbf{x}_\text{cls} = \bigl[\,\mathbf{t}_L \;\|\; \mathbf{t}_R \;\|\;
+    \tilde{n}_\text{obs} \;\; \tilde{n}_\text{ene} \;\;
+    \tilde{n}_\text{food} \;\; \tilde{n}_\text{bnd}\,\bigr],
+\end{equation}
+where $\tilde{n}_k = n_k / 50$ are normalized pixel counts per entity type
+across both eyes.  The hidden layer is expanded from 64 to 128 units.
+This achieves 100\% validation accuracy across all five classes
+(nothing, food, enemy, colleague, environment), solving the
+obstacle--food confusion that limited the original classifier to
+$\sim$55\% on environment scenes.
+
+\subsection{Bayesian Survival Trade-off}\label{sec:survival}
+
+The goal policy (Eq.~\ref{eq:efe}) is augmented with a starvation risk
+term that modulates all four goal EFE values:
+\begin{equation}\label{eq:starvation_risk}
+  s = \max\!\bigl(0,\; \tfrac{0.5 - e}{0.5}\bigr),
+  \quad s^* = \begin{cases} s^{0.5} & \text{if } e < 0.3 \\ s & \text{otherwise} \end{cases}
+\end{equation}
+where $e$ is the energy ratio.  Starvation risk lowers forage EFE
+($-0.6\,s^*$), raises flee EFE ($+0.4\,s^*$), and penalizes explore
+($+0.2\,s^*$) and social ($+0.15\,s^*$) goals.  When both predator and
+starvation threats are active, the system performs Bayesian model
+comparison via the EFE softmax posterior rather than hard-coding a flee
+override.
+
+The environment implements metabolic consequences: energy drain multiplied
+by $1.3\times$ below 30\% energy and $1.15\times$ below 50\%, with speed
+capping below 20\% energy.
+
+\subsection{Layer-Wise Online W\textsubscript{FB} Training}\label{sec:online_wfb}
+
+Feedback weights are trained bottom-up in two phases during online
+simulation (3000 steps each, with predator):
+
+\begin{enumerate}[nosep]
+  \item \textbf{OT$_\text{F}$.W$_\text{FB}$}: sensory layer,
+    $\eta_\text{scale} = 0.3$, $|W| \leq 0.06$
+  \item \textbf{PT$_\text{L}$.W$_\text{FB}$}: tectal layer,
+    $\eta_\text{scale} = 0.3$, $|W| \leq 0.08$
+\end{enumerate}
+
+The precision-weighted update rule for target layer $l$:
+\begin{equation}\label{eq:online_wfb}
+  \Delta\mathbf{W}_\text{FB}^{(l)} =
+    -\eta_\text{fb}\,\eta_\text{scale}\,\pi_l\;
+    \bigl(\mathbf{h}^{(l+1)}\bigr)^\top\boldsymbol{\varepsilon}^{(l)},
+  \quad \pi_l = \min\!\bigl(5, \tfrac{1}{\text{Var}[\varepsilon^{(l)}]}\bigr).
+\end{equation}
+
+\paragraph{Frozen feedforward path.}
+During W$_\text{FB}$ training, all feedforward weights (W$_\text{FF}$) and
+classifier parameters are frozen via the \texttt{\_skip\_ff\_update} flag.
+This prevents Hebbian representational drift that would otherwise degrade
+classification-dependent behavior---a critical insight from ablation
+experiments showing food consumption dropping from 6 to 3 items per
+episode without this constraint.
+
+\subsection{Verification}\label{sec:wfb_verification}
+
+\begin{center}
+\begin{tabular}{lcccc}
+\toprule
+Metric & Baseline & After W$_\text{FB}$ & $\Delta$ \\
+\midrule
+Food eaten      & 6   & 14   & $+133\%$ \\
+Energy          & 66  & 81   & $+23\%$ \\
+Survival (steps) & 800 & 800 & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The frozen-W$_\text{FF}$ protocol preserves and even improves foraging
+behavior while training feedback predictions.  The improved food count
+suggests that better top-down predictions enhance sensory processing
+for food detection.
+
+%===================================================================
 \section{Summary of Architecture}\label{sec:summary}
 
 \begin{figure}[H]
@@ -2216,7 +2309,7 @@ accumulate experience.
   red: RL critic/amygdala (Steps~15, 20); violet: VAE world model (Step~16);
   lime: place cells (Step~17); pink: allostatic regulator (Step~18);
   green: food prospect (Step~21); gray: sleep--wake (Step~23);
-  orange: predictive coding attention (Step~25).}
+  orange: predictive coding attention (Steps~25--26).}
 \label{fig:architecture}
 \end{figure}
 
@@ -2253,6 +2346,7 @@ Step & Module Added & Key Equation & Figure \\
 23 & Sleep--wake consolidation & ---                                 & --- \\
 24 & Active inference gen.\ models & Eq.~\ref{eq:threat_decoder}, \ref{eq:energy_belief}, \ref{eq:position_correction} & --- \\
 25 & Predictive coding + attention & Eq.~\ref{eq:soma}, \ref{eq:pred_error}, \ref{eq:att_neuron}, \ref{eq:gain_control} & --- \\
+26 & Online W$_\text{FB}$ + survival & Eq.~\ref{eq:cls_enhanced}, \ref{eq:starvation_risk}, \ref{eq:online_wfb} & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -2327,6 +2421,11 @@ Active inference gen.\ models (24) &           & $\bullet$ &           & Retinal
 Two-compartment neurons (25)       & $\bullet$ & $\bullet$ &           & Apical--somatic PE, top-down feedback hierarchy, gain control \\
 Attention modulator (25)           & $\bullet$ & $\bullet$ &           & Goal-driven additive somatic bias via 8 attention neurons \\
 Anti-Hebbian feedback (25)         & $\bullet$ & $\bullet$ &           & PE-driven $\Delta W_\text{FB}$, every step, reward-independent \\
+\midrule
+\multicolumn{5}{l}{\textit{Online Feedback Training \& Survival}} \\
+Enhanced classifier (26)           & $\bullet$ &           &           & Pixel-count features for obstacle disambiguation \\
+Bayesian survival (26)             &           & $\bullet$ &           & Starvation risk modulates goal EFE, model comparison \\
+Online W$_\text{FB}$ training (26) & $\bullet$ & $\bullet$ &           & Layer-wise precision-weighted PE minimization, frozen W$_\text{FF}$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -2350,13 +2449,14 @@ well-defined interfaces:
 %===================================================================
 \section{Discussion}\label{sec:discussion}
 
-The twenty-five-step developmental curriculum demonstrates that a biologically
+The twenty-six-step developmental curriculum demonstrates that a biologically
 grounded spiking neural network, equipped with local Hebbian plasticity and
 neuromodulatory control, can implement the full active inference loop:
 perception, learning, goal selection, world modeling, spatial navigation,
 obstacle avoidance, and adaptive motor output with interoceptive regulation,
 threat-responsive fear circuitry, generative-model-based state inference,
-and hierarchical predictive coding with selective attention.
+hierarchical predictive coding with selective attention, Bayesian survival
+trade-offs, and online feedback weight optimization.
 
 Key findings:
 \begin{enumerate}[nosep]
