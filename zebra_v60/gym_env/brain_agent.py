@@ -677,9 +677,9 @@ class BrainAgent:
         self._prev_enemy_spread = theta
 
         self._looming_expansion_rate = d_theta
-        if d_theta > 0.005 and enemy_px > 5:
+        if d_theta > 0.002 and enemy_px > 3:
             self._looming_l_over_v = theta / (d_theta + 1e-6)
-            self._looming_triggered = self._looming_l_over_v < 8.0
+            self._looming_triggered = self._looming_l_over_v < 10.0
         else:
             self._looming_l_over_v = 999.0
             self._looming_triggered = False
@@ -1168,7 +1168,7 @@ class BrainAgent:
         #      complex multi-entity scenes.  Cap p_enemy based on actual
         #      enemy pixels in the type channel (ground truth).
         #      Need ~25 pixels for full confidence; 0 pixels → cap at 0.02.
-        max_p_enemy = max(0.02, min(1.0, self._enemy_pixels_total / 25.0))
+        max_p_enemy = max(0.02, min(1.0, self._enemy_pixels_total / 20.0))
         if cls_probs[2] > max_p_enemy:
             cls_probs[2] = max_p_enemy
             cls_probs /= cls_probs.sum() + 1e-8
@@ -1469,20 +1469,22 @@ class BrainAgent:
         food_px_R = float(np.sum(np.abs(typeR_t - 1.0) < 0.1))
         food_px_total = food_px_L + food_px_R
         obs_total = obs_px_L + obs_px_R
-        _center_escape = 0.0  # post-gain center-obstacle escape only (Fix A)
-        if obs_total > 3:
-            obs_repulsion = -1.2 * (obs_px_R - obs_px_L) / (obs_total + 1e-8)
-            if obs_total > 15:
-                obs_repulsion *= 1.5
+        _center_escape = 0.0  # post-gain center-obstacle escape
+        if obs_total > 2:
+            # Stronger repulsion gain, scales with proximity
+            gain = 1.5 + 1.0 * min(1.0, obs_total / 40.0)  # 1.5→2.5
+            obs_repulsion = -gain * (obs_px_R - obs_px_L) / (obs_total + 1e-8)
             raw_turn = raw_turn + obs_repulsion
-            # Fix A: center-obstacle escape — when rock centered ahead
-            # (both eyes equally covered), add escape turn as post-gain
-            # so it isn't dampened by low approach_gain
+            # Early braking at moderate coverage
+            if obs_total > 20:
+                brake = max(0.5, 1.0 - 0.4 * (obs_total / 400.0))
+                speed_mod_brain *= brake
+            # Center-obstacle escape — when rock centered ahead
             obs_asymmetry = abs(obs_px_R - obs_px_L)
-            if obs_total > 20 and obs_asymmetry < 5:
+            if obs_total > 15 and obs_asymmetry < 5:
                 _last_turn = self.last_diagnostics.get("turn_rate", 0.0)
                 escape_dir = 1.0 if _last_turn >= 0 else -1.0
-                _center_escape = escape_dir * 0.6 * (obs_total / 400.0)
+                _center_escape = escape_dir * 0.8 * (obs_total / 200.0)
 
         # 12c. Food-directed navigation (FORAGE mode)
         #      Three regimes:

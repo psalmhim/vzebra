@@ -198,12 +198,12 @@ class GoalPolicy_v60:
         p_colleague = cls_probs[3] if len(cls_probs) > 3 else 0.0
         starvation_urgency = max(0.0, (0.50 - energy_ratio) / 0.50)
 
-        if p_enemy > 0.35 and starvation_urgency < 0.6:
+        if p_enemy > 0.25 and starvation_urgency < 0.6:
             # Predator threat + adequate energy → hard FLEE
             choice = GOAL_FLEE
             self.last_choice = choice
             self.timer = 0
-        elif p_enemy > 0.35 and starvation_urgency >= 0.6:
+        elif p_enemy > 0.25 and starvation_urgency >= 0.6:
             # BOTH threats active — Bayesian model comparison
             # Let the EFE softmax decide: flee (risk starvation) vs forage
             # (risk predator). The compute_efe() already weighted both risks.
@@ -407,7 +407,7 @@ class SpikingGoalSelector(nn.Module):
         p_enemy = cls_probs[2]
         starvation_urgency = max(0.0, (0.50 - energy_ratio) / 0.50)
 
-        if p_enemy > 0.35:
+        if p_enemy > 0.25:
             # Scale FLEE injection by how safe energy is
             # Full boost (5.0) when energy adequate, reduced when starving
             flee_boost = 5.0 * max(0.3, 1.0 - starvation_urgency * 0.7)
