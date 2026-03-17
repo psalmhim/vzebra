@@ -26,10 +26,10 @@ ENTITY_VISUAL = {
     ENTITY_PREY:      (0.85, 28),   # bright, fish-sized prey (predator's target)
 }
 
-# Multi-size food: detection_radius varies by size
+# Food detection radius: similar size, value comes from density
 FOOD_SIZE_RADIUS = {
-    "small": 10,   # plankton: small, many spawned
-    "large": 22,   # artemia/worm: large, few spawned
+    "small": 12,   # plankton: similar visual size
+    "large": 16,   # slightly larger but not dramatically different
 }
 
 BACKGROUND_INTENSITY = 0.05

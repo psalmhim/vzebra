@@ -1641,16 +1641,13 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                                (pr, pr), pr)
             surface.blit(glow_surf, (pcx - pr, pcy - pr))
 
-        # Draw food (multi-size: small=dim green 3px, large=bright green 6px)
+        # Draw food (similar size, density indicates value)
         for food in self.foods:
             fx, fy = food[0], food[1]
             sz = food[2] if len(food) > 2 else "small"
-            if sz == "large":
-                r = 6
-                color, outline = (0, 200, 40), (0, 130, 20)
-            else:
-                r = 3
-                color, outline = (0, 140, 0), (0, 90, 0)
+            r = 4 if sz == "large" else 3
+            color = (0, 180, 20)
+            outline = (0, 110, 10)
             pygame.draw.circle(surface, color, (int(fx), int(fy)), r)
             pygame.draw.circle(surface, outline, (int(fx), int(fy)), r, 1)
 

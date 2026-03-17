@@ -877,143 +877,140 @@ class BrainAgent:
         }
 
     def _evaluate_food_prospects(self, env, fish_pos, world):
-        """Active inference food prospection: evaluate cost-benefit per food.
+        """Optimal foraging: density-based patch evaluation + nearest pursuit.
 
-        For each food item, compute:
-          - metabolic_cost: energy needed to reach it (proportional to distance)
-          - risk: danger from predator near that food location
-          - urgency: how badly energy is needed
-          - prospect_score: combined EFE-style score (lower = better target)
+        Implements marginal value theorem: the fish evaluates food PATCHES
+        by local density (items within 80px radius), then pursues the
+        nearest food within the highest-value patch. This mimics how real
+        zebrafish preferentially forage in plankton-dense areas.
+
+        Decision factors per food item:
+          - density_value: how many other food items are nearby (patch quality)
+          - distance_cost: metabolic cost to reach (closer = cheaper)
+          - predator_risk: danger at that location
+          - reachability: occluded by rocks?
+          - net_value = density_value - distance_cost - risk + urgency_bonus
 
         Returns:
-            list of dicts, sorted by prospect_score (best first), max 5 items.
+            list of dicts, sorted by net value (best first), max 5 items.
         """
         energy = getattr(env, "fish_energy", 100.0)
         energy_ratio = energy / self.energy_max if hasattr(self, 'energy_max') else energy / 100.0
-        urgency = max(0.0, 1.0 - energy_ratio)  # 0=full, 1=starving
+        urgency = max(0.0, 1.0 - energy_ratio)
 
         pred_wx, pred_wy = self.bridge.gym_to_world_pos(env.pred_x, env.pred_y)
+        fish_gx, fish_gy = env.fish_x, env.fish_y
+
+        # Step 1: Compute local food density for each item
+        # (how many neighbors within 80px — patch quality indicator)
+        DENSITY_RADIUS = 80.0
+        density_r2 = DENSITY_RADIUS ** 2
+        food_positions = [(f[0], f[1]) for f in env.foods]
+        n_foods = len(food_positions)
+
+        densities = []
+        for i, (fx, fy) in enumerate(food_positions):
+            count = 0
+            for j, (fx2, fy2) in enumerate(food_positions):
+                if i == j:
+                    continue
+                if (fx - fx2) ** 2 + (fy - fy2) ** 2 < density_r2:
+                    count += 1
+            densities.append(count)
 
         prospects = []
         for i, food in enumerate(env.foods):
             fx, fy = food[0], food[1]
             fwx, fwy = self.bridge.gym_to_world_pos(fx, fy)
 
-            # Distance from fish to food (world coords)
+            # Distance cost (world coords)
             dx = fwx - fish_pos[0]
             dy = fwy - fish_pos[1]
             dist = math.sqrt(dx * dx + dy * dy) + 1e-8
+            distance_cost = dist / 200.0  # normalized [0, 1]
 
-            # Metabolic cost: energy drain proportional to distance
-            # Roughly: drain_per_step * steps_to_reach ≈ 0.08 * (dist / speed)
-            speed_est = max(0.5, 2.0)  # average speed in world units
-            steps_to_reach = dist / speed_est
-            metabolic_cost = 0.08 * steps_to_reach
-
-            # Can we afford it?
-            affordable = 1.0 if energy > metabolic_cost * 1.5 else 0.5
-
-            # Risk: predator proximity to this food
+            # Predator risk at food location
             pdx = fwx - pred_wx
             pdy = fwy - pred_wy
-            pred_dist_to_food = math.sqrt(pdx * pdx + pdy * pdy) + 1e-8
-            # Risk is high when predator is close to food, normalized 0-1
-            risk = max(0.0, 1.0 - pred_dist_to_food / 150.0)
+            pred_dist = math.sqrt(pdx * pdx + pdy * pdy) + 1e-8
+            risk = max(0.0, 1.0 - pred_dist / 150.0)
 
-            # Reward: energy gain (varies by food size)
+            # Density value: more neighbors = richer patch
+            # Normalized: 0 neighbors = 0, 5+ neighbors = 1.0
+            density_value = min(1.0, densities[i] / 5.0)
+
+            # Energy gain per food
             food_sz = food[2] if len(food) > 2 else "small"
             gain = 5.0 if food_sz == "large" else 2.0
 
-            # Patch productivity bonus: food in known-productive patches
-            patch_bonus = 0.0
-            patch_label = "none"
-            patches = getattr(env, 'plankton_patches', [])
-            for pi, patch in enumerate(patches):
-                ddx = fx - patch["cx"]
-                ddy = fy - patch["cy"]
-                if math.sqrt(ddx * ddx + ddy * ddy) < patch.get("radius", 80):
-                    patch_label = patch.get("label", f"patch_{pi}")
-                    count = self._patch_visit_counts.get(patch_label, 0)
-                    # More visits → higher confidence → bigger bonus
-                    patch_bonus = min(0.15, count * 0.02)
+            # Reachability: line-of-sight check
+            occluded = False
+            for rock in getattr(env, 'rock_formations', []):
+                for aabb in rock["aabbs"]:
+                    dx_f = fx - fish_gx
+                    dy_f = fy - fish_gy
+                    if abs(dx_f) < 1e-6 and abs(dy_f) < 1e-6:
+                        continue
+                    cx_a, cy_a = aabb["x"], aabb["y"]
+                    hw_a, hh_a = aabb["hw"] + 8, aabb["hh"] + 8
+                    t_min, t_max = 0.0, 1.0
+                    for dim_f, dim_a, dim_hw in [
+                        (fish_gx, cx_a, hw_a), (fish_gy, cy_a, hh_a)
+                    ]:
+                        d_val = dx_f if dim_f == fish_gx else dy_f
+                        if abs(d_val) < 1e-6:
+                            if abs(dim_f - dim_a) >= dim_hw:
+                                t_min = 2.0
+                                break
+                        else:
+                            t1 = (dim_a - dim_hw - dim_f) / d_val
+                            t2 = (dim_a + dim_hw - dim_f) / d_val
+                            if t1 > t2:
+                                t1, t2 = t2, t1
+                            t_min = max(t_min, t1)
+                            t_max = min(t_max, t2)
+                            if t_min > t_max:
+                                break
+                    if t_min <= t_max:
+                        occluded = True
+                        break
+                if occluded:
                     break
 
-            # Reachability: penalize food occluded by rocks (requires detour)
-            occluded = 0.0
-            if hasattr(env, '_has_rock_occlusion'):
-                fish_gx, fish_gy = env.fish_x, env.fish_y
-                # Check line-of-sight from CURRENT fish position (not spawn)
-                _orig_center = (env.arena_w * 0.5, env.arena_h * 0.5)
-                # Temporarily check from fish position
-                for rock in getattr(env, 'rock_formations', []):
-                    for aabb in rock["aabbs"]:
-                        # Simple line-AABB intersection check
-                        dx_f = fx - fish_gx
-                        dy_f = fy - fish_gy
-                        seg_len = math.sqrt(dx_f * dx_f + dy_f * dy_f)
-                        if seg_len < 1e-6:
-                            continue
-                        # Check if AABB blocks the path
-                        cx_a, cy_a = aabb["x"], aabb["y"]
-                        hw_a, hh_a = aabb["hw"] + 8, aabb["hh"] + 8
-                        # Parametric intersection with expanded AABB
-                        t_min, t_max = 0.0, 1.0
-                        for dim_f, dim_a, dim_hw in [
-                            (fish_gx, cx_a, hw_a), (fish_gy, cy_a, hh_a)
-                        ]:
-                            d_val = (fx - fish_gx) if dim_f == fish_gx else (fy - fish_gy)
-                            if abs(d_val) < 1e-6:
-                                if abs(dim_f - dim_a) >= dim_hw:
-                                    t_min = 2.0  # no intersection
-                                    break
-                            else:
-                                t1 = (dim_a - dim_hw - dim_f) / d_val
-                                t2 = (dim_a + dim_hw - dim_f) / d_val
-                                if t1 > t2:
-                                    t1, t2 = t2, t1
-                                t_min = max(t_min, t1)
-                                t_max = min(t_max, t2)
-                                if t_min > t_max:
-                                    break
-                        if t_min <= t_max:
-                            occluded = 1.5  # strong penalty for unreachable food
-                            break
-                    if occluded > 0:
-                        break
+            # Skip occluded food unless starving
+            if occluded and urgency < 0.5:
+                continue
 
-            # EFE-style prospect score (lower = better)
-            # cost term: metabolic cost weighted by energy state
-            cost_weight = 0.3 + 0.5 * urgency  # more urgent → accept higher cost
-            risk_weight = 0.4 - 0.2 * urgency  # reduced: foraging requires risk tolerance
-            gain_weight = 0.6 + 0.4 * urgency  # more urgent → value gain more
-
-            # Fix E: exclude occluded food entirely when not urgently hungry
-            #        (urgency < 0.5 = energy > ~50%). Starving fish may still
-            #        attempt to reach food behind rocks.
-            if occluded > 0 and urgency < 0.5:
-                continue  # skip this food entirely — find unblocked food
-
-            prospect_score = (
-                cost_weight * (metabolic_cost / 20.0)  # normalized
-                + risk_weight * risk
-                + occluded  # penalty for food behind rocks (only when starving)
-                - gain_weight * (gain / 20.0) * affordable
-                - patch_bonus  # productive patches are preferred
+            # Net value: density + gain - cost - risk
+            # Higher = better target
+            net_value = (
+                0.4 * density_value           # patch quality (density)
+                + 0.3 * (gain / 5.0)          # food energy value
+                + 0.3 * urgency               # hunger bonus
+                - 0.5 * distance_cost         # closer is better
+                - 0.3 * risk                  # avoid predator
+                - (0.8 if occluded else 0.0)  # occlusion penalty
             )
 
             prospects.append({
                 "food_idx": i,
                 "gym_pos": (fx, fy),
                 "dist": dist,
-                "metabolic_cost": metabolic_cost,
+                "density": densities[i],
+                "density_value": density_value,
                 "risk": risk,
-                "pred_dist": pred_dist_to_food,
-                "affordable": affordable,
+                "pred_dist": pred_dist,
+                "net_value": net_value,
+                "gain": gain,
                 "urgency": urgency,
-                "prospect_score": prospect_score,
+                "affordable": 1.0 if energy > dist * 0.04 else 0.5,
+                "metabolic_cost": dist * 0.04,
+                "prospect_score": -net_value,  # backward compat (lower=better)
             })
 
-        prospects.sort(key=lambda p: p["prospect_score"])
+        # Sort by net_value descending (best patch first),
+        # then by distance ascending (nearest food in best patch)
+        prospects.sort(key=lambda p: (-p["net_value"], p["dist"]))
         return prospects[:5]
 
     def act(self, obs, env):
