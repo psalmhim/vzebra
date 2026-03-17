@@ -117,7 +117,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
 
         # Predator parameters (1.5x bigger)
         self.pred_size = 18        # 1.5x fish
-        self.pred_speed = 1.6      # fast enough to threaten fish (2.0)
+        self.pred_speed = 1.4      # threatening but escapable with C-start
         self.pred_chase_radius = 280.0
         self.pred_catch_radius = 16.0
         self.pred_wander_turn = 0.03
@@ -1126,7 +1126,10 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             return random.gauss(0, 0.02), self._bout_speed_peak * (0.3 + 0.3 * glide_frac)
 
         # IDLE: wait for IBI, then initiate new bout
-        urgent = abs(turn_rate) > 0.5 or speed_mod > 0.5
+        # Starvation or strong intent interrupts IBI
+        energy_ratio = self.fish_energy / self.energy_max
+        starving = energy_ratio < 0.30
+        urgent = abs(turn_rate) > 0.5 or speed_mod > 0.5 or starving
         if self._bout_ibi_timer > 0 and not urgent:
             self._bout_ibi_timer -= 1
             # Idle fidgeting: micro-movements for natural appearance

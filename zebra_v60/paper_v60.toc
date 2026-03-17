@@ -162,8 +162,15 @@
 \contentsline {subsection}{\numberline {23.3}Layer-Wise Online W\textsubscript {FB} Training}{48}{subsection.23.3}%
 \contentsline {paragraph}{Frozen feedforward path.}{49}{section*.84}%
 \contentsline {subsection}{\numberline {23.4}Verification}{49}{subsection.23.4}%
-\contentsline {section}{\numberline {24}Summary of Architecture}{49}{section.24}%
-\contentsline {subsection}{\numberline {24.1}Computational Framework Mapping}{50}{subsection.24.1}%
-\contentsline {paragraph}{Framework integration.}{52}{section*.88}%
-\contentsline {section}{\numberline {25}Discussion}{52}{section.25}%
-\contentsline {section}{\numberline {26}Code Availability}{54}{section.26}%
+\contentsline {section}{\numberline {24}Ecological Realism (Steps 27--29)}{49}{section.24}%
+\contentsline {subsection}{\numberline {24.1}Multi-Size Food and Binocular Depth (Step 27)}{49}{subsection.24.1}%
+\contentsline {subsection}{\numberline {24.2}Motor Primitive Repertoire (Step 28)}{49}{subsection.24.2}%
+\contentsline {paragraph}{Mauthner cell C-start.}{49}{section*.85}%
+\contentsline {paragraph}{Prey capture sequence.}{50}{section*.86}%
+\contentsline {subsection}{\numberline {24.3}Optimal Foraging (Step 27)}{50}{subsection.24.3}%
+\contentsline {subsection}{\numberline {24.4}Decision Rationality Evaluation (Step 29)}{50}{subsection.24.4}%
+\contentsline {section}{\numberline {25}Summary of Architecture}{51}{section.25}%
+\contentsline {subsection}{\numberline {25.1}Computational Framework Mapping}{52}{subsection.25.1}%
+\contentsline {paragraph}{Framework integration.}{54}{section*.90}%
+\contentsline {section}{\numberline {26}Discussion}{54}{section.26}%
+\contentsline {section}{\numberline {27}Code Availability}{56}{section.27}%

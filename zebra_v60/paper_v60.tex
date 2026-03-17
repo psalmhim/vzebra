@@ -27,7 +27,7 @@
 \title{%
   \textbf{A Biologically Grounded Virtual Zebrafish:\\
   From Retinal Sampling to Active Inference Policy Selection}\\[8pt]
-  \large Technical Report --- Zebrafish SNN v60 (Steps 1--26)
+  \large Technical Report --- Zebrafish SNN v60 (Steps 1--29)
 }
 \author{Hae-Jeong Park\\
   Department of Nuclear Medicine \& Cognitive Science\\
@@ -45,7 +45,7 @@ We present a spiking neural network (SNN) model of the larval zebrafish brain
 that implements the full perception--action loop: from binocular retinal
 sampling through tectal processing and predictive coding to locomotor output
 with neuromodulatory control.
-The model is developed in twenty-six progressive steps, each adding a
+The model is developed in twenty-nine progressive steps, each adding a
 biologically motivated computational module.
 Steps~1--6 establish visual tracking with precision adaptation, dopamine-based
 reward prediction error, basal ganglia motor gating, optic tectum dynamics,
@@ -95,10 +95,19 @@ entity classes, and a structured online feedback weight training protocol
 with frozen feedforward path that improves foraging 133\% (6$\to$14 food).
 All modules use biologically plausible local learning rules without
 backpropagation through time.
+Steps~27--28 add ecological realism: multi-size food with density-based
+optimal foraging (marginal value theorem), binocular depth estimation from
+stereo overlap, adaptive predator with chase acceleration, motor primitive
+repertoire with burst-glide-idle bout dynamics, Mauthner cell C-start
+escape reflex triggered by looming detection ($\ell/v$ ratio), and
+three-phase prey capture kinematics.
+Step~29 evaluates decision rationality via structured scenarios, achieving
+72/100 (``rational'') on five cognitive dilemmas.
 In closed-loop simulations, the virtual zebrafish successfully forages for
-food (6--14 items per 800-step episode), avoids predators, navigates around
-rock formations, and explores its environment with goal-appropriate
-behavioral modulation driven by interoceptive and exteroceptive signals.
+food, avoids predators with biologically realistic escape responses,
+navigates around rock formations using motor primitives, and explores
+its environment with goal-appropriate behavioral modulation driven by
+interoceptive and exteroceptive signals.
 \end{abstract}
 
 \tableofcontents
@@ -115,7 +124,7 @@ avoidance, and social behavior~\cite{ahrens2013,portugues2014}.
 This report documents a computational model---\textbf{ZebrafishSNN\_v60}---that
 recapitulates key neural circuits of the larval zebrafish using a hierarchy of
 spiking neural network layers.
-The model is built incrementally across twenty-six developmental steps, each
+The model is built incrementally across twenty-nine developmental steps, each
 introducing one functional module.
 The design philosophy is:
 \begin{enumerate}[nosep]
@@ -2440,6 +2449,99 @@ suggests that better top-down predictions enhance sensory processing
 for food detection.
 
 %===================================================================
+\section{Ecological Realism (Steps 27--29)}\label{sec:ecological}
+
+Steps~27--29 add ecological realism to the simulation: multi-size food
+with density-based optimal foraging, binocular depth estimation,
+adaptive predator behavior, motor primitive repertoire, and decision
+rationality evaluation.
+
+\subsection{Multi-Size Food and Binocular Depth (Step 27)}
+
+Food items come in two sizes---small plankton ($+2$ energy, detection
+radius~12) and large artemia ($+5$ energy, radius~16)---with similar
+visual appearance.  Value is guided by \emph{local density}: the number
+of food items within 80\,px, implementing the marginal value theorem
+from optimal foraging theory~\cite{charnov1976}.
+
+Binocular depth estimation combines monocular intensity (brighter =
+closer) with stereo overlap (frontal-zone coverage ratio between eyes)
+to estimate per-entity depth, providing distance cues for threat
+assessment and food approach without ground-truth access.
+
+The predator exhibits chase acceleration (up to $1.25\times$ base speed)
+when locked onto the fish, with speed-proportional stamina drain.
+
+\subsection{Motor Primitive Repertoire (Step 28)}\label{sec:motor_primitives}
+
+Continuous motor commands are replaced with a \emph{motor primitive
+selection system}~\cite{marques2018} where the brain provides
+directional intent and the spinal motor system controls bout timing:
+
+\begin{itemize}[nosep]
+  \item \textbf{Burst phase} (3--5 steps): full speed with biological
+    turn noise ($\sigma = 0.03$\,rad)
+  \item \textbf{Glide phase} (2 steps): decaying speed
+    ($0.3$--$0.7\times$ peak)
+  \item \textbf{Idle phase}: micro-fidgeting ($\sigma = 0.015$\,rad),
+    goal-modulated inter-bout interval (flee: 1 step, forage: 2,
+    explore: 3)
+\end{itemize}
+
+Urgent stimuli (obstacles, threats, starvation) interrupt the inter-bout
+interval, and escape commands ($v > 1.0$) bypass bout timing entirely.
+
+\paragraph{Mauthner cell C-start.}
+A looming detector computes the angular expansion rate
+$\dot{\theta} = d\theta/dt$ and the $\ell/v$ ratio (angular size /
+expansion rate).  When $\ell/v < 10$ and enemy pixels exceed~3,
+a stereotyped C-start escape fires: 1.5\,rad C-bend turn (2 steps)
+followed by a 1.6$\times$ propulsive stroke (2 steps), with a
+12-step refractory period.
+
+\paragraph{Prey capture sequence.}
+A finite state machine implements the three-phase prey capture
+kinematics observed in larval zebrafish~\cite{bianco2015}:
+J-turn (3 steps, slow precise orientation), approach swim (5 steps,
+half speed), and strike (2 steps, $1.4\times$ burst with enlarged
+eat radius).
+
+\subsection{Optimal Foraging (Step 27)}\label{sec:optimal_foraging}
+
+Each food item is scored by a density-based net value:
+\begin{equation}\label{eq:optimal_foraging}
+  V_i = 0.3\,\hat{d}_i + 0.2\,\frac{g_i}{5} + 0.3\,u
+      + 0.5\,\bigl(1 - \tfrac{r_i}{100}\bigr)^2
+      - 0.3\,\frac{r_i}{200} - 0.3\,\rho_i
+      - 0.8\,\mathbb{1}[\text{occluded}],
+\end{equation}
+where $\hat{d}_i = \min(1, n_\text{neighbors}/5)$ is the local density,
+$g_i$ is the energy gain, $u$ is urgency, $r_i$ is distance, and
+$\rho_i$ is predator risk.  The proximity bonus $(1-r/100)^2$
+strongly favors nearest food.
+Food is sorted by $V_i$ descending, then by distance ascending
+(nearest in best patch first).
+
+\subsection{Decision Rationality Evaluation (Step 29)}\label{sec:rationality}
+
+Intelligence is quantified by 6~metrics (0--100 each) compared against
+a random-agent baseline:
+\begin{enumerate}[nosep]
+  \item \textbf{Foraging efficiency}: food per distance traveled
+  \item \textbf{Patch selection}: density of chosen vs.\ best available patch
+  \item \textbf{Flee timing}: flee when predator close, forage when safe
+  \item \textbf{Path efficiency}: productive use of locomotion
+  \item \textbf{Energy management}: time in crisis zone ($<30\%$)
+  \item \textbf{Threat response}: latency from detection to flee
+\end{enumerate}
+
+Five structured decision scenarios test specific cognitive abilities:
+safe vs.\ risky food (A), occluded vs.\ open food (B), predator charge
+(C), starvation dilemma (D), and detour planning (E).
+Current scores: A=80, B=80, C=80, D=55, E=65; overall 72/100
+(\textsc{rational}).
+
+%===================================================================
 \section{Summary of Architecture}\label{sec:summary}
 
 \begin{figure}[H]
@@ -2594,6 +2696,9 @@ Step & Module Added & Key Equation & Figure \\
 24 & Active inference gen.\ models & Eq.~\ref{eq:threat_decoder}, \ref{eq:energy_belief}, \ref{eq:position_correction} & --- \\
 25 & Predictive coding + attention & Eq.~\ref{eq:soma}, \ref{eq:pred_error}, \ref{eq:att_neuron}, \ref{eq:gain_control} & --- \\
 26 & Online W$_\text{FB}$ + survival & Eq.~\ref{eq:cls_enhanced}, \ref{eq:starvation_risk}, \ref{eq:online_wfb} & --- \\
+27 & Multi-size food + binocular depth & Eq.~\ref{eq:optimal_foraging} & --- \\
+28 & Motor primitives + C-start + capture & --- & --- \\
+29 & Decision rationality evaluation & --- & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -2673,6 +2778,13 @@ Anti-Hebbian feedback (25)         & $\bullet$ & $\bullet$ &           & PE-driv
 Enhanced classifier (26)           & $\bullet$ &           &           & Pixel-count features for obstacle disambiguation \\
 Bayesian survival (26)             &           & $\bullet$ &           & Starvation risk modulates goal EFE, model comparison \\
 Online W$_\text{FB}$ training (26) & $\bullet$ & $\bullet$ &           & Layer-wise precision-weighted PE minimization, frozen W$_\text{FF}$ \\
+\midrule
+\multicolumn{5}{l}{\textit{Ecological Realism}} \\
+Binocular depth (27)              & $\bullet$ &           &           & Stereo overlap + monocular intensity for distance estimation \\
+Optimal foraging (27)             &           & $\bullet$ &           & Density-based marginal value theorem, proximity bonus \\
+Motor primitives (28)             & $\bullet$ &           &           & Burst-glide-idle bout dynamics, CPG-like timing \\
+Mauthner C-start (28)             & $\bullet$ &           &           & Looming-triggered escape reflex, $\ell/v$ ratio \\
+Prey capture (28)                 & $\bullet$ &           &           & J-turn $\to$ approach $\to$ strike kinematic sequence \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -2696,7 +2808,7 @@ well-defined interfaces:
 %===================================================================
 \section{Discussion}\label{sec:discussion}
 
-The twenty-six-step developmental curriculum demonstrates that a biologically
+The twenty-nine-step developmental curriculum demonstrates that a biologically
 grounded spiking neural network, equipped with local Hebbian plasticity and
 neuromodulatory control, can implement the full active inference loop:
 perception, learning, goal selection, world modeling, spatial navigation,
@@ -3042,6 +3154,22 @@ Figures are auto-generated by running:
   ``Active inference on discrete state-spaces:
   A synthesis,''
   \textit{Journal of Mathematical Psychology}, vol.~99, 102447, 2020.
+
+\bibitem{charnov1976}
+  E.~L.~Charnov,
+  ``Optimal foraging, the marginal value theorem,''
+  \textit{Theoretical Population Biology}, vol.~9, no.~2, pp.~129--136, 1976.
+
+\bibitem{marques2018}
+  J.~C.~Marques et~al.,
+  ``Structure of the zebrafish locomotor repertoire revealed with
+  unsupervised behavioral clustering,''
+  \textit{Current Biology}, vol.~28, no.~2, pp.~181--195, 2018.
+
+\bibitem{bianco2015}
+  I.~H.~Bianco, F.~Engert,
+  ``Visuomotor transformations underlying hunting behavior in zebrafish,''
+  \textit{Current Biology}, vol.~25, no.~7, pp.~831--846, 2015.
 \end{thebibliography}
 
 \end{document}

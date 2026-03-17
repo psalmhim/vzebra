@@ -11,7 +11,7 @@
 - `zebra_v60/brain/` — 25 neural modules (SNN, optic tectum, dopamine, BG, etc.)
 - `zebra_v60/gym_env/` — Gymnasium environment + BrainAgent bridge
 - `zebra_v60/world/` — WorldEnv (ray-casting world) + renderer
-- `zebra_v60/tests/` — step-by-step integration tests (step1 through step26)
+- `zebra_v60/tests/` — step-by-step integration tests (step1 through step29)
 - `zebra_v60/viz/` — neural monitor visualization
 - `zebra_v60/weights/` — pretrained weights (genomic, hebbian, classifier)
 
@@ -59,6 +59,37 @@
 - **EFE precision modulation**: σ_E tightens under hunger, σ_S tightens under stress
 - **DP-like memory**: AssociativeMemory with CRP allocation (concentration α)
 
+## Motor Primitives (zebrafish_env.py)
+- Bout types: IDLE, ROUTINE_FWD/L/R, J_TURN, BURST, C_START, CAPTURE, ESCAPE, FLEE_BURST
+- Brain controls DIRECTION (turn_rate), motor system controls TIMING (burst-glide-idle)
+- Biological noise: σ=0.03 during burst, σ=0.015 during idle (fidgeting)
+- Goal-modulated IBI: FLEE=1, FORAGE=2, EXPLORE/SOCIAL=3 steps
+- Urgent stimuli + starvation interrupt IBI immediately
+
+## Binocular Depth + Predator Speed
+- `compute_binocular_depth()` in retina_sampling_v60.py
+- Mono intensity + stereo overlap → per-entity depth estimate
+- Predator speed from binocular depth temporal changes → TTC improvement
+- Looming detector: l/v ratio < 10 triggers Mauthner C-start
+
+## Escape Reflex (Mauthner C-start)
+- Looming trigger → 4-step stereotyped escape (C-bend 1.5 rad + propulsive 1.6x)
+- 12-step refractory period, away from enemy lateral bias
+- Prey capture: J-TURN (3 steps) → APPROACH (5) → STRIKE (2, 1.4x eat radius)
+
+## Optimal Foraging (density-based)
+- Local density = neighbors within 80px radius
+- net_value = density + gain + urgency + proximity² - distance - risk - occlusion
+- Nearest food in highest-value patch pursued first
+
+## Decision Rationality (Step 29)
+- 6 metrics: foraging efficiency, patch selection, flee timing, path efficiency, energy management, threat response
+- 5 structured scenarios: safe/risky, occluded/open, predator charge, starvation dilemma, detour
+- Overall: 72/100 RATIONAL
+
+## Interactive Commands (during --render demo)
+- P: predator ATTACK (charge at fish), R: predator RETREAT, F: spawn FOOD cluster
+
 ## Obstacle Navigation (brain_agent.py section 12b-12d)
 - **Bilateral repulsion**: steer away from rock-heavy eye, 1.5x amplification above 15 pixels
 - **Center-escape**: post-gain escape turn when rock centered ahead (|L-R| < 5, total > 20)
@@ -90,4 +121,4 @@
 ```
 
 ## Branches
-- `master` — working v60 with steps 1-26 (predictive coding, attention, Bayesian survival)
+- `master` — working v60 with steps 1-29 (predictive coding, attention, Bayesian survival, motor primitives, decision evaluation)
