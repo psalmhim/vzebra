@@ -704,11 +704,11 @@ class BrainAgent:
         # Check for ongoing C-start
         if self._mauthner_active:
             if self._mauthner_steps_remaining > 2:
-                # Phase 1: C-bend (large turn, minimal forward)
-                result = (self._mauthner_turn_direction * 0.9, 0.2)
+                # Phase 1: C-bend — 120-180° turn away (biological C-start)
+                result = (self._mauthner_turn_direction * 1.5, 0.3)
             else:
-                # Phase 2: propulsive stroke (forward escape)
-                result = (self._mauthner_turn_direction * 0.3, 1.3)
+                # Phase 2: propulsive stroke — fast escape
+                result = (self._mauthner_turn_direction * 0.3, 1.6)
             self._mauthner_steps_remaining -= 1
             if self._mauthner_steps_remaining <= 0:
                 self._mauthner_active = False
@@ -725,9 +725,9 @@ class BrainAgent:
                 self._mauthner_turn_direction = -1.0  # turn left
             else:
                 self._mauthner_turn_direction = 1.0   # turn right
-            self._mauthner_refractory = 15
+            self._mauthner_refractory = 12
             self._mauthner_total_triggers += 1
-            return (self._mauthner_turn_direction * 0.9, 0.2)
+            return (self._mauthner_turn_direction * 1.5, 0.3)
 
         return None
 
@@ -982,12 +982,15 @@ class BrainAgent:
                 continue
 
             # Net value: density + gain - cost - risk
+            # Proximity bonus: exponential preference for very close food
+            proximity_bonus = max(0.0, 1.0 - dist / 100.0) ** 2  # sharp near-field
             # Higher = better target
             net_value = (
-                0.4 * density_value           # patch quality (density)
-                + 0.3 * (gain / 5.0)          # food energy value
+                0.3 * density_value           # patch quality (density)
+                + 0.2 * (gain / 5.0)          # food energy value
                 + 0.3 * urgency               # hunger bonus
-                - 0.5 * distance_cost         # closer is better
+                + 0.5 * proximity_bonus       # strongly prefer NEAREST food
+                - 0.3 * distance_cost         # distance penalty
                 - 0.3 * risk                  # avoid predator
                 - (0.8 if occluded else 0.0)  # occlusion penalty
             )
@@ -1519,17 +1522,14 @@ class BrainAgent:
                 _scaled_diff = 0.0
 
             if food_px_total >= 3:
-                # (a) Food visible — use food-pixel direction + strong
-                #     olfactory cue.  Retinal food_turn helps when food
-                #     is off-axis; olfactory cue dominates when ahead.
+                # (a) Food visible — direct approach with strong commitment
                 food_turn = (food_px_R - food_px_L) / (food_px_total + 1e-8)
-                raw_turn = raw_turn * 0.3 + food_turn * 0.7
-                approach_gain = max(approach_gain, 1.2)
-                _olfactory_turn = 0.7 * _scaled_diff
-                # Keep decent speed near food — don't slow too much
-                if _nearest_food_gym_dist < 50:
-                    speed_mod_brain *= max(
-                        0.6, _nearest_food_gym_dist / 50.0)
+                raw_turn = raw_turn * 0.2 + food_turn * 0.8
+                approach_gain = max(approach_gain, 1.5)
+                _olfactory_turn = 0.8 * _scaled_diff
+                # Speed boost for final approach (don't slow down near food!)
+                if _nearest_food_gym_dist < 60:
+                    speed_mod_brain = max(speed_mod_brain, 0.8)
             elif _near_food:
                 # (b) Food prospect nearby but off retina — strong olfactory
                 approach_gain *= 0.5
@@ -1796,9 +1796,9 @@ class BrainAgent:
         speed = np.clip(
             speed_mod_brain * (0.8 + 0.4 * dopa), 0.0, 1.0)
 
-        # Flee burst: temporary speed boost after saccade detection
+        # Flee burst: speed boost for escape
         if self._flee_burst_steps > 0:
-            speed = min(1.3, speed * 1.5)
+            speed = min(1.6, speed * 1.5)
             self._flee_burst_steps -= 1
 
         # Reduce speed when low energy (use inferred energy in AI mode)

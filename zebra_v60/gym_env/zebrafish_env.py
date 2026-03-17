@@ -1087,14 +1087,24 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         IBI_BY_GOAL = {0: 2, 1: 1, 2: 3, 3: 3}
         goal = getattr(self, '_bout_goal_mod', 2)
 
-        # Escape/strike: bypass bout timing entirely
+        # Escape/strike: bypass bout timing — sustained burst
         if speed_mod > 1.0:
             self._bout_phase = "BURST"
-            self._bout_timer = 3
+            self._bout_timer = 5  # longer escape burst
             self._bout_speed_peak = speed_mod
             self._bout_count += 1
             self._bout_type_name = "ESCAPE"
             return random.gauss(0, 0.01), speed_mod
+
+        # Flee mode: faster bouts, shorter glide, minimal IBI
+        is_fleeing = (goal == 1)  # GOAL_FLEE
+        if is_fleeing and speed_mod > 0.5:
+            self._bout_phase = "BURST"
+            self._bout_timer = 4
+            self._bout_speed_peak = speed_mod
+            self._bout_count += 1
+            self._bout_type_name = "FLEE_BURST"
+            return random.gauss(0, 0.02), speed_mod
 
         # Continue current bout
         if self._bout_phase == "BURST":
@@ -1440,7 +1450,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             dist_factor = min(1.0, dist / 60.0 + 0.6)
             # Chase acceleration: up to 1.4x when locked on target
             aim_quality = max(0.0, 1.0 - abs(angle_diff) / (math.pi * 0.3))
-            chase_boost = 1.0 + 0.4 * aim_quality
+            chase_boost = 1.0 + 0.25 * aim_quality
             speed = (self.pred_speed * dist_factor * hunger_boost
                      * self.pred_stamina * chase_boost)
             self._last_chase_boost = chase_boost

@@ -560,12 +560,13 @@ def goal_to_behavior(active_goal, cls_probs, posterior, confidence,
         turn_strategy = "forage-approach"
 
     elif active_goal == GOAL_FLEE:
-        approach_gain = -(0.8 + 0.5 * p_enemy * confidence)
-        speed_mod = 1.3 + 0.4 * p_enemy
-        # Speed boost when predator is facing (adrenaline burst)
-        if pred_facing_score > 0.5:
-            speed_mod += 0.3 * pred_facing_score
-        explore_mod = 0.3
+        # Strong reversal — must turn AWAY from predator decisively
+        approach_gain = -(1.2 + 0.8 * p_enemy * confidence)
+        speed_mod = 1.5 + 0.5 * p_enemy
+        # Adrenaline burst when predator is facing
+        if pred_facing_score > 0.3:
+            speed_mod += 0.5 * pred_facing_score
+        explore_mod = 0.2
         turn_strategy = "flee-avoid"
 
     elif active_goal == GOAL_SOCIAL:
