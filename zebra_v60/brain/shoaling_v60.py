@@ -124,6 +124,77 @@ class ShoalingModule:
 
         return turn_bias, speed_mod, diagnostics
 
+    def observe_social_cues(self, fish_x, fish_y, colleagues):
+        """Social learning: infer environmental state from conspecific behavior.
+
+        Zebrafish observe neighbours' speed and direction to infer:
+        - Danger: fast-moving neighbours fleeing = predator nearby
+        - Food:   slow neighbours in one area = food patch found
+        - Safety: calm group = no immediate threat
+
+        Biological basis: social information transfer in zebrafish shoals
+        (Arganda et al. 2012, Sosna et al. 2019).
+
+        Returns:
+            dict with social cues:
+                social_alarm: float [0, 1] — conspecific flee signal
+                social_food_bearing: float or None — direction toward food
+                social_safety: float [0, 1] — group calmness
+        """
+        if not colleagues:
+            return {"social_alarm": 0.0, "social_food_bearing": None,
+                    "social_safety": 0.5}
+
+        alarm = 0.0
+        slow_x, slow_y = 0.0, 0.0
+        n_slow = 0
+        speeds = []
+
+        for c in colleagues:
+            dx = c["x"] - fish_x
+            dy = c["y"] - fish_y
+            dist = math.sqrt(dx * dx + dy * dy) + 1e-8
+            if dist > 200:
+                continue  # too far to observe
+
+            speed = c.get("speed", 0.5)
+            speeds.append(speed)
+
+            # Fast-moving neighbour = alarm signal (fleeing)
+            if speed > 1.5:
+                # Weight by proximity (closer neighbour = stronger signal)
+                alarm += (1.0 - dist / 200.0) * min(1.0, speed / 2.0)
+
+            # Slow-moving neighbour = foraging indicator
+            if speed < 0.4:
+                slow_x += c["x"]
+                slow_y += c["y"]
+                n_slow += 1
+
+        # Social alarm: any neighbour fleeing → danger
+        social_alarm = min(1.0, alarm)
+
+        # Social food bearing: direction toward slow group (foraging patch)
+        social_food_bearing = None
+        if n_slow >= 2:
+            cx = slow_x / n_slow
+            cy = slow_y / n_slow
+            social_food_bearing = math.atan2(cy - fish_y, cx - fish_x)
+
+        # Social safety: low mean speed + many neighbours = safe
+        if speeds:
+            mean_speed = sum(speeds) / len(speeds)
+            social_safety = max(0.0, 1.0 - mean_speed / 1.5)
+        else:
+            social_safety = 0.5
+
+        return {
+            "social_alarm": social_alarm,
+            "social_food_bearing": social_food_bearing,
+            "social_safety": social_safety,
+            "n_observed": len(speeds),
+        }
+
     def reset(self):
         """No persistent state to reset."""
         pass

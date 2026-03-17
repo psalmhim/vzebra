@@ -1437,16 +1437,27 @@ class BrainAgent:
             goal_to_behavior(effective_goal, cls_probs, posterior, confidence,
                              pred_facing_score=threat["pred_facing_score"])
 
-        # 11b. Shoaling integration (Step 20: social behavior)
+        # 11b. Social learning — observe conspecific behavior (always active)
+        colleagues = getattr(env, 'colleagues', [])
+        _sx = env.fish_x
+        _sy = env.fish_y
+        _sh = env.fish_heading
+        if self.use_active_inference and hasattr(self, 'place_cells'):
+            _sx = self.place_cells._pi_pos[0]
+            _sy = self.place_cells._pi_pos[1]
+            _sh = self.place_cells._pi_heading
+
+        social_cues = self.shoaling.observe_social_cues(_sx, _sy, colleagues)
+        # Social alarm → boost p_enemy and flee urgency
+        if social_cues["social_alarm"] > 0.3:
+            cls_probs[2] = min(1.0, cls_probs[2] + 0.15 * social_cues["social_alarm"])
+            cls_probs /= cls_probs.sum() + 1e-8
+        # Social food bearing → weak olfactory cue toward foraging group
+        self._social_food_bearing = social_cues.get("social_food_bearing")
+
+        # 11c. Shoaling motor integration (only during SOCIAL goal)
         _shoal_diag = {}
         if effective_goal == GOAL_SOCIAL:
-            colleagues = getattr(env, 'colleagues', [])
-            if self.use_active_inference and hasattr(self, 'place_cells'):
-                _sx = self.place_cells._pi_pos[0]
-                _sy = self.place_cells._pi_pos[1]
-                _sh = self.place_cells._pi_heading
-            else:
-                _sx, _sy, _sh = env.fish_x, env.fish_y, env.fish_heading
             shoal_turn, shoal_speed, _shoal_diag = self.shoaling.step(
                 _sx, _sy, _sh, colleagues)
             approach_gain += shoal_turn * 0.5
@@ -1561,17 +1572,13 @@ class BrainAgent:
                     _center_escape -= 0.4 * obs_frac
 
         # 12e. Cover-seeking during FLEE — steer toward the far side of
-        #      a rock that shields from the predator (only when TTC allows
-        #      deliberation and predator is looking at us).
+        #      a rock that shields from the predator. Active whenever
+        #      fleeing (no TTC restriction — cover is always useful).
         _cover_turn = 0.0
-        if (effective_goal == GOAL_FLEE
-                and 15 < threat["ttc"] < 120
-                and threat["pred_facing_score"] > 0.3):
+        if effective_goal == GOAL_FLEE:
             best_score = 999.0
             best_target = None
             if self.use_active_inference:
-                # Use path-integrated position + lateral threat as bearing
-                rf = self._retinal_features
                 _pi_pos = (self.place_cells._pi_pos
                            if hasattr(self, 'place_cells')
                            else np.array([env.fish_x, env.fish_y]))
@@ -1580,7 +1587,6 @@ class BrainAgent:
                                else env.fish_heading)
                 fish_cx, fish_cy = _pi_pos[0], _pi_pos[1]
                 fish_hd = _pi_heading
-                # Infer predator bearing from threat lateral signal
                 pred_bearing = fish_hd + threat.get("lateral", 0.0) * math.pi / 2
             else:
                 fish_cx, fish_cy = env.fish_x, env.fish_y
@@ -1592,27 +1598,32 @@ class BrainAgent:
                 rdx = rcx - fish_cx
                 rdy = rcy - fish_cy
                 rock_dist = math.sqrt(rdx * rdx + rdy * rdy) + 1e-8
-                if rock_dist > 180 or rock_dist < rock["base_r"] + 5:
+                if rock_dist > 250:
                     continue
                 rock_angle = math.atan2(rdy, rdx)
+                # Prefer rocks that are between fish and predator
+                # (perpendicular to predator direction = good cover)
                 angle_to_pred = pred_bearing - rock_angle
                 angle_to_pred = math.atan2(math.sin(angle_to_pred),
                                            math.cos(angle_to_pred))
-                if abs(angle_to_pred) < math.pi / 4:
-                    continue
+                # Cover quality: rock perpendicular to predator line = best
                 perp = abs(math.sin(angle_to_pred))
-                score = rock_dist / 180.0 - 0.5 * perp
+                # Score: closer + more perpendicular = better cover
+                score = rock_dist / 200.0 - 0.6 * perp
                 if score < best_score:
                     best_score = score
+                    # Target: far side of rock from predator
                     if self.use_active_inference:
-                        # Far side = opposite inferred predator direction
                         opp_x = -math.cos(pred_bearing) * rock["base_r"]
                         opp_y = -math.sin(pred_bearing) * rock["base_r"]
                         far_x = rcx + opp_x
                         far_y = rcy + opp_y
                     else:
-                        far_x = rcx - (env.pred_x - rcx) / (rock_dist + 1e-8) * rock["base_r"]
-                        far_y = rcy - (env.pred_y - rcy) / (rock_dist + 1e-8) * rock["base_r"]
+                        pdx = env.pred_x - rcx
+                        pdy = env.pred_y - rcy
+                        pd = math.sqrt(pdx * pdx + pdy * pdy) + 1e-8
+                        far_x = rcx - (pdx / pd) * rock["base_r"]
+                        far_y = rcy - (pdy / pd) * rock["base_r"]
                     best_target = (far_x, far_y)
 
             if best_target is not None:
@@ -1621,7 +1632,8 @@ class BrainAgent:
                 cover_diff = cover_angle - fish_hd
                 cover_diff = math.atan2(math.sin(cover_diff),
                                         math.cos(cover_diff))
-                _cover_turn = -np.clip(cover_diff * 1.5, -0.6, 0.6)
+                # Steer TOWARD cover (positive = toward target)
+                _cover_turn = np.clip(cover_diff * 1.2, -0.5, 0.5)
                 threat["cover_target"] = best_target
 
         # 13. Smoothed turn — center_escape added post-gain (Fix A)
