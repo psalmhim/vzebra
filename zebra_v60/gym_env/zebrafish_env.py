@@ -135,12 +135,15 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # Empty list → predator drifts harmlessly in PATROL with speed=0.
         self._pred_allowed_states = ["PATROL", "STALK", "HUNT", "AMBUSH"]
 
-        # Swim bout dynamics (biological: 50-100ms bouts at 2-5 Hz)
+        # Motor primitive bout dynamics (Marques et al. 2018)
         self._bout_phase = "IDLE"
         self._bout_timer = 0
         self._bout_speed_peak = 0.0
-        self._bout_ibi_timer = 0  # inter-bout interval
+        self._bout_turn_rate = 0.0
+        self._bout_ibi_timer = 0
+        self._bout_ibi = 3
         self._bout_count = 0
+        self._bout_type_name = "IDLE"
         self._bout_goal_mod = 2   # default EXPLORE
 
         # Food parameters
@@ -824,11 +827,13 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             starvation_cap = 0.15 + 0.55 * (energy_ratio_now / 0.20)
             speed_mod = min(speed_mod, starvation_cap)
 
-        # === Fish movement (swim bout dynamics) ===
-        self.fish_heading += turn_rate * self.fish_turn_max
+        # === Fish movement (motor primitive bout dynamics) ===
+        # Bouts modulate speed timing + add turn noise; brain controls direction
+        bout_turn_noise, bout_speed = self._update_bout_state(speed_mod, turn_rate)
+        # Brain turn + biological noise from motor primitive
+        self.fish_heading += turn_rate * self.fish_turn_max + bout_turn_noise
         self.fish_heading = math.atan2(
             math.sin(self.fish_heading), math.cos(self.fish_heading))
-        bout_speed = self._update_bout_state(speed_mod)
         self.fish_speed = self.fish_speed_base * bout_speed
         self.fish_x += self.fish_speed * math.cos(self.fish_heading)
         self.fish_y += self.fish_speed * math.sin(self.fish_heading)
@@ -993,65 +998,149 @@ class ZebrafishPreyPredatorEnv(gym.Env):
 
         return obs, reward, terminated, truncated, info
 
-    def _update_bout_state(self, speed_mod):
-        """Swim bout state machine: IDLE → BURST → GLIDE → IDLE.
+    # ------------------------------------------------------------------
+    # Motor Primitive Repertoire
+    # Real zebrafish select from ~7 stereotyped bout types, each with
+    # characteristic kinematics. The brain provides "intent" (direction +
+    # urgency); the motor system selects the closest matching primitive.
+    # Based on Marques et al. (2018), Dunn et al. (2016), Johnson et al. (2020).
+    #
+    # Each primitive: (name, turn_mean, turn_std, speed, duration, ibi)
+    # turn in radians, speed as multiplier, duration in steps
+    # ------------------------------------------------------------------
+    BOUT_TYPES = {
+        "IDLE":         {"turn": 0.0,  "turn_std": 0.03, "speed": 0.0,  "dur": 3, "ibi": 4},
+        "ROUTINE_FWD":  {"turn": 0.0,  "turn_std": 0.08, "speed": 0.5,  "dur": 3, "ibi": 3},
+        "ROUTINE_L":    {"turn": -0.3, "turn_std": 0.10, "speed": 0.4,  "dur": 3, "ibi": 3},
+        "ROUTINE_R":    {"turn": 0.3,  "turn_std": 0.10, "speed": 0.4,  "dur": 3, "ibi": 3},
+        "J_TURN_L":     {"turn": -0.5, "turn_std": 0.05, "speed": 0.25, "dur": 4, "ibi": 2},
+        "J_TURN_R":     {"turn": 0.5,  "turn_std": 0.05, "speed": 0.25, "dur": 4, "ibi": 2},
+        "BURST_FWD":    {"turn": 0.0,  "turn_std": 0.05, "speed": 1.0,  "dur": 4, "ibi": 2},
+        "BURST_L":      {"turn": -0.4, "turn_std": 0.08, "speed": 0.9,  "dur": 3, "ibi": 2},
+        "BURST_R":      {"turn": 0.4,  "turn_std": 0.08, "speed": 0.9,  "dur": 3, "ibi": 2},
+        "C_START_L":    {"turn": -0.9, "turn_std": 0.05, "speed": 0.2,  "dur": 2, "ibi": 1},
+        "C_START_R":    {"turn": 0.9,  "turn_std": 0.05, "speed": 0.2,  "dur": 2, "ibi": 1},
+        "CAPTURE":      {"turn": 0.0,  "turn_std": 0.02, "speed": 1.3,  "dur": 2, "ibi": 3},
+    }
 
-        Zebrafish larvae swim in discrete bouts (~50-100ms), not
-        continuously. Burst-glide pattern with goal-modulated inter-bout
-        interval (IBI).
+    def _select_bout_type(self, turn_intent, speed_intent):
+        """Select the best-matching motor primitive for the brain's intent.
 
-        Key: urgent stimuli (obstacles, threats, nearby food) interrupt
-        the IBI and trigger an immediate bout — real zebrafish do this.
+        Maps continuous (turn, speed) intent from the brain to the closest
+        discrete bout type. Adds biological noise to the selected bout.
 
+        Args:
+            turn_intent: float [-1, 1] — desired turn direction
+            speed_intent: float [0, 1.5] — desired speed
         Returns:
-            effective speed multiplier for this step
+            bout_type name, effective (turn_rate, speed) for this step
         """
         import random
 
-        # Goal-dependent IBI: flee=fast bouts, explore=slow bouts
-        IBI_BY_GOAL = {0: 2, 1: 1, 2: 3, 3: 3}  # FORAGE, FLEE, EXPLORE, SOCIAL
+        # Scale brain turn to radians (fish_turn_max ≈ 0.15 rad)
+        desired_turn = turn_intent * 0.15  # convert [-1,1] to ~[-0.15, 0.15]
+
+        # Score each bout type by similarity to intent
+        best_type = "ROUTINE_FWD"
+        best_score = float('inf')
+        for name, params in self.BOUT_TYPES.items():
+            # Skip C-start unless speed is very high (Mauthner override)
+            if name.startswith("C_START") and speed_intent < 1.2:
+                continue
+            # Skip CAPTURE unless speed > 1.2 (prey strike)
+            if name == "CAPTURE" and speed_intent < 1.2:
+                continue
+            # Skip IDLE unless speed is very low
+            if name == "IDLE" and speed_intent > 0.15:
+                continue
+
+            turn_err = (desired_turn - params["turn"] * 0.15) ** 2
+            speed_err = (speed_intent - params["speed"]) ** 2
+            score = turn_err * 3.0 + speed_err  # weight turn matching more
+            if score < best_score:
+                best_score = score
+                best_type = name
+
+        params = self.BOUT_TYPES[best_type]
+        # Add biological noise to the selected primitive
+        noisy_turn = params["turn"] + random.gauss(0, params["turn_std"])
+        noisy_speed = params["speed"] * (0.85 + 0.3 * random.random())
+
+        return best_type, noisy_turn, noisy_speed, params["dur"], params["ibi"]
+
+    def _update_bout_state(self, speed_mod, turn_rate=0.0):
+        """Motor primitive bout dynamics.
+
+        The brain controls DIRECTION (turn_rate). The motor system controls
+        TIMING (burst-glide-idle cycle) and adds BIOLOGICAL NOISE.
+
+        Real zebrafish kinematics: bouts are 50-100ms bursts at 2-5 Hz,
+        with glide phases between. Turn variability adds natural trajectory
+        curvature (Marques et al. 2018).
+
+        Returns:
+            (turn_noise, effective_speed) — noise is ADDED to brain turn
+        """
+        import random
+
+        # Goal-dependent IBI
+        IBI_BY_GOAL = {0: 2, 1: 1, 2: 3, 3: 3}
         goal = getattr(self, '_bout_goal_mod', 2)
 
-        # C-start or flee burst: force immediate burst, bypass IBI
+        # Escape/strike: bypass bout timing entirely
         if speed_mod > 1.0:
             self._bout_phase = "BURST"
             self._bout_timer = 3
             self._bout_speed_peak = speed_mod
             self._bout_count += 1
-            return speed_mod
+            self._bout_type_name = "ESCAPE"
+            return random.gauss(0, 0.01), speed_mod
 
-        # Urgency detection: interrupt IBI for obstacles, threats, or food
-        urgent = speed_mod > 0.6  # brain is requesting significant speed
-
-        if self._bout_phase == "IDLE":
-            if self._bout_ibi_timer > 0 and not urgent:
-                self._bout_ibi_timer -= 1
-                return speed_mod * 0.2  # slow drift (not stationary)
-            if speed_mod > 0.1:
-                self._bout_phase = "BURST"
-                self._bout_timer = random.randint(3, 4)
-                self._bout_speed_peak = speed_mod
-                self._bout_count += 1
-                return speed_mod
-            return speed_mod * 0.2
-
+        # Continue current bout
         if self._bout_phase == "BURST":
             self._bout_timer -= 1
             if self._bout_timer <= 0:
                 self._bout_phase = "GLIDE"
                 self._bout_timer = 2
-            return self._bout_speed_peak * (0.85 + 0.15 * random.random())
+            # During burst: full speed + small turn noise
+            noise = random.gauss(0, 0.03)
+            return noise, self._bout_speed_peak * (0.85 + 0.15 * random.random())
 
         if self._bout_phase == "GLIDE":
-            # Glide: gradual deceleration but still moving
-            glide_frac = self._bout_timer / 2.0
             self._bout_timer -= 1
+            glide_frac = max(0.0, self._bout_timer / 2.0)
             if self._bout_timer <= 0:
                 self._bout_phase = "IDLE"
                 self._bout_ibi_timer = IBI_BY_GOAL.get(goal, 3)
-            return self._bout_speed_peak * (0.3 + 0.4 * glide_frac)
+            # During glide: decaying speed, brain turn still applies
+            return random.gauss(0, 0.02), self._bout_speed_peak * (0.3 + 0.3 * glide_frac)
 
-        return speed_mod
+        # IDLE: wait for IBI, then initiate new bout
+        urgent = abs(turn_rate) > 0.5 or speed_mod > 0.5
+        if self._bout_ibi_timer > 0 and not urgent:
+            self._bout_ibi_timer -= 1
+            # Idle fidgeting: micro-movements for natural appearance
+            fidget = random.gauss(0, 0.015)
+            return fidget, speed_mod * 0.15
+
+        # Initiate new bout
+        if speed_mod > 0.05 or abs(turn_rate) > 0.1:
+            self._bout_phase = "BURST"
+            dur = random.randint(3, 4) if speed_mod < 0.7 else random.randint(3, 5)
+            self._bout_timer = dur
+            self._bout_speed_peak = speed_mod
+            self._bout_count += 1
+            # Classify bout type for diagnostics
+            if abs(turn_rate) > 0.6:
+                self._bout_type_name = "ROUTINE_TURN"
+            elif speed_mod > 0.7:
+                self._bout_type_name = "BURST_SWIM"
+            else:
+                self._bout_type_name = "ROUTINE_FWD"
+            return random.gauss(0, 0.03), speed_mod
+
+        # Truly idle
+        return random.gauss(0, 0.015), 0.05
 
     def _resolve_obstacle_collisions(self):
         """Push fish out of rock formation AABBs (Feature B).
