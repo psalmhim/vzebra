@@ -22,7 +22,7 @@ ENTITY_VISUAL = {
     ENTITY_ENEMY:     (0.75, 45),   # dimmer, 1.5x larger body — visible from far
     ENTITY_COLLEAGUE: (0.50, 18),   # moderate, same-size fish
     ENTITY_BOUNDARY:  (0.30, None), # dull edge signal (detected by ray clipping)
-    ENTITY_OBSTACLE:  (0.60, 10),   # rock visible within 10-unit margin around AABB
+    ENTITY_OBSTACLE:  (0.60, 25),   # rock visible within 25-unit margin around AABB
     ENTITY_PREY:      (0.85, 28),   # bright, fish-sized prey (predator's target)
 }
 
