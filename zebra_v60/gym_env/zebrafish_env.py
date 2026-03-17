@@ -1142,6 +1142,43 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # Truly idle
         return random.gauss(0, 0.015), 0.05
 
+    # ------------------------------------------------------------------
+    # Interactive commands (keyboard during demo)
+    # ------------------------------------------------------------------
+    def _command_predator_attack(self):
+        """[P key] Send predator charging directly at fish."""
+        angle = math.atan2(self.fish_y - self.pred_y,
+                           self.fish_x - self.pred_x)
+        self.pred_heading = angle
+        self.pred_state = "HUNT"
+        self.pred_stamina = 1.0
+        self.pred_state_timer = 0
+        print(f"[CMD] Predator ATTACK → fish at ({self.fish_x:.0f}, {self.fish_y:.0f})")
+
+    def _command_predator_retreat(self):
+        """[R key] Send predator to far corner."""
+        # Move to opposite corner from fish
+        cx = self.arena_w - self.fish_x
+        cy = self.arena_h - self.fish_y
+        self.pred_x = max(30, min(self.arena_w - 30, cx))
+        self.pred_y = max(30, min(self.arena_h - 30, cy))
+        self.pred_state = "PATROL"
+        self.pred_stamina = 1.0
+        print(f"[CMD] Predator RETREAT → ({self.pred_x:.0f}, {self.pred_y:.0f})")
+
+    def _command_spawn_food_cluster(self):
+        """[F key] Spawn a dense food cluster near the fish."""
+        import random
+        cx = self.fish_x + random.uniform(-60, 60)
+        cy = self.fish_y + random.uniform(-60, 60)
+        for _ in range(8):
+            fx = cx + random.gauss(0, 25)
+            fy = cy + random.gauss(0, 25)
+            fx = max(20, min(self.arena_w - 20, fx))
+            fy = max(20, min(self.arena_h - 20, fy))
+            self.foods.append([fx, fy, "small"])
+        print(f"[CMD] Spawned 8 food near ({cx:.0f}, {cy:.0f})")
+
     def _resolve_obstacle_collisions(self):
         """Push fish out of rock formation AABBs (Feature B).
 
@@ -1767,6 +1804,15 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                     elif event.key in (pygame.K_DOWN, pygame.K_MINUS,
                                        pygame.K_KP_MINUS):
                         self._sim_speed = max(1, self._sim_speed // 2)
+                    elif event.key == pygame.K_p:
+                        # Send predator charging toward fish
+                        self._command_predator_attack()
+                    elif event.key == pygame.K_r:
+                        # Retreat predator to corner
+                        self._command_predator_retreat()
+                    elif event.key == pygame.K_f:
+                        # Spawn food cluster near fish
+                        self._command_spawn_food_cluster()
         else:
             # Return full surface (including side panels if enabled)
             return np.transpose(
