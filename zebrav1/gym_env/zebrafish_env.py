@@ -2403,7 +2403,12 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                 by += perp_y * offset
                 points.append((int(bx), int(by)))
 
-            pygame.draw.lines(surface, color, False, points, 2)
+            # Bright tail with contrasting color for visibility
+            tail_color = (min(255, color[0] + 80),
+                          min(255, color[1] + 100),
+                          min(255, color[2] + 40))
+            pygame.draw.lines(surface, tail_color, False, points, 3)
+            pygame.draw.lines(surface, (20, 40, 150), False, points, 1)
 
     def _draw_predator(self, surface, x, y, heading, size, color):
         """Draw predator: isosceles triangle with base=head, eyes, mouth, vertex=tail."""
