@@ -40,6 +40,11 @@ from zebrav1.brain.lateral_line import LateralLineOrgan
 from zebrav1.brain.cerebellum import CerebellumForwardModel
 from zebrav1.brain.olfaction import OlfactorySystem
 from zebrav1.brain.habenula import Habenula
+from zebrav1.brain.vestibular import VestibularSystem
+from zebrav1.brain.spinal_cpg import SpinalCPG
+from zebrav1.brain.color_vision import ColorVisionProcessor
+from zebrav1.brain.circadian import CircadianClock
+from zebrav1.brain.proprioception import ProprioceptiveSystem
 from zebrav1.brain.device_util import get_device
 from zebrav1.world.world_env import WorldEnv
 from zebrav1.tests.step1_vision_pursuit import TurnSmoother
@@ -331,6 +336,22 @@ class BrainAgent:
 
         # Step 36: Habenula (anti-reward / behavioral flexibility)
         self.habenula = Habenula()
+
+        # Step 37: Vestibular system (balance + VOR)
+        self.vestibular = VestibularSystem()
+        self._prev_heading = 0.0
+
+        # Step 38: Spinal CPG (oscillatory motor)
+        self.spinal_cpg = SpinalCPG()
+
+        # Step 39: Color vision
+        self.color_vision = ColorVisionProcessor()
+
+        # Step 40: Circadian clock
+        self.circadian = CircadianClock()
+
+        # Step 41: Proprioceptive feedback
+        self.proprioception = ProprioceptiveSystem()
 
         # World model (Step 16/17)
         self._prev_z = None
@@ -1107,6 +1128,27 @@ class BrainAgent:
                 getattr(env, 'fish_speed', 0.5), ll_ents, efference)
             self._ll_flow = ll_diag
 
+        # 1e0. Vestibular update (Step 37)
+        if self.vestibular is not None:
+            heading_change = env.fish_heading - self._prev_heading
+            self._prev_heading = env.fish_heading
+            self.vestibular.step(heading_change,
+                                 getattr(env, 'fish_speed', 0.5))
+
+        # 1e0b. Circadian clock (Step 40)
+        _circadian_mod = None
+        if self.circadian is not None:
+            _circadian_mod = self.circadian.step()
+
+        # 1e0c. Proprioceptive update from previous step (Step 41)
+        if self.proprioception is not None:
+            prev_cmd_speed = self.last_diagnostics.get("speed", 0.5)
+            prev_cmd_turn = self.last_diagnostics.get("turn_rate", 0.0)
+            actual_speed = getattr(env, 'fish_speed', 0.5)
+            actual_turn = env.fish_heading - self._prev_heading
+            self.proprioception.step(
+                prev_cmd_speed, prev_cmd_turn, actual_speed, actual_turn)
+
         # 1e. Olfactory system (Step 35)
         self._olfaction_diag = {}
         if self.olfaction is not None:
@@ -1180,6 +1222,15 @@ class BrainAgent:
         # 4d. Extract retinal features (used by active inference + structured models)
         if self.use_active_inference or self.predator_model is not None:
             self._retinal_features = self._extract_retinal_features(out)
+
+        # 4d2. Color vision processing (Step 39)
+        self._color_features = {}
+        if self.color_vision is not None and hasattr(self, '_retinal_features'):
+            rf = self._retinal_features
+            if rf:
+                # Use type channel from SNN output for color processing
+                typeL = out["retL_full"][0, 400:].cpu().numpy()
+                _, self._color_features = self.color_vision.process(typeL)
 
         # 5. Free energy
         F_visual = self.model.compute_free_energy()
@@ -1525,6 +1576,11 @@ class BrainAgent:
             # Blend weight ramps with exploration (more data → more trust)
             geo_w = min(0.3, self.geographic_model._step_count / 300.0)
             current_bonus += geo_w * G_geo
+
+        # 8.9c0 Circadian EFE bias (Step 40)
+        if self.circadian is not None:
+            circadian_bias = self.circadian.get_efe_bias()
+            current_bonus += circadian_bias
 
         # 8.9c Habenula frustration bias (Step 36)
         if self.habenula is not None:
@@ -2057,6 +2113,18 @@ class BrainAgent:
             turn_rate = np.clip(_capture_result[0], -1.0, 1.0)
             speed = _capture_result[1]
 
+        # Vestibular speed correction (Step 37)
+        if self.vestibular is not None:
+            speed *= self.vestibular.get_speed_correction()
+            # VOR eye compensation fed to OT
+            self.ot.eye_pos += self.vestibular.vor_eye_compensation * 0.1
+
+        # Proprioceptive motor adjustment (Step 41)
+        if self.proprioception is not None:
+            prop_speed, prop_turn = self.proprioception.get_motor_adjustment()
+            speed *= prop_speed
+            turn_rate = np.clip(turn_rate + prop_turn, -1.0, 1.0)
+
         # Cerebellum motor correction (Step 33)
         if self.cerebellum is not None:
             # Forward prediction
@@ -2189,6 +2257,22 @@ class BrainAgent:
         if self.sleep_regulator is not None:
             self.last_diagnostics["sleep"] = \
                 self.sleep_regulator.get_diagnostics()
+
+        # Step 37-41: New module diagnostics
+        if self.vestibular is not None:
+            self.last_diagnostics["vestibular"] = \
+                self.vestibular.get_diagnostics()
+        if self.circadian is not None:
+            self.last_diagnostics["circadian"] = \
+                self.circadian.get_diagnostics()
+        if self.proprioception is not None:
+            self.last_diagnostics["proprioception"] = \
+                self.proprioception.get_diagnostics()
+        if self._color_features:
+            self.last_diagnostics["color_vision"] = self._color_features
+        if self.spinal_cpg is not None:
+            self.last_diagnostics["spinal_cpg"] = \
+                self.spinal_cpg.get_diagnostics()
 
         # Step 35-36: Olfaction + habenula diagnostics
         if self.olfaction is not None:
@@ -2432,6 +2516,17 @@ class BrainAgent:
             self.amygdala.reset()
         if self.sleep_regulator is not None:
             self.sleep_regulator.reset()
+        # Step 37-41: new module resets
+        if self.vestibular is not None:
+            self.vestibular.reset()
+            self._prev_heading = 0.0
+        if self.spinal_cpg is not None:
+            self.spinal_cpg.reset()
+        if self.circadian is not None:
+            self.circadian.reset()
+        if self.proprioception is not None:
+            self.proprioception.reset()
+
         # Step 35-36: olfaction + habenula reset
         if self.olfaction is not None:
             self.olfaction.reset()
