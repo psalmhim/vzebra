@@ -154,9 +154,13 @@ class AllostaticRegulator:
         # Hunger → bias FORAGE (make foraging more attractive)
         # Nonlinear urgency: hunger bias grows sharply below energy=40
         hunger_urgency = max(0.0, self.hunger_error)
-        if self.hunger > 0.6:  # energy < 40
+        if self.hunger > 0.75:  # energy < 25 — critical starvation zone
+            hunger_urgency *= 1.0 + 5.0 * (self.hunger - 0.6) / 0.4
+        elif self.hunger > 0.6:  # energy < 40
             hunger_urgency *= 1.0 + 3.0 * (self.hunger - 0.6) / 0.4
-        forage_bias = -strength * hunger_urgency
+        # Extra forage drive at critical energy (orexigenic override)
+        critical_boost = 1.0 + max(0.0, self.hunger - 0.7) * 3.0
+        forage_bias = -strength * hunger_urgency * critical_boost
         # Stress → bias FLEE (make fleeing more attractive)
         flee_bias = -strength * max(0.0, self.stress_error)
         # Fatigue → bias EXPLORE (slow exploration = rest)

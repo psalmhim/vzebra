@@ -33,6 +33,9 @@ from zebra_v60.brain.allostasis_v60 import AllostaticRegulator
 from zebra_v60.brain.amygdala_v60 import Amygdala
 from zebra_v60.brain.sleep_wake_v60 import SleepWakeRegulator
 from zebra_v60.brain.hebbian_v60 import HebbianPlasticity
+from zebra_v60.brain.geographic_model_v60 import GeographicModel
+from zebra_v60.brain.predator_model_v60 import PredatorModel
+from zebra_v60.brain.internal_state_model_v60 import InternalStateModel
 from zebra_v60.brain.device_util import get_device
 from zebra_v60.world.world_env import WorldEnv
 from zebra_v60.tests.step1_vision_pursuit import TurnSmoother
@@ -296,12 +299,17 @@ class BrainAgent:
         # Active inference mode (all state inferred through generative models)
         self.use_active_inference = use_active_inference
         if use_active_inference:
-            self.interoceptive = InteroceptiveEnergyModel()
-            self._prev_enemy_px_total = 0.0
-            self._prev_enemy_intensity_mean = 0.0
-            self._retinal_features = {}
+            self.interoceptive = InternalStateModel()
         else:
             self.interoceptive = None
+        # Retinal feature tracking (needed by predator model + active inference)
+        self._prev_enemy_px_total = 0.0
+        self._prev_enemy_intensity_mean = 0.0
+        self._retinal_features = {}
+
+        # Step 31: Structured world models (always-on — pure numpy, cheap)
+        self.predator_model = PredatorModel()
+        self.geographic_model = None  # initialised after place_cells (below)
 
         # World model (Step 16/17)
         self._prev_z = None
@@ -318,6 +326,10 @@ class BrainAgent:
             self.vae_world = None
         else:
             self.vae_world = None
+
+        # Step 31: Geographic model wraps place cells
+        if hasattr(self, 'place_cells'):
+            self.geographic_model = GeographicModel()
 
         # Proper EFE engine (Step 25): active inference + VAE required
         if use_active_inference and self.vae_world is not None:
@@ -984,6 +996,9 @@ class BrainAgent:
             # Net value: density + gain - cost - risk
             # Proximity bonus: exponential preference for very close food
             proximity_bonus = max(0.0, 1.0 - dist / 100.0) ** 2  # sharp near-field
+            # State-dependent risk weighting: starving fish discount predator
+            # risk at food locations (Lima & Dill 1990)
+            risk_weight = 0.3 * max(0.1, 1.0 - urgency * 0.7)
             # Higher = better target
             net_value = (
                 0.3 * density_value           # patch quality (density)
@@ -991,7 +1006,7 @@ class BrainAgent:
                 + 0.3 * urgency               # hunger bonus
                 + 0.5 * proximity_bonus       # strongly prefer NEAREST food
                 - 0.3 * distance_cost         # distance penalty
-                - 0.3 * risk                  # avoid predator
+                - risk_weight * risk          # avoid predator (reduced when hungry)
                 - (0.8 if occluded else 0.0)  # occlusion penalty
             )
 
@@ -1092,8 +1107,8 @@ class BrainAgent:
         # 4e. Looming detector (Feature 3)
         self._compute_looming()
 
-        # 4d. Extract retinal features for active inference (Phase 1)
-        if self.use_active_inference:
+        # 4d. Extract retinal features (used by active inference + structured models)
+        if self.use_active_inference or self.predator_model is not None:
             self._retinal_features = self._extract_retinal_features(out)
 
         # 5. Free energy
@@ -1155,13 +1170,45 @@ class BrainAgent:
                 self._enemy_pixels_total, pred_dist_px, stress_val,
                 pred_facing_score=threat["pred_facing_score"])
             # Boost classifier p_enemy by threat arousal
+            # Orexigenic circuits suppress amygdala fear response when
+            # critically starving (Betley et al. 2015)
             if threat_arousal > 0.05:
-                cls_probs[2] = min(1.0, cls_probs[2] + 0.3 * threat_arousal)
+                _energy_r = getattr(env, 'fish_energy', 100.0) / getattr(env, 'energy_max', 100.0)
+                amyg_damp = (1.0 if _energy_r > 0.25
+                             else 0.3 + 0.7 * (_energy_r / 0.25))
+                cls_probs[2] = min(1.0,
+                                   cls_probs[2] + 0.3 * threat_arousal * amyg_damp)
                 cls_probs /= cls_probs.sum() + 1e-8
             # Feed arousal back into allostatic stress
             if self.allostasis is not None:
                 self.allostasis.stress = min(
                     1.0, self.allostasis.stress + 0.1 * threat_arousal)
+
+        # 7b3b. Predator model update (Step 31)
+        if self.predator_model is not None:
+            if self.use_active_inference and hasattr(self, 'place_cells'):
+                _pm_pos = self.place_cells._pi_pos.copy()
+                _pm_heading = self.place_cells._pi_heading
+            else:
+                _pm_pos = np.array([env.fish_x, env.fish_y])
+                _pm_heading = env.fish_heading
+            self.predator_model.predict()
+            # Feed retinal features in both AI and non-AI mode
+            rf = getattr(self, '_retinal_features', None)
+            if rf:
+                self.predator_model.update(
+                    rf, _pm_pos, _pm_heading, env.step_count)
+            # Blend model TTC with existing threat TTC
+            pm_ttc, pm_conf = self.predator_model.get_ttc(_pm_pos)
+            if pm_conf > 0.3:
+                threat["ttc"] = min(threat["ttc"],
+                                    pm_ttc * pm_conf
+                                    + threat["ttc"] * (1 - pm_conf))
+            # Vigilance: when predator lost, mild boost to p_enemy
+            _vig = self.predator_model.get_vigilance_drive()
+            if _vig > 0.3 and cls_probs[2] < 0.15:
+                cls_probs[2] = min(0.15, cls_probs[2] + 0.05 * _vig)
+                cls_probs /= cls_probs.sum() + 1e-8
 
         # 7b4. Final pixel-evidence cap on p_enemy
         #      The classifier + amygdala boost can hallucinate threats in
@@ -1328,6 +1375,10 @@ class BrainAgent:
             for _ in range(sleep_state["replay_multiplier"]):
                 self.place_cells.replay_extended()
 
+        # 8.6c Geographic model update (Step 31)
+        #      Deferred to section 12b where obs_px_L/R are available.
+        #      See _update_geographic_model() call below.
+
         # 8.7 Allostatic bias on top of planning bonus (Step 18)
         #     Skip when EFE engine is active — allostasis modulates precision
         #     inside the EFE computation instead of additive bias (Step 25).
@@ -1355,18 +1406,37 @@ class BrainAgent:
         # Mirror partial bonus to FLEE so exploration doesn't suppress survival
         current_bonus[GOAL_FLEE] += explore_bonus * 0.5
 
-        # 8.9 Energy-driven goal bias
-        #     < 90%: prefer foraging (hungry fish seeks food)
-        #     ≥ 90%: prefer socializing (well-fed fish joins conspecifics)
-        _energy_r = energy / getattr(env, 'energy_max', 100.0)
-        if _energy_r < 0.90:
-            forage_drive = 0.7 * (0.90 - _energy_r) / 0.90  # 0→0.7 ramp
-            current_bonus[GOAL_FORAGE] -= forage_drive       # lower EFE = preferred
-            current_bonus[GOAL_SOCIAL] += forage_drive * 0.3  # suppress social
+        # 8.9 Energy-driven goal bias (Step 31: internal state model)
+        if isinstance(self.interoceptive, InternalStateModel):
+            _food_dens = (self.geographic_model.query_food_density(
+                              [env.fish_x, env.fish_y], env.step_count)
+                          if self.geographic_model is not None else 0.0)
+            energy_bias = self.interoceptive.get_energy_efe_bias(_food_dens)
+            current_bonus += energy_bias
         else:
-            social_drive = 0.6 * (_energy_r - 0.90) / 0.10  # 0→0.6 ramp
-            current_bonus[GOAL_SOCIAL] -= social_drive       # lower EFE = preferred
-            current_bonus[GOAL_FORAGE] += social_drive * 0.3  # suppress foraging
+            # Legacy energy-driven bias
+            _energy_r = energy / getattr(env, 'energy_max', 100.0)
+            if _energy_r < 0.90:
+                forage_drive = 0.7 * (0.90 - _energy_r) / 0.90
+                current_bonus[GOAL_FORAGE] -= forage_drive
+                current_bonus[GOAL_SOCIAL] += forage_drive * 0.3
+            else:
+                social_drive = 0.6 * (_energy_r - 0.90) / 0.10
+                current_bonus[GOAL_SOCIAL] -= social_drive
+                current_bonus[GOAL_FORAGE] += social_drive * 0.3
+
+        # 8.9b Geographic planning bonus (Step 31)
+        if self.geographic_model is not None:
+            if self.use_active_inference and hasattr(self, 'place_cells'):
+                _gp = self.place_cells._pi_pos.copy()
+                _gh = self.place_cells._pi_heading
+            else:
+                _gp = np.array([env.fish_x, env.fish_y])
+                _gh = env.fish_heading
+            G_geo = self.geographic_model.plan_geographic(_gp, _gh)
+            # Blend weight ramps with exploration (more data → more trust)
+            geo_w = min(0.3, self.geographic_model._step_count / 300.0)
+            current_bonus += geo_w * G_geo
 
         self.goal_policy.set_plan_bonus(current_bonus)
 
@@ -1381,6 +1451,10 @@ class BrainAgent:
                 hunger=_hunger, hunger_error=_hunger_err,
                 pred_facing_score=threat["pred_facing_score"],
                 ttc=threat["ttc"], energy_ratio=_energy_ratio)
+
+        # 9b. Tell internal state model current goal (Step 31)
+        if isinstance(self.interoceptive, InternalStateModel):
+            self.interoceptive.set_goal(choice)
 
         # 10. Habit shortcut
         if self.use_habit:
@@ -1497,6 +1571,19 @@ class BrainAgent:
                 escape_dir = 1.0 if _last_turn >= 0 else -1.0
                 _center_escape = escape_dir * 0.8 * (obs_total / 200.0)
 
+        # 12b2. Geographic model update (Step 31) — uses obs_px_L/R from 12b
+        if self.geographic_model is not None:
+            if self.use_active_inference and hasattr(self, 'place_cells'):
+                _geo_pos = self.place_cells._pi_pos.copy()
+                _geo_heading = self.place_cells._pi_heading
+            else:
+                _geo_pos = np.array([env.fish_x, env.fish_y])
+                _geo_heading = env.fish_heading
+            _geo_rf = {"obstacle_px_L": obs_px_L, "obstacle_px_R": obs_px_R,
+                        "food_px_total": food_px_total}
+            self.geographic_model.update(
+                _geo_pos, _geo_rf, _geo_heading, env.step_count)
+
         # 12c. Food-directed navigation (FORAGE mode)
         #      Three regimes:
         #        a) Food on retina (food_px >= 3): steer toward food pixels
@@ -1587,7 +1674,14 @@ class BrainAgent:
                                else env.fish_heading)
                 fish_cx, fish_cy = _pi_pos[0], _pi_pos[1]
                 fish_hd = _pi_heading
-                pred_bearing = fish_hd + threat.get("lateral", 0.0) * math.pi / 2
+                # Use predator model's predicted position for bearing
+                if (self.predator_model is not None
+                        and self.predator_model.belief.steps_since_seen < 30):
+                    pred_fut, _ = self.predator_model.predict_future_position(5)
+                    pred_bearing = math.atan2(
+                        pred_fut[1] - fish_cy, pred_fut[0] - fish_cx)
+                else:
+                    pred_bearing = fish_hd + threat.get("lateral", 0.0) * math.pi / 2
             else:
                 fish_cx, fish_cy = env.fish_x, env.fish_y
                 fish_hd = env.fish_heading
@@ -1818,6 +1912,10 @@ class BrainAgent:
             _energy_speed = self.interoceptive.get_energy()
         else:
             _energy_speed = getattr(env, "fish_energy", 100.0)
+
+        # Truncate flee burst when critically starving — conserve energy
+        if self._flee_burst_steps > 0 and _energy_speed < 25:
+            self._flee_burst_steps = min(self._flee_burst_steps, 3)
         if _energy_speed < 20:
             speed *= 0.5 + 0.5 * (_energy_speed / 20.0)
 
@@ -1977,6 +2075,17 @@ class BrainAgent:
         if self.sleep_regulator is not None:
             self.last_diagnostics["sleep"] = \
                 self.sleep_regulator.get_diagnostics()
+
+        # Step 31: Structured world model diagnostics
+        if self.geographic_model is not None:
+            self.last_diagnostics["geographic"] = \
+                self.geographic_model.get_diagnostics()
+        if self.predator_model is not None:
+            self.last_diagnostics["predator_model"] = \
+                self.predator_model.get_diagnostics()
+        if isinstance(self.interoceptive, InternalStateModel):
+            self.last_diagnostics["internal_state"] = \
+                self.interoceptive.get_diagnostics()
 
         # Inference validation: compare inferred vs ground truth
         if (self.use_active_inference
@@ -2171,10 +2280,9 @@ class BrainAgent:
         self.last_diagnostics = {}
         if self.interoceptive is not None:
             self.interoceptive.reset()
-        if self.use_active_inference:
-            self._prev_enemy_px_total = 0.0
-            self._prev_enemy_intensity_mean = 0.0
-            self._retinal_features = {}
+        self._prev_enemy_px_total = 0.0
+        self._prev_enemy_intensity_mean = 0.0
+        self._retinal_features = {}
         if self.critic is not None:
             self.critic.reset_episode()
         if self.adapter is not None:
@@ -2197,6 +2305,11 @@ class BrainAgent:
             self.amygdala.reset()
         if self.sleep_regulator is not None:
             self.sleep_regulator.reset()
+        # Step 31: structured world model resets
+        if self.geographic_model is not None:
+            self.geographic_model.reset_episode()  # keep learned maps
+        if self.predator_model is not None:
+            self.predator_model.reset_episode()
 
     def save_checkpoint(self, path):
         """Save all learned parameters to a single checkpoint file.

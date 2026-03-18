@@ -60,7 +60,11 @@ class PreferredOutcomes:
         self.sigma_F = self.sigma_F_base / (1.0 + 2.0 * fatigue)
 
     def energy_risk(self, predicted_energy):
-        """Risk from energy deviation: (Ê − E*)² / (2σ²_E).
+        """Risk from energy deviation: asymmetric (Ê − E*)² / (2σ²_E).
+
+        Below-setpoint risk is amplified because starvation is irreversible
+        (death), while excess energy has diminishing returns. Asymmetry
+        scales from 2x at setpoint to 5x at zero energy.
 
         Args:
             predicted_energy: float — predicted energy at future step
@@ -69,7 +73,12 @@ class PreferredOutcomes:
             float — energy risk (higher = worse)
         """
         diff = predicted_energy - self.energy_star
-        return diff * diff / (2.0 * self.sigma_E * self.sigma_E + 1e-8)
+        base_risk = diff * diff / (2.0 * self.sigma_E * self.sigma_E + 1e-8)
+        if diff < 0:
+            # Asymmetric: below setpoint is more dangerous
+            asymmetry = 2.0 + 3.0 * max(0.0, -diff / self.energy_star)
+            return asymmetry * base_risk
+        return base_risk
 
     def safety_risk(self, threat_proximity):
         """Risk from threat: threat² / (2σ²_S).
@@ -175,6 +184,10 @@ class EFEEngine:
 
             speed = self.GOAL_SPEEDS[gi]
             drain = self.DRAIN_MULT[gi]
+            # FLEE costs more when starting from low energy
+            if gi == 1:  # FLEE
+                low_energy_penalty = max(0.0, (50.0 - energy_belief) / 50.0)
+                drain = drain + low_energy_penalty * 0.5
             energy_gain_per_step = (0.3 if gi == 0 else 0.0)  # FORAGE gains
 
             for tau in range(H):

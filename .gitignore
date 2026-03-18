@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# OS
+.DS_Store
+
+# Large binary files
+atlas/*.npy.gz
+atlas/*.npy
+atlas/*.mat
+atlas/*.mat.gz
+atlas/*.pkl
+zebra_v60/weights/*.pt
+
+# IDE
+.vscode/
+
+# Temp
+*.egg-info/
