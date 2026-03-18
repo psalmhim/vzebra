@@ -1,0 +1,1404 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% ELIFE ARTICLE TEMPLATE
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% PREAMBLE 
+\documentclass[9pt]{elife}
+% Use the onehalfspacing option for 1.5 line spacing
+% Use the doublespacing option for 2.0 line spacing
+% Please note that these options may affect formatting.
+% Additionally, the use of the \newcommand function should be limited.
+
+\usepackage{lipsum} % Required to insert dummy text
+\usepackage[version=4]{mhchem}
+\usepackage{siunitx}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, shapes, calc}
+\usepackage{rotating}
+\usepackage{changepage} % in preamble
+
+
+\DeclareSIUnit\Molar{M}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% ARTICLE SETUP
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\title{Artificial life: virtual zebrafish based on hiearchical active inference}
+
+\author[1,2,3*]{Hae-Jeong Park}
+\affil[1]{Graduate School of Medical Science, Brain Korea 21 Project, Department of Nuclear Medicine, Psychiatry, Yonsei University College of Medicine, Seoul, Republic of Korea}
+\affil[2]{Center for Systems and Translational Brain Science, Institute of Human Complexity and Systems Science, Yonsei University, Seoul, Republic of Korea}
+\affil[3]{Department of Cognitive Science, Yonsei University, Seoul, Republic of Korea}
+
+\corr{parkhj@yonsei.ac.kr}{PHJ}
+
+
+% \presentadd[\authfn{5}]{eLife Sciences editorial Office, eLife Sciences, Cambridge, United Kingdom}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% ARTICLE START
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Larval zebrafish provide a rare combination of a near-complete whole-brain connectome, optical access to neural activity, and rich visually guided behaviors.
+Here we introduce a large-scale spiking neural network constrained by the zebrafish structural connectome that learns and acts using only local information.
+Each model neuron is endowed with two effective compartments---a dendritic prediction compartment and a somatic spike generator---and synapses adapt according to a somato-dendritic mismatch rule inspired by the neuronal least-action principle.
+This rule implements online predictive learning in the recurrent circuit without backpropagation-through-time.
+We embed the network in a minimal virtual environment comprising prey-like and predator-like stimuli and define a small discrete latent state space (food, enemy, neutral) and action repertoire (approach, flee, indifferent).
+Beliefs about latent causes are read out from higher-order populations and used to evaluate policies under an expected free energy objective, providing an active inference interpretation of orienting and escape.
+In closed-loop simulations, the connectome-based spiking network learns to discriminate visual contexts and generates appropriate tail motor biases using only local plasticity and a simple preference structure.
+Our results suggest that biologically plausible dendritic learning rules, when combined with the zebrafish connectome, are sufficient to implement core elements of predictive processing and active inference in a realistic whole-brain model.
+
+\end{abstract}
+
+
+
+\section{Hierarchical Vision Architecture (Retina → Thalamus → Cortex → Tectum)}
+
+The PC-SNN agent implements a multi-stage visual hierarchy closely inspired by
+biological visual processing in zebrafish.  
+This hierarchy transforms raw sensory observations into latent cortical features,
+computes cross-modal novelty and salience, and finally generates visuomotor drive
+through the optic tectum.  
+The system consists of four computational layers:
+
+\[
+\text{RetinaPC} \;\rightarrow\; \text{ThalamusRelay} \;\rightarrow\; 
+\text{VisualCortexPC} \;\rightarrow\; \text{OpticTectum}.
+\]
+
+Each stage performs predictive-coding computation, producing both latent
+representations and prediction errors used throughout the active-inference loop.
+
+% ---------------------------------------------------------
+\subsection{RetinaPC: Sensory Prediction and Feature Encoding}
+
+The retinal layer implements a temporal predictive-coding loop that transforms
+incoming luminance and contrast signals into a compact feature representation.
+Let $x_t$ denote the retinal input at time $t$, and let $W$ be the retinal encoding
+matrix.  The predicted feature vector is
+
+\begin{equation}
+\hat{x}_t = x_t W,
+\end{equation}
+
+and the temporal prediction error is
+
+\begin{equation}
+\varepsilon_t = \hat{x}_t - \hat{x}_{t-1},
+\end{equation}
+
+yielding retinal free energy
+
+\begin{equation}
+F^{(r)}_t = \frac{1}{2}\|\varepsilon_t\|^2.
+\end{equation}
+
+Hebbian updates, optionally modulated by dopaminergic tone, refine the retinal
+weights to minimize future surprise.  
+The retina thus provides both a bottom–up feature code and a fast estimate of
+visual prediction error.
+
+% ---------------------------------------------------------
+\subsection{ThalamusRelay: Cross-Modal Salience and Novelty}
+
+The thalamic relay receives free-energy estimates from visual ($F_v$), auditory ($F_a$),
+and optionally body-state ($F_b$) channels.  
+Its role is to compute cross-modal salience (CMS), reflecting the degree of mismatch
+or novelty across modalities.  
+Temporal novelty is measured as
+
+\begin{equation}
+\Delta F_i(t) = |F_i(t) - F_i(t-1)|,
+\quad i \in \{v,a,b\}.
+\end{equation}
+
+Cross-modal divergence is defined as
+
+\begin{equation}
+C = 
+\begin{cases}
+|F_v - F_a|, 
+& \text{(dual mode)} \\[6pt]
+\frac{|F_v - F_a| + |F_v - F_b| + |F_a - F_b|}{3}, 
+& \text{(tri mode)}.
+\end{cases}
+\end{equation}
+
+Raw salience integrates both components:
+
+\begin{equation}
+S_t = \gamma_{\Delta} \cdot \mathrm{mean}(\Delta F_i)
+    + \gamma_{C} \cdot C,
+\end{equation}
+
+and is smoothed with multiplicative stochastic bursts:
+
+\begin{equation}
+\mathrm{CMS}_t
+= (1-\alpha)\,\mathrm{CMS}_{t-1}
++ \alpha S_t (1 + \beta\xi_t),
+\quad \xi_t \sim \mathcal{N}(0,1).
+\end{equation}
+
+CMS provides a novelty-aware signal to dopaminergic systems and to higher-order
+cortical inference.
+
+% ---------------------------------------------------------
+\subsection{VisualCortexPC: Context- and Goal-Modulated Predictive Coding}
+
+Above the retinal and thalamic layers, the visual cortex constructs a latent visual
+representation that incorporates both sensory evidence and top–down contextual or
+goal information.
+
+Let $x$ be the fused or competitive hemispheric visual input.  
+Encoding and reconstruction follow predictive-coding dynamics:
+
+\begin{align}
+z &= x W_{\mathrm{enc}}, \\
+\hat{x} &= z W_{\mathrm{dec}}, \\
+\varepsilon^{(c)} &= x - \hat{x}.
+\end{align}
+
+Working-memory context $c_t$ modulates the latent state:
+
+\begin{equation}
+z \leftarrow z + \lambda_{\mathrm{ctx}} c_t,
+\end{equation}
+
+while goal-directed feedback $g_t$ provides task-conditioned modulation:
+
+\begin{equation}
+z \leftarrow z + \lambda_{\mathrm{goal}} g_t.
+\end{equation}
+
+Hebbian updates refine both encoder and decoder weights, ensuring that cortical
+representation remains sensitive to task structure, temporal continuity, and
+environmental context.
+
+% ---------------------------------------------------------
+\subsection{OpticTectum: Visuomotor Policy Field}
+
+The optic tectum transforms bilateral salience and cortical latent features into
+oculomotor drive for pursuit and orienting.  
+Let $v_L$ and $v_R$ denote left and right visual salience, and $\bar{F}_t$ the
+average free energy.  
+The tectal motor drive is
+
+\begin{equation}
+d_t = \tanh\!\big(1.5(v_R - v_L)\big)
+      - \lambda_F \bar{F}_t
+      + g_{\mathrm{BG}}\, b_t,
+\end{equation}
+
+where $b_t$ is basal-ganglia gating.  
+Eye velocity is then updated with momentum:
+
+\begin{equation}
+\dot{x}_t = 0.85\,\dot{x}_{t-1} + 0.15\, d_t,
+\end{equation}
+
+and dopamine modulates the centering force
+
+\begin{equation}
+x_t = x_{t-1} + \dot{x}_t
+      - \big(c_0 + \Delta c(D_t)\big) x_{t-1},
+\end{equation}
+
+with bounds preventing saturation.  
+The tectum acts as the final visuomotor decision module, selecting pursuit
+direction and magnitude to minimize prediction error.
+
+% ---------------------------------------------------------
+\subsection{Functional Summary of the Vision Chain}
+
+The full vision stack is organized hierarchically:
+\begin{enumerate}
+    \item \textbf{RetinaPC} extracts low-level visual features and computes temporal surprise.
+    \item \textbf{ThalamusRelay} integrates cross-modal novelty into a scalar salience signal.
+    \item \textbf{VisualCortexPC} builds context- and goal-sensitive latent visual representations.
+    \item \textbf{OpticTectum} converts visual salience and cortical predictions into motor drive.
+\end{enumerate}
+
+In combination, these stages support the agent's ability to perform
+prediction-error minimization across sensory, contextual, and task dimensions
+while generating biologically realistic visuomotor behavior.
+
+
+% ==============================================================
+\section{From Predictive Coding to Active Inference (v1–v30)}
+% ==============================================================
+
+\subsection{Overview}
+
+Versions v1–v30 represent the construction of a full embodied predictive-coding and active-inference architecture.
+Beginning with unimodal sensory prediction (v1–v5), the model gradually incorporated cross-modal fusion (v6–v10),
+motivational and dopaminergic learning (v11–v15),
+goal selection and persistence (v16–v20),
+interoceptive feedback and physiological regulation (v21–v25),
+and finally temporal integration and metacognitive gain control (v26–v30).
+Each version preserved backward compatibility through the \texttt{BaseModule} interface,
+allowing seamless recombination of perception, action, and internal drives.
+
+\subsection{v1–v5: Sensory Predictive Coding Core}
+
+The early models implemented unimodal predictive-coding networks:
+a \textbf{retinal encoder} and an \textbf{auditory predictive loop}.
+Each sensory layer estimated latent causes $z_t$ from observations $o_t$
+and minimized local free energy
+
+\[
+F_t = \frac{1}{2}\|o_t - \hat{o}_t\|^2 + \frac{1}{2}\|z_t - \hat{z}_t\|^2 ,
+\]
+via Hebbian weight updates
+$\Delta W \propto o_t^\top z_t - \lambda W$.
+RetinaPC modules handled spatial prediction errors,
+while AudioPC modules captured temporal regularities.
+These layers formed the perceptual foundation for later multimodal extensions.
+
+\subsection{v6–v10: Multisensory Integration and Thalamic Novelty}
+
+Visual and auditory streams were fused within a \textbf{ThalamusRelay} module that computed
+cross-modal salience (CMS) as a function of temporal novelty and intermodal discrepancy:
+\[
+\mathrm{CMS}_t = \alpha \, (|\Delta F_v| + |\Delta F_a|)/2 + (1-\alpha)|F_v - F_a|.
+\]
+This signal modulated dopaminergic precision and triggered exploratory behavior.
+Tri-modal extensions (v9–v10) added proprioceptive and body feedback terms,
+enabling early forms of self–other distinction through multimodal prediction errors.
+
+\subsection{v11–v15: Dopamine, Reward Prediction, and Policy Coupling}
+
+The \textbf{DopamineSystem} generalized scalar reward prediction error (RPE)
+into a precision-weighted motivational field:
+\[
+\delta_t = (r_t - \hat{r}_t) + \kappa \, \mathrm{CMS}_t .
+\]
+Coupled with the \textbf{BasalGanglia} module,
+this created an alternation–exploration loop for saccadic or locomotor control.
+Version v13 introduced \textbf{goal-dependent working memory},
+allowing dopaminergic bursts to strengthen memory retention.
+v14–v15 incorporated meta-gain adaptation,
+so sustained dopamine increased consolidation time,
+linking reward expectancy to memory persistence.
+
+% ------------------------------------------------------------
+\subsection{Hierarchical Architecture Summary}
+
+\begin{verbatim}
+[Environment]
+   ↑ ↓
+[Body / Interoception]  ←→  [Basal Ganglia / Motor]
+   ↑ ↓
+[Visual & Auditory Cortex] ←→ [Working Memory]
+   ↑ ↓
+[Dopamine System] ←→ [Policy Field / Active Inference]
+   ↑ ↓
+[Meta-Precision Monitor / Confidence Loop]
+\end{verbatim}
+
+This architecture unifies perception, action, emotion, and metacognition within a single active inference hierarchy, forming the computational substrate for a self-regulating, embodied cognitive agent.
+
+% ------------------------------------------------------------
+\subsection*{Footnote}
+
+\footnotesize
+\noindent
+\textbf{Footnote.}~
+The version numbering (v15–v30) follows a cumulative developmental trajectory of the
+Predictive-Coding Spiking Neural Network (PC-SNN) framework.  
+Each stage reflects the integration of additional inferential hierarchies:
+from dopamine-based goal learning (v15) to active inference with expected free energy (v16),
+temporal and social inference (v17–v19),
+interoceptive embodiment (v20–v23),
+adaptive environmental learning (v24–v26),
+and finally meta-cognitive precision control and symbolic self-representation (v27–v30).
+This systematic expansion parallels the evolution of biological nervous systems:
+from sensory prediction and motor adaptation to the emergence of self-monitoring and conscious goal regulation.
+\normalsize
+
+---------
+
+% ============================================================
+\section{System Evolution: v15–v30 — From Goal Learning to Metacognitive Embodiment}
+% ============================================================
+
+The progressive versions (\textbf{v15–v30}) of the PC-SNN architecture represent a systematic expansion from sensory predictive coding and dopaminergic reinforcement to full hierarchical active inference and metacognitive embodiment. Each developmental stage integrates additional inferential depth—from simple reward prediction error (RPE) learning to self-monitoring of precision over precision—reflecting an increasingly realistic model of cognitive and affective brain function.
+
+% ------------------------------------------------------------
+\subsection{Version Map and Functional Expansion}
+
+\begin{table*}[h!]
+\centering
+\caption{Evolution of Functional Architecture (v15–v30)}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{p{1.8cm} p{3.5cm} p{6.5cm} p{3.5cm} p{3.5cm}}
+\hline
+\textbf{Version} & \textbf{Core Innovation} & \textbf{Description} & \textbf{Biological Analogue} & \textbf{Expected Output} \\
+\hline
+v15.0–15.3 & Goal-Value Learning and Meta-Gain & Dopaminergic Q-value update and motivational gain stored in memory (WorkingMemory × PolicyField coupling). & VTA–PFC reinforcement loop & Goal persistence, value-dependent recall \\
+v16.0–16.2 & Active Inference Policy Selection & Policies inferred via Expected Free Energy (EFE); integrates epistemic (uncertainty) and extrinsic (reward) terms. & ACC / medial PFC & Adaptive exploration vs. exploitation \\
+v17.0–17.4 & Temporal Inference and Sequence Modeling & Adds short-term temporal filters (Kalman-like updates) and recurrent EFE tracking. & Dorsomedial PFC, premotor cortex & Predictive temporal planning \\
+v18.0–18.9 & Social Valence Field (Multi-Agent Coupling) & Each agent’s dopamine field influenced by neighbors’ reward precision; introduces imitation and empathy weighting. & Superior temporal sulcus, mirror neuron systems & Alignment, cooperative or competitive dynamics \\
+v19.0–19.5 & Joint Intent Inference (Social Active Inference) & Shared EFE minimization between agents, inferring both self and other’s beliefs; hierarchical coupling through precision channels. & TPJ / medial PFC & Theory-of-Mind-like inference \\
+v20.0–20.3 & Temporal Active Inference (Interoceptive Loop) & Adds continuous EFE minimization with interoceptive prediction of internal states (e.g., energy). & Insula / brainstem homeostatic centers & Predictive homeostasis, energy regulation \\
+v21.0–21.5 & Interoception + Metabolic Drive & Introduces glucose–O$_2$ metabolism variable that modulates dopamine and motivation. & Hypothalamus, orbitofrontal cortex & Hunger, fatigue, arousal modulation \\
+v22.0–22.5 & Embodied Predictive Control (Body Model) & Adds musculoskeletal actuator dynamics (eye, tail, body torque) under predictive control. & Cerebellum / motor cortex & Coordinated saccade and locomotion \\
+v23.0–23.9 & Hierarchical Action Control & Multi-timescale motor planning: reflexive (ms), rhythmic (100 ms), and goal-directed (s). & Motor hierarchy (SC–BG–PMC–PFC) & Smooth pursuit, goal-tracking trajectories \\
+v24.0–24.5 & Heart and Respiratory Coupling (Cardiorespiratory AI) & Integrates heart rate variability and respiration into interoceptive free energy. & Brainstem / vagal–sympathetic loop & HRV-driven precision and fatigue modeling \\
+v25.0–25.9 & Body–World Interaction (Environment Model) & Introduces dynamic environment (food, threat, light) → sensory likelihood updating. & Parietal cortex / hippocampus & Context-dependent goal pursuit \\
+v26.0–26.5 & Learning under Uncertainty (Variational Policy Gradient) & Active inference implemented as a stochastic gradient on expected free energy with precision annealing. & ACC / OFC & Optimal uncertainty exploration \\
+v27.0–27.5 & Hierarchical Intent and Meta-Cognitive Monitoring & Adds second-order inference on policy uncertainty; confidence controls dopamine release. & Dorsal ACC / frontopolar cortex & Meta-confidence oscillation \\
+v28.0–28.9 & Social Reinforcement and Moral Valence & Collective reward and punishment; introduces “social EFE” weighting group coherence. & vmPFC / amygdala & Prosocial vs. antisocial trade-off \\
+v29.0–29.5 & Language-Linked Symbolic Representation & Encodes symbolic cues (text/sound) as policies; forms early abstract concept model. & Broca / Wernicke areas & Symbol–goal alignment \\
+v30.0+ & Full Embodied Conscious Loop & Integrates exteroception, interoception, proprioception, and meta-precision in unified self-model. & Whole-brain integration (DMN × SN × CEN) & Self-maintenance, metacognitive agency \\
+\hline
+\end{tabular}
+\end{table*}
+
+% ------------------------------------------------------------
+\subsection{Stage I (v15–v16): Dopaminergic Goal Inference}
+
+The system transitions from reactive dopamine-based reinforcement to expected free-energy (EFE)–based policy inference.  
+Working memory becomes adaptive, adjusting retention by motivational gain, while the policy field evolves from simple Q-learning to probabilistic inference under uncertainty.  
+At this stage, dopamine acts both as a prediction-error signal and a gain modulator influencing the temporal stability of memory traces.
+
+% ------------------------------------------------------------
+\subsection{Stage II (v17–v19): Temporal and Social Inference}
+
+Temporal inference enables the agent to anticipate event sequences, while social coupling allows inference of others’ states.  
+Each agent minimizes EFE jointly with neighbors, permitting imitation, empathy, and shared attention.  
+This introduces the computational foundation for social valence pursuit and multi-agent active inference.
+
+% ------------------------------------------------------------
+\subsection{Stage III (v20–v23): Interoceptive Embodiment}
+
+The generative model extends inward, including predictions of body states such as energy and proprioception.  
+Interoceptive free-energy drives homeostatic regulation, while predictive control of eye and tail actuators allows adaptive locomotion.  
+Here, action becomes perception through the minimization of proprioceptive prediction error.
+
+% ------------------------------------------------------------
+\subsection{Stage IV (v24–v26): Environmental Learning and Adaptive Precision}
+
+Agents learn under uncertainty by estimating variational precision and minimizing expected free energy through stochastic gradient descent.  
+Environmental contingencies (food, threat, light) are modeled explicitly, and adaptive annealing of precision enables robust exploration–exploitation balance.
+
+% ------------------------------------------------------------
+\subsection{Stage V (v27–v30): Meta-Cognition and Self-Model Formation}
+
+Confidence dynamics (meta-precision) are added as a higher-order variable that monitors the reliability of inference itself.  
+The agent thus develops an internal model of its own uncertainty.  
+By v29–v30, the system integrates social, linguistic, and interoceptive layers into a unified self-model capable of maintaining goals, evaluating outcomes, and adjusting belief precision—approximating a computational model of metacognitive agency.
+
+% ------------------------------------------------------------
+\subsection{Equational Framework}
+
+\begin{align}
+\dot{s} &= -\frac{\partial F}{\partial s}, &
+\dot{a} &= -\frac{\partial G}{\partial a} \\
+F &= \text{Free Energy (perceptual inference)} \\
+G &= \text{Expected Free Energy (policy inference)}
+\end{align}
+
+Each hierarchical level minimizes either perceptual free energy ($F$) or expected free energy ($G$), while the meta-cognitive level minimizes \textit{precision over precision}, adjusting how much confidence is assigned to inferential beliefs.
+
+
+---------
+\subsection{v16–v20: Goal Selection, Persistence, and Policy Learning}
+
+These versions unified value learning and goal selection
+within the \textbf{GoalPolicyField}.
+Each goal $g_i$ maintained a Q-like value $Q_i$ updated by
+temporal-difference error:
+\[
+Q_i \leftarrow Q_i + \eta (r_t + \gamma Q_i - Q_i).
+\]
+Policies were selected probabilistically
+$\pi(g_i) \propto \exp(-\beta F_i)$,
+combining precision, motivation, and novelty.
+The working memory became goal-conditioned, receiving the one-hot goal vector
+and maintaining contextual latent states over time.
+Persistence timers stabilized chosen goals across several inference cycles,
+creating a rudimentary notion of intent.
+
+\subsection{v21–v25: Body, Interoception, and Homeostatic Control}
+
+The system was extended with a \textbf{BodyModule}
+representing muscles, viscera, and internal physiology.
+Motor outputs (eye, tail, fin) were treated as proprioceptive predictions.
+An interoceptive channel encoded heart rate, oxygen, and metabolic energy,
+integrated by an \textbf{InteroceptivePC} subsystem.
+Prediction errors in these internal signals
+drove homeostatic regulation:
+\[
+F_{\mathrm{int}} = \sum_j \frac{(x_j - \hat{x}_j)^2}{2\sigma_j^2}.
+\]
+Coupling dopamine to metabolic free energy linked reward
+to physiological cost, allowing adaptive trade-offs between
+exploration and energy conservation.
+
+\subsection{v26–v30: Temporal Integration and Meta-Gain Regulation}
+
+Temporal inference was introduced through the \textbf{DeepTemporalField},
+tracking changes in free energy across time and forecasting expected precision gains.
+Each cycle updated a meta-gain variable
+$g_t = 1 + \lambda(|\mathrm{RPE}_t| + |\mathrm{CMS}_t|)$,
+which scaled both learning rate and memory retention coefficient.
+High meta-gain corresponded to strong attention or arousal,
+while low gain represented fatigue or disengagement.
+This mechanism closed the perception–action–valuation loop,
+producing coherent cycles of exploration, learning, and rest.
+
+\subsection{Hierarchical Summary}
+
+\begin{table}[h]
+\centering
+\caption{Major Functional Expansions (v1–v30)}
+\begin{tabular}{l l l}
+\hline
+Version Range & Core Module Added & Functional Role \\
+\hline
+v1–v5 & RetinaPC, AudioPC & Sensory predictive coding \\
+v6–v10 & ThalamusRelay & Cross-modal novelty and CMS gain \\
+v11–v15 & DopamineSystem, BasalGanglia & Reward prediction, motivation \\
+v16–v20 & GoalPolicyField, WorkingMemory & Goal inference and persistence \\
+v21–v25 & Body/Interoceptive modules & Homeostasis and energy regulation \\
+v26–v30 & DeepTemporalField & Temporal prediction and meta-gain control \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Summary}
+
+Across v1–v30, the PC-SNN evolved from a reactive sensory predictor
+into a unified active-inference agent.
+Its architecture integrates hierarchical perception, multimodal fusion,
+dopaminergic valuation, working-memory consolidation,
+motor control, and interoceptive regulation.
+Each subsystem participates in minimizing expected free energy:
+perception reduces prediction error,
+action fulfills sensory predictions,
+and internal physiology maintains energy balance.
+This establishes the foundation for higher-level social,
+semantic, and metacognitive inference introduced in later versions (v31–v55).
+
+
+% ==============================================================
+\section{Unified Active Inference Architecture (v31.0–v33.0)}
+% ==============================================================
+
+\subsection{Overview}
+
+The unified agent integrates all preceding modules (v1–v30) within a single
+active inference framework. Each subsystem—vision, working memory,
+dopaminergic policy control, interoceptive regulation, and meta-precision—
+is formulated as a specialized free-energy minimization process.
+The resulting architecture implements a multi-timescale
+hierarchical generative model of perception, action, and self-regulation.
+
+\subsection{Core Principle}
+
+At every time step, the agent updates internal beliefs $\mu$,
+actions $a$, and policies $\pi$ by minimizing a variational bound
+on surprise, or \textit{free energy}:
+
+\begin{equation}
+F = \mathbb{E}_{q(s)}[\ln q(s) - \ln p(s,o,\pi)] ,
+\end{equation}
+
+where $s$ denotes latent states, $o$ sensory observations, and $\pi$
+candidate policies.  Perception corresponds to optimizing posterior
+beliefs $q(s)$; action corresponds to sampling sensations that fulfill
+predictions; and policy selection minimizes the \textit{expected}
+free energy $G(\pi)$:
+
+\begin{equation}
+G(\pi) = \mathbb{E}_{q(o,s|\pi)} \big[
+D_{\mathrm{KL}}(q(s|\pi)\,||\,p(s))
+ - \ln p(o|C)
+\big],
+\end{equation}
+
+where $C$ encodes the agent’s prior preferences (goals).
+This decomposition expresses the dual imperatives of
+\textit{epistemic value} (reducing uncertainty) and
+\textit{extrinsic value} (achieving preferred outcomes).
+
+\subsection{Hierarchical Structure}
+
+The unified agent comprises five nested layers, each minimizing
+free energy on a distinct timescale:
+
+\begin{itemize}
+\item \textbf{L1: Sensory Predictive Coding}  
+Visual and auditory cortices ($F_s$) infer latent causes of sensory input.
+\item \textbf{L2: Working Memory Integration}  
+Associative cortices ($F_m$) integrate short-term contextual information,
+modulated by dopamine and CMS gain.
+\item \textbf{L3: Policy and Motivation}  
+Dopaminergic and striatal fields ($G_\pi$) implement goal selection via
+expected free-energy minimization.
+\item \textbf{L4: Interoception and Motor Control}  
+Autonomic and somatic systems ($F_b$) regulate physiological and
+kinematic states toward homeostasis.
+\item \textbf{L5: Meta-Precision and Confidence}  
+Prefrontal–DMN circuits ($F_\Pi$) monitor uncertainty and adapt belief
+precision across levels.
+\end{itemize}
+
+Each level passes prediction errors upward and expectations downward,
+forming a recursive active inference loop:
+
+\[
+\dot{\mu}_l = -\frac{\partial F_l}{\partial \mu_l}, \qquad
+\dot{\pi} = -\frac{\partial G}{\partial \pi}, \qquad
+\dot{a} = -\frac{\partial F}{\partial a}.
+\]
+
+\subsection{Computational Implementation}
+
+All modules share a unified interface through the \texttt{BaseModule} class,
+which maintains device management, learning rates, and diagnostic reporting.
+The agent’s step function integrates seven sequential updates:
+
+\begin{enumerate}
+\item \textbf{Sensory Inference:}  
+Predictive-coding loop in visual cortex minimizes $F_s$ given sensory inputs $o_t$.
+\item \textbf{Contextual Memory:}  
+Working-memory update $\mu_t = f(\mu_{t-1}, dopa, cms)$ modulates belief decay $\alpha_{\mathrm{eff}}$.
+\item \textbf{Policy Inference:}  
+GoalPolicyField computes $G(\pi)$ using dopaminergic RPE and memory state.
+\item \textbf{Expected Free Energy:}  
+ActivePolicyField evaluates epistemic and extrinsic components
+$G_{\text{epistemic}}$ and $G_{\text{extrinsic}}$.
+\item \textbf{Motor Actuation:}  
+BodyMotorField samples an action $a_t$ from posterior $p(a_t|\pi_t)$.
+\item \textbf{Interoceptive Regulation:}  
+HeartInteroceptiveField adjusts internal energy and heart rate signals.
+\item \textbf{Meta-Precision Update:}  
+MetaPrecisionField updates global confidence $\Pi_t$ based on entropy of policy posteriors.
+\end{enumerate}
+
+All computations occur within a single GPU graph, with gradients detached
+between hierarchical levels to emulate separate neural timescales.
+
+\subsection{Mathematical Summary}
+
+Each level contributes to the composite objective:
+
+\[
+\min_{a,\pi,\mu} \; F + G + H
+\]
+
+where:
+\[
+\begin{aligned}
+F &\;=\; \text{Sensory and interoceptive free energy,} \\
+G &\;=\; \text{Expected uncertainty (policy-level EFE),} \\
+H &\;=\; \text{Entropy of meta-precision (confidence).}
+\end{aligned}
+\]
+
+Thus, perception, learning, and metacognition are formally unified as
+different gradients on the same variational bound.
+
+\subsection{Validation Protocol}
+
+To ensure continuity across all subsystems,
+each component was subjected to modular testing.
+Table~\ref{tab:validation_map} summarizes the key functional invariants.
+
+\begin{table}[h]
+\centering
+\caption{Subsystem Validation under Active Inference Framework}
+\begin{tabular}{l l l}
+\hline
+Subsystem & Optimized Quantity & Expected Behavior \\
+\hline
+Vision & $F_s$ (sensory free energy) & Prediction error $\downarrow$ \\
+Memory & $\alpha_{\mathrm{eff}}$ (decay) & Retention $\uparrow$ with dopamine \\
+Policy & $G_\pi$ (expected FE) & Goal selection consistency \\
+Body & $F_b$ (motor FE) & Stable actuation \\
+Heart & $F_i$ (interoceptive FE) & Homeostatic stability \\
+Meta & $H$ (entropy of confidence) & Optimal precision regulation \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Summary}
+
+The unified architecture demonstrates how sensory, motivational,
+and metacognitive processes can all be expressed as hierarchical
+inference under a single free-energy principle.
+This framework provides a biologically interpretable and
+computationally consistent foundation for subsequent
+multi-agent and social active inference extensions (v34+).
+
+
+\subsection{Unified Agent Testing Protocol (v31.0)}
+
+To ensure functional continuity across all integrated modules (v1–v30),
+we implemented a modular test harness where each subsystem is validated
+independently under randomized synthetic inputs. Table~\ref{tab:test_map}
+summarizes the test objectives, conditions, and expected invariant outcomes.
+
+\begin{table}[h]
+\centering
+\caption{Subsystem Tests for Unified Agent v31.0}
+\begin{tabular}{l l l}
+\hline
+Subsystem & Test Condition & Expected Invariant \\
+\hline
+Vision & Randomized input → Free energy > 0 & Predictive stability \\
+Memory & High gain → Low α & Memory persistence \\
+Policy & Dopamine ↑ → Choice bias ↑ & Goal modulation \\
+Body & Random gain → Stable torque output & Smooth actuation \\
+Heart & Energy deficit → HRV ↑ & Homeostatic correction \\
+Meta & Confidence ↑ → Gain ↑ & Precision scaling \\
+Environment & Action → Sensory feedback change & Closed loop consistency \\
+\hline
+\end{tabular}
+\end{table}
+
+% ==============================================================
+\section{Temporal and Multi-Agent Active Inference (v34–v36)}
+% ==============================================================
+
+\subsection{Rationale}
+
+Building upon the unified single-agent architecture (v31–v33),
+versions v34–v36 extend active inference into the temporal and social domains.
+Whereas previous models minimized instantaneous or short-term
+free energy within an individual,
+the new formulation introduces two key expansions:
+
+\begin{enumerate}
+\item \textbf{Temporal Active Inference:}  
+Agents predict not only current states but the trajectories of future states,
+minimizing the cumulative free energy across time.
+\item \textbf{Multi-Agent Coupling:}  
+Multiple agents share partially overlapping generative models,
+allowing reciprocal inference about each other’s beliefs,
+intentions, and actions.
+\end{enumerate}
+
+These extensions enable the modeling of collective behavior,
+empathy, competition, and cooperation through shared precision-weighted
+prediction errors.
+
+\subsection{Temporal Generative Process}
+
+Temporal active inference assumes a deep temporal generative model
+$p(o_{1:T}, s_{1:T}, \pi)$ that unfolds across $T$ time steps.
+The agent maintains beliefs over trajectories $\tilde{s} = (s_1, s_2, \dots, s_T)$
+and selects policies that minimize the \textit{expected cumulative free energy}:
+
+\begin{equation}
+G(\pi) = \sum_{t=1}^{T} 
+\mathbb{E}_{q(o_t, s_t|\pi)} 
+\big[ \underbrace{D_{\mathrm{KL}}(q(s_t|\pi) || p(s_t))}_{\text{epistemic value}}
+ - \underbrace{\ln p(o_t|C_t)}_{\text{extrinsic value}} \big].
+\end{equation}
+
+This formulation incorporates both the desire to reduce future uncertainty
+and the drive to realize preferred sensory outcomes.
+Temporal coherence is maintained through transition priors:
+
+\[
+p(s_t|s_{t-1}) = \mathcal{N}(f(s_{t-1}, a_{t-1}), \Sigma_t)
+\]
+
+that constrain plausible trajectories according to learned dynamics $f$.
+
+\subsection{Temporal Implementation}
+
+In v34, each agent maintains a bank of policy trajectories
+$\pi_i = \{a_{t:t+H}^i\}$ over a fixed horizon $H$.
+For each trajectory, expected free energy $G_i$ is computed and stored
+in a rolling buffer:
+
+\[
+G_i = \mathbb{E}_{t:t+H} [ F_t + \lambda F_{t+1} + \lambda^2 F_{t+2} + \dots ],
+\]
+where $\lambda \in [0,1]$ is a temporal discount parameter.
+
+The agent’s action selection probability is proportional to $\exp(-G_i)$,
+yielding a Boltzmann distribution over temporal policies.
+Policy persistence is achieved by a recurrent meta-field that
+stores the expected precision of each trajectory, 
+$\Pi_i = \exp(-\mathrm{Var}[G_i])$,
+which controls exploration vs. exploitation.
+
+\subsection{Multi-Agent Coupling}
+
+Version v35 introduces multiple agents $\mathcal{A} = \{A_1, A_2, \dots, A_N\}$,
+each minimizing its own free energy $F^{(n)}$ under partially shared latent causes.
+For any agent pair $(A_i, A_j)$, the coupling term is defined as:
+
+\begin{equation}
+F_{\text{social}}^{(i,j)} 
+= \eta \, \big\| \mathbb{E}_{q_i(s)}[s] - \mathbb{E}_{q_j(s)}[s] \big\|^2 ,
+\end{equation}
+
+where $\eta$ controls social precision (empathy gain).
+This term penalizes divergence between inferred beliefs about
+common latent states—such as shared goals, environmental affordances,
+or perceived intentions.
+
+Each agent thus optimizes:
+
+\[
+F_{\text{total}}^{(i)} = F^{(i)} + G^{(i)} + \sum_{j\neq i} F_{\text{social}}^{(i,j)} .
+\]
+
+This yields emergent cooperative, competitive, or alignment behaviors
+depending on $\eta$ and prior preferences $C^{(i)}$.
+
+\subsection{Collective Inference Loop}
+
+At runtime, agents exchange precision-weighted beliefs
+about shared latent causes via a communication field $C_t$:
+
+\begin{align}
+\dot{\mu}_i &= -\frac{\partial F^{(i)}}{\partial \mu_i}
+              - \eta \sum_{j \neq i} (\mu_i - \mu_j), \\
+\dot{a}_i   &= -\frac{\partial F^{(i)}}{\partial a_i}.
+\end{align}
+
+When $\eta$ is high, beliefs rapidly synchronize, yielding cooperation;
+when $\eta$ is low or asymmetric, competition or deception can emerge.
+This enables the simulation of social dynamics such as
+leadership, following, altruism, or rivalry under a single formal principle.
+
+\subsection{Meta-Precision and Collective Confidence}
+
+Version v36 adds a collective meta-precision variable $\Pi_{\mathrm{group}}$
+that tracks shared uncertainty across agents:
+
+\[
+\Pi_{\mathrm{group}} = \frac{1}{N} \sum_i \exp(-H[q_i(\pi)]),
+\]
+
+where $H[q_i(\pi)]$ is the entropy of each agent’s policy posterior.
+Group confidence modulates collective gain and
+determines whether agents synchronize or diversify their actions.
+This provides a formal account of collective confidence,
+crowd synchronization, and breakdown under ambiguity.
+
+\subsection{Implementation Summary}
+
+Table~\ref{tab:temporal_social_versions} summarizes the conceptual progression.
+
+\begin{table}[h]
+\centering
+\caption{Temporal and Social Extensions of Active Inference Agent}
+\begin{tabular}{l l l}
+\hline
+Version & Key Innovation & Functional Role \\
+\hline
+v34.0 & Temporal expected free energy & Future-oriented inference \\
+v35.0 & Multi-agent coupling term & Social alignment / empathy \\
+v36.0 & Group meta-precision & Collective confidence regulation \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Summary}
+
+The temporal and multi-agent extensions generalize the unified agent
+from an isolated predictive system to a distributed, temporally deep,
+and socially coupled network.
+Every process—anticipation, cooperation, competition, and
+confidence alignment—emerges as a corollary of minimizing
+expected free energy across agents and time.
+
+% ==============================================================
+\section{Physiological Active Inference (v37–v40)}
+% ==============================================================
+
+\subsection{Rationale}
+
+Versions v37–v40 extend the active inference framework to include
+autonomic and metabolic regulation.
+In this extension, the body is not a passive actuator but an
+integral part of the generative model:
+internal organs, heart rate, respiration, and glucose metabolism
+all participate in the same free-energy minimization process.
+This formulation allows physiological homeostasis and cognitive control
+to be expressed within a single variational principle.
+
+\subsection{Interoceptive Generative Model}
+
+Each agent maintains beliefs over internal physiological states
+$s^{\mathrm{int}} = \{\text{heart rate}, \text{oxygenation}, \text{energy balance}\}$,
+which evolve under stochastic dynamics:
+
+\begin{equation}
+p(s_t^{\mathrm{int}} | s_{t-1}^{\mathrm{int}}, a_t)
+ = \mathcal{N}( f_{\mathrm{body}}(s_{t-1}^{\mathrm{int}}, a_t), \Sigma_{\mathrm{int}} ).
+\end{equation}
+
+Interoceptive sensory signals $o_t^{\mathrm{int}}$ (e.g., baroreceptors,
+chemoreceptors, visceral afferents) are generated from these latent states:
+
+\[
+p(o_t^{\mathrm{int}}|s_t^{\mathrm{int}}) = \mathcal{N}( g_{\mathrm{body}}(s_t^{\mathrm{int}}), \Gamma_{\mathrm{int}} ).
+\]
+
+Prediction errors between observed and expected internal sensations drive
+autonomic adjustments (heart rate, vasoconstriction, respiratory depth)
+that minimize interoceptive free energy $F_i$.
+
+\subsection{Homeostatic Set-Points as Prior Preferences}
+
+Physiological stability is implemented as a prior preference distribution
+$p(o_t^{\mathrm{int}}|C_i)$ centered around desired set-points $C_i$
+(e.g., normal glucose, normoxia, 70–80 bpm).
+Deviations from these priors generate negative valence signals
+interpretable as discomfort, fatigue, or stress.
+
+\begin{equation}
+F_i = D_{\mathrm{KL}}(q(s_t^{\mathrm{int}})||p(s_t^{\mathrm{int}}))
+     - \ln p(o_t^{\mathrm{int}}|C_i).
+\end{equation}
+
+This allows metabolic and affective variables to be unified as
+prediction-error signals on internal priors.
+
+\subsection{Autonomic Policy and Gain Control}
+
+An autonomic policy field determines sympathetic vs.~parasympathetic
+drive according to the gradient of interoceptive free energy:
+
+\[
+\dot{a}_{\mathrm{aut}} = -\frac{\partial F_i}{\partial a_{\mathrm{aut}}}.
+\]
+
+The resulting control signals modulate heart rate ($\mathrm{HR}$),
+breathing amplitude ($\mathrm{BR}$), and vascular tone ($\mathrm{VT}$)
+through efferent pathways.
+The same dopaminergic precision mechanism used in cognitive levels
+now regulates autonomic gain $\gamma_{\mathrm{aut}}$:
+
+\[
+\gamma_{\mathrm{aut}} = \gamma_0 \big( 1 + \kappa_{\mathrm{dopa}} (dopa - 0.5) \big).
+\]
+
+Thus, heightened dopaminergic activity increases metabolic readiness
+and prolongs working-memory retention, linking motivation with energy supply.
+
+\subsection{Energy Metabolism and Predictive Efficiency}
+
+Version v38 introduces a metabolic field that tracks available energy $E_t$
+and predicts its consumption under different policies $\pi$:
+
+\[
+E_{t+1} = E_t - \rho_{\mathrm{work}} a_t^2 + \rho_{\mathrm{rec}} s_t^{\mathrm{int}},
+\]
+where $\rho_{\mathrm{work}}$ and $\rho_{\mathrm{rec}}$ are expenditure
+and recovery coefficients.
+
+Energy becomes a precision variable: low energy increases sensory noise
+and reduces policy confidence, producing fatigue-like behavior.
+The agent thus learns to minimize a composite objective:
+
+\[
+F_{\mathrm{phys}} = F_i + \lambda_E \, |E_t - E_0|^2,
+\]
+which couples energetic balance with interoceptive stability.
+
+\subsection{Heart–Brain Synchronization (v39)}
+
+Cardiac oscillations are treated as a low-frequency rhythm
+modulating cortical precision weights.
+The phase $\phi_{\mathrm{HR}}(t)$ of the cardiac cycle entrains
+slow oscillations in cortical gain parameters:
+
+\[
+\Pi_{\mathrm{ctx}}(t) = \Pi_0 \big( 1 + \epsilon \cos \phi_{\mathrm{HR}}(t) \big),
+\]
+producing cyclical windows of increased confidence and attention.
+This mechanism accounts for physiological entrainment of cognition
+and periodic fluctuations in predictive precision.
+
+\subsection{Interoceptive–Cognitive Coupling (v40)}
+
+In v40, the full agent integrates cognitive, emotional, and bodily layers
+through reciprocal precision exchange:
+
+\begin{align}
+\dot{\mu}_{\mathrm{cog}} &= -\frac{\partial F}{\partial \mu_{\mathrm{cog}}}
+                           + \omega \, (\mu_{\mathrm{int}} - \mu_{\mathrm{cog}}), \\
+\dot{\mu}_{\mathrm{int}} &= -\frac{\partial F_i}{\partial \mu_{\mathrm{int}}}
+                           + \omega \, (\mu_{\mathrm{cog}} - \mu_{\mathrm{int}}).
+\end{align}
+
+The coupling term $\omega$ controls the degree of emotional embodiment:
+high $\omega$ produces strong bodily resonance (affective reactivity),
+whereas low $\omega$ yields dissociation or purely cognitive inference.
+This establishes a formal link between interoception, emotion,
+and metacognition.
+
+\subsection{Implementation Summary}
+
+\begin{table}[h]
+\centering
+\caption{Physiological Extensions of Active Inference Agent}
+\begin{tabular}{l l l}
+\hline
+Version & Key Innovation & Functional Role \\
+\hline
+v37.0 & Interoceptive generative model & Autonomic homeostasis \\
+v38.0 & Energy metabolism field & Fatigue and motivational control \\
+v39.0 & Heart–brain synchronization & Precision rhythm modulation \\
+v40.0 & Interoceptive–cognitive coupling & Emotion and embodiment \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Summary}
+
+The physiological active inference framework unifies metabolic regulation,
+affective response, and cognitive control as aspects of a single
+variational process.
+Energy, heart rate, and internal states become precision variables
+that dynamically shape confidence, motivation, and awareness.
+This extension provides a principled route for modeling
+emotion, stress, and bodily awareness within predictive coding networks.
+
+% ==============================================================
+\section{Social and Emotional Active Inference (v41–v45)}
+% ==============================================================
+
+\subsection{Rationale}
+
+Versions v41–v45 expand the unified active inference agent into
+the social–emotional domain.
+Whereas v37–v40 linked cognition to internal physiology,
+the new models describe how agents infer and regulate
+\textit{other minds}—their intentions, beliefs, and emotions—
+through shared predictive structures.
+Social emotions such as empathy, trust, guilt, or envy
+emerge as the natural consequence of minimizing
+\textit{interpersonal free energy}.
+
+\subsection{Interpersonal Generative Model}
+
+Each agent $A_i$ maintains beliefs not only about its own latent states
+$s^{(i)}$, but also about another agent’s inferred states $\hat{s}^{(j)}$.
+The joint generative model factorizes as:
+
+\[
+p(o^{(i)}, s^{(i)}, \hat{s}^{(j)}) =
+p(o^{(i)}|s^{(i)}) \,
+p(s^{(i)}|\hat{s}^{(j)}) \,
+p(\hat{s}^{(j)}),
+\]
+where $p(s^{(i)}|\hat{s}^{(j)})$ encodes
+the agent’s \emph{social prior}—its beliefs about
+how the other’s intentions affect its own state.
+This coupling term allows agents to infer hidden causes behind
+another’s actions, forming a minimal theory of mind.
+
+\subsection{Interpersonal Free Energy}
+
+The total free energy of agent $A_i$ is given by:
+
+\[
+F^{(i)}_{\mathrm{social}} =
+F^{(i)}_{\mathrm{self}}
++ \xi \, \mathbb{E}_{q(\hat{s}^{(j)})}
+\big[\| \hat{s}^{(j)} - s^{(i)} \|^2\big],
+\]
+where $\xi$ represents the precision of social coupling
+(empathy gain).
+Minimizing $F^{(i)}_{\mathrm{social}}$
+aligns internal states across agents,
+producing emotional resonance or empathy.
+
+When $\xi$ is high, agents synchronize their affective trajectories;
+when $\xi$ is low or asymmetric, misalignment occurs,
+producing emotional isolation or misunderstanding.
+
+\subsection{Emotional Valence and Precision}
+
+Version v42 formalizes emotional valence as the sign of precision-weighted
+prediction error in the interoceptive–social field:
+
+\[
+v^{(i)}_t = - \text{sgn}\!\big( \frac{\partial F^{(i)}_{\mathrm{social}}}{\partial \xi} \big),
+\]
+such that positive valence corresponds to successful alignment,
+and negative valence reflects unexpected social feedback.
+This unifies emotional appraisal with the same precision-based logic
+that governs dopaminergic and interoceptive regulation.
+
+\subsection{Empathy and Mirror Inference}
+
+Version v43 introduces a mirror-inference field that reconstructs
+another agent’s internal states from observed actions:
+
+\[
+\hat{s}^{(j)}_t = f_{\mathrm{mirror}}(o^{(j)}_t, a^{(j)}_t)
+= W_{\mathrm{mirror}} \, [o^{(j)}_t, a^{(j)}_t],
+\]
+analogous to mirror-neuron processing.
+Agents thus maintain internal simulations of others’ affective dynamics,
+allowing prediction of cooperative or antagonistic intentions.
+
+\subsection{Trust and Deception}
+
+In v44, agents infer the reliability of another’s communication channel
+via a \textit{trust precision} variable $\Pi_{\mathrm{trust}}$:
+
+\[
+\Pi_{\mathrm{trust}}^{(i,j)} =
+\sigma \!\left(- D_{\mathrm{KL}}(q_i(s)|q_j(s)) \right),
+\]
+where $\sigma(\cdot)$ is the logistic function.
+High divergence between beliefs reduces trust precision,
+increasing defensive or competitive policy selection.
+This mechanism captures both social learning and deception detection
+as precision-weighting processes.
+
+\subsection{Collective Emotion and Group Synchrony (v45)}
+
+Multiple socially coupled agents form a group-level
+affective field defined by the mean emotional energy:
+
+\[
+E_{\mathrm{group}} = \frac{1}{N}
+\sum_{i=1}^{N} v^{(i)}_t \, \Pi_{\mathrm{trust}}^{(i)}.
+\]
+
+The temporal derivative $\dot{E}_{\mathrm{group}}$
+reflects the collective affective momentum of the network.
+When group precision is high and interoceptive priors are aligned,
+collective synchrony (e.g., shared excitement or distress) emerges.
+This provides a formal account of social contagion,
+herd behavior, and group-level emotional coherence.
+
+\subsection{Hierarchical Summary}
+
+\begin{table}[h]
+\centering
+\caption{Social–Emotional Extensions of Active Inference Agent}
+\begin{tabular}{l l l}
+\hline
+Version & Key Innovation & Functional Role \\
+\hline
+v41.0 & Interpersonal generative model & Mutual belief inference \\
+v42.0 & Precision-based valence & Affective alignment \\
+v43.0 & Mirror inference field & Empathy and action understanding \\
+v44.0 & Trust precision variable & Reliability and deception inference \\
+v45.0 & Group emotional field & Collective synchrony \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Summary}
+
+The social–emotional expansion integrates interpersonal inference,
+empathy, and collective affect into the unified variational framework.
+Every interaction—alignment, competition, or misunderstanding—
+emerges from reciprocal precision modulation across agents.
+Thus, emotions are not added variables but intrinsic signals of
+belief synchronization within a shared generative model.
+
+
+% ==============================================================
+\section{Cultural and Semantic Active Inference (v46–v50)}
+% ==============================================================
+
+\subsection{Rationale}
+
+Versions v46–v50 elevate the active inference architecture
+from social coordination (v41–v45) to shared symbolic
+and cultural inference.
+Here, groups of agents communicate and align through
+language-like codes, shared narratives, and cultural priors.
+Culture is treated as a distributed generative model that
+minimizes collective uncertainty over meaning, norms, and goals.
+This framework formalizes how semantic alignment, convention,
+and ideology emerge as stable attractors in a network
+of predictive agents.
+
+\subsection{Semantic Generative Model}
+
+Each agent $A_i$ encodes not only sensorimotor and emotional states
+but also \emph{semantic variables} $s^{(\mathrm{sem})}$ that link
+concepts, symbols, and meanings:
+
+\[
+p(o^{(i)}, s^{(i)}, s^{(\mathrm{sem})}) =
+p(o^{(i)}|s^{(i)}) \,
+p(s^{(i)}|s^{(\mathrm{sem})}) \,
+p(s^{(\mathrm{sem})}).
+\]
+
+The semantic layer provides abstract priors $p(s^{(\mathrm{sem})})$
+representing linguistic or cultural knowledge.
+Language thus acts as a high-level generative model
+that constrains perception, emotion, and social action.
+
+\subsection{Cultural Priors and Normative Attractors}
+
+In v47, each community of agents $\mathcal{C} = \{A_1, A_2, \dots\}$
+shares a set of cultural priors $C_{\mathrm{cult}}$
+encoding collective expectations about behavior and value.
+These priors act as attractors in the belief space:
+
+\[
+p(s^{(\mathrm{sem})}|C_{\mathrm{cult}}) \propto
+\exp\!\big(-\beta_{\mathrm{cult}} \|s^{(\mathrm{sem})} - \bar{s}_{\mathrm{group}}\|^2\big),
+\]
+where $\beta_{\mathrm{cult}}$ denotes cultural precision,
+and $\bar{s}_{\mathrm{group}}$ is the group-level semantic centroid.
+Cultural conformity and deviation (innovation) are then
+two ends of a precision-controlled trade-off between stability and novelty.
+
+\subsection{Language as Precision Transmission}
+
+Version v48 introduces linguistic communication as precision exchange.
+A message $m_t$ conveys the sender’s posterior mean
+$\mathbb{E}[s^{(\mathrm{sem})}]$ weighted by confidence $\Pi_{\mathrm{msg}}$:
+
+\[
+m_t = \Pi_{\mathrm{msg}} \, \mathbb{E}_{q(s^{(\mathrm{sem})})}[s^{(\mathrm{sem})}],
+\quad
+\Pi_{\mathrm{msg}} = \frac{1}{1 + H[q(s^{(\mathrm{sem})})]}.
+\]
+
+Upon receipt, the listener updates its posterior according to
+precision-weighted belief fusion:
+
+\[
+q_{\mathrm{new}}(s) \propto
+q_{\mathrm{old}}(s)^{1-\Pi_{\mathrm{msg}}}
+p(m_t|s)^{\Pi_{\mathrm{msg}}}.
+\]
+
+This formulation explains why clarity and confidence in communication
+depend on both epistemic precision and shared priors.
+
+\subsection{Norm Inference and Cultural Prediction Error (v49)}
+
+Each agent tracks cultural prediction error as the discrepancy between
+expected and observed social meaning:
+
+\[
+\varepsilon_{\mathrm{cult}} =
+\big\| o^{(\mathrm{soc})}_t - g_{\mathrm{cult}}(s^{(\mathrm{sem})}_t) \big\|^2.
+\]
+
+A high $\varepsilon_{\mathrm{cult}}$ indicates norm violation or innovation,
+which propagates as increased epistemic drive
+and social uncertainty.
+Agents with higher cognitive flexibility reduce $\varepsilon_{\mathrm{cult}}$
+faster, modeling cultural adaptation and learning.
+
+\subsection{Semantic Synchrony and Collective Meaning (v50)}
+
+At the population level, shared meaning emerges as
+synchronization in the semantic manifold:
+
+\[
+S_{\mathrm{group}} = \frac{1}{N}
+\sum_i \mathbb{E}_{q_i(s^{(\mathrm{sem})})}[s^{(\mathrm{sem})}],
+\quad
+H_{\mathrm{group}} = -\sum_i H[q_i(s^{(\mathrm{sem})})].
+\]
+
+A high $H_{\mathrm{group}}$ corresponds to cultural diversity,
+whereas low entropy (strong alignment) reflects consolidation
+of a collective worldview.
+Temporal evolution of $S_{\mathrm{group}}$
+models cultural drift, convergence, or polarization
+as emergent phenomena under variational optimization.
+
+\subsection{Hierarchical Summary}
+
+\begin{table}[h]
+\centering
+\caption{Cultural–Semantic Extensions of Active Inference Agent}
+\begin{tabular}{l l l}
+\hline
+Version & Key Innovation & Functional Role \\
+\hline
+v46.0 & Semantic generative model & Conceptual meaning inference \\
+v47.0 & Cultural priors & Normative stabilization \\
+v48.0 & Language as precision transmission & Communication and belief fusion \\
+v49.0 & Cultural prediction error & Norm learning and innovation \\
+v50.0 & Semantic synchrony & Collective meaning formation \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Summary}
+
+The cultural–semantic expansion generalizes active inference
+from interpersonal interaction to symbolic and collective cognition.
+Language, norms, and shared worldviews emerge as
+high-level priors that constrain perception, emotion, and behavior.
+Under this framework, cultural evolution itself
+is an optimization of free energy across minds:
+minimizing uncertainty about what is true, valued, and shared.
+
+
+% ==============================================================
+\section{Metacognitive and Reflective Active Inference (v51–v55)}
+% ==============================================================
+
+\subsection{Rationale}
+
+Versions v51–v55 introduce a meta-level of inference:
+agents not only infer external and internal states,
+but also maintain beliefs about the \emph{reliability} of their own beliefs.
+This “inference about inference” provides a formal mechanism for
+self-monitoring, confidence evaluation, and reflective awareness.
+Metacognitive processes emerge when an agent models the
+uncertainty and consequences of its own epistemic actions.
+
+\subsection{Metacognitive Generative Model}
+
+The agent now includes an additional latent variable
+$s^{(\mathrm{meta})}$ representing beliefs about belief quality.
+The extended hierarchical model is:
+
+\[
+p(o, s^{(1)}, s^{(2)}, s^{(\mathrm{meta})})
+= p(o|s^{(1)}) \, p(s^{(1)}|s^{(2)}) \, p(s^{(2)}|s^{(\mathrm{meta})}) \, p(s^{(\mathrm{meta})}).
+\]
+
+Here $s^{(1)}$ and $s^{(2)}$ correspond to sensory and cognitive states,
+while $s^{(\mathrm{meta})}$ generates predictions about
+the reliability, precision, and confidence of lower levels.
+This model explicitly encodes epistemic uncertainty and
+allows the system to adapt its precision hierarchy.
+
+\subsection{Confidence as Meta-Precision}
+
+Version v51 defines confidence as a meta-precision parameter
+$\Pi_{\mathrm{meta}}$, representing the expected reliability of
+the agent’s own posterior beliefs:
+
+\[
+\Pi_{\mathrm{meta}} = \sigma\!\big( -H[q(s^{(2)})] \big),
+\]
+where $H[q]$ is the entropy of the second-level posterior.
+High entropy (uncertainty) lowers meta-precision,
+signaling doubt or hesitation,
+while low entropy increases confidence and decisiveness.
+This mechanism unifies metacognitive confidence with
+the precision control already used at perceptual and social levels.
+
+\subsection{Reflective Update and Meta-Prediction Error (v52)}
+
+Agents now compute a meta-prediction error,
+defined as the discrepancy between predicted and realized inference quality:
+
+\[
+\varepsilon_{\mathrm{meta}} =
+|\widehat{\Pi}_{\mathrm{meta}} - \Pi_{\mathrm{meta}}|.
+\]
+Large meta-errors trigger introspective updates,
+modifying the parameters of the internal model
+(e.g., learning rate, attention gain, or memory decay).
+This provides a formal definition of reflection:
+a second-order correction to the inference process itself.
+
+\subsection{Counterfactual and Alternative Model Simulation (v53)}
+
+Version v53 introduces counterfactual simulation:
+agents can generate alternative generative models
+$\tilde{M}_k$ and evaluate their free energy
+without physically acting:
+
+\[
+\tilde{F}_k = \mathbb{E}_{q_k}[\ln q_k - \ln p_k(o, s)].
+\]
+The policy posterior becomes a mixture over real and imagined models,
+enabling mental simulation, planning, and creative reasoning.
+This parallels human reflection and internal deliberation:
+testing beliefs against simulated possibilities.
+
+\subsection{Meta-Learning and Precision Adaptation (v54)}
+
+The agent’s learning rates $\alpha_t$ and precision gains $\Pi_t$
+are now subject to meta-level adaptation:
+
+\[
+\alpha_{t+1} = \alpha_t + \eta_\alpha (\varepsilon_{\mathrm{meta}} - \bar{\varepsilon}),
+\qquad
+\Pi_{t+1} = \Pi_t + \eta_\Pi (\Pi_{\mathrm{meta}} - \bar{\Pi}),
+\]
+where $\eta_\alpha$ and $\eta_\Pi$ are meta-learning rates.
+This allows the system to tune its own inference parameters
+based on historical performance—an intrinsic form of self-optimization.
+
+\subsection{Self-Model and Introspective Loop (v55)}
+
+In v55, the agent explicitly models itself as part of its generative world.
+The self-model $M_{\mathrm{self}}$ predicts the consequences
+of the agent’s own actions and thoughts:
+
+\[
+p(o, a | M_{\mathrm{self}}) = p(o|a, s) \, p(a|M_{\mathrm{self}}).
+\]
+Discrepancies between predicted and experienced internal states
+produce introspective free energy,
+which drives reconfiguration of the self-model.
+
+This introduces recursive self-awareness:
+the agent not only acts but also represents itself as acting—
+a necessary precondition for metacognition, agency, and identity.
+
+\subsection{Hierarchical Summary}
+
+\begin{table}[h]
+\centering
+\caption{Metacognitive Extensions of Active Inference Agent}
+\begin{tabular}{l l l}
+\hline
+Version & Key Innovation & Functional Role \\
+\hline
+v51.0 & Meta-precision variable & Confidence monitoring \\
+v52.0 & Meta-prediction error & Reflective correction \\
+v53.0 & Counterfactual simulation & Planning and creativity \\
+v54.0 & Meta-learning of parameters & Self-optimization \\
+v55.0 & Self-model and introspection & Identity and agency \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Summary}
+
+The metacognitive layer transforms the agent
+from an adaptive inference system into a self-reflective one.
+It monitors uncertainty, simulates alternatives,
+and adapts its own inference parameters.
+This extension provides a principled account of introspection,
+deliberation, and self-awareness as hierarchical free-energy minimization
+applied recursively to the process of inference itself.
+
+
+\section{Acknowledgments}
+
+Additional information can be given in the template, such as to not include funder information in the acknowledgments section.
+
+\nocite{*} % This command displays all refs in the bib file. PLEASE DELETE IT BEFORE YOU SUBMIT YOUR MANUSCRIPT!
+\bibliography{references}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% APPENDICES
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\appendix
+
+\end{document}
+
+
+

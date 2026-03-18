@@ -7,14 +7,14 @@
 - If Dropbox sync invalidates .so code signatures, recreate venv: `rm -rf .venv && python3.12 -m venv .venv && .venv/bin/pip install torch numpy matplotlib gymnasium`
 
 ## Architecture
-- `zebra_v60/` — main package (v60 zebrafish brain simulation)
-- `zebra_v60/brain/` — 25+ neural modules (SNN, optic tectum, dopamine, BG, etc.)
-- `zebra_v60/gym_env/` — Gymnasium environment + BrainAgent bridge
-- `zebra_v60/world/` — WorldEnv (ray-casting world) + renderer
-- `zebra_v60/tests/` — step-by-step integration tests (step1 through step30)
-- `zebra_v60/viz/` — neural monitor visualization
-- `zebra_v60/weights/` — pretrained weights (genomic, hebbian, classifier)
-- `zebra_v60/paper_v60.tex` — 58-page technical report (Steps 1-29)
+- `zebrav1/` — main package (v1 zebrafish brain simulation)
+- `zebrav1/brain/` — 25+ neural modules (SNN, optic tectum, dopamine, BG, etc.)
+- `zebrav1/gym_env/` — Gymnasium environment + BrainAgent bridge
+- `zebrav1/world/` — WorldEnv (ray-casting world) + renderer
+- `zebrav1/tests/` — step-by-step integration tests (step1 through step30)
+- `zebrav1/viz/` — neural monitor visualization
+- `zebrav1/weights/` — pretrained weights (genomic, hebbian, classifier)
+- `zebrav1/paper.tex` — 58-page technical report (Steps 1-29)
 
 ## SNN Architecture (Steps 25-26)
 - **PredictiveTwoComp**: two-compartment neuron (soma V_s + apical V_a), PE = V_a - V_s
@@ -28,10 +28,10 @@
 - Architecture: 804→128 ReLU→5 softmax, class-weighted loss (3x environment)
 
 ## Training Pipeline (always pass goal_probs)
-1. Step 8: genomic (70% FORAGE/20% FLEE/10% EXPLORE) → genomic_v60.pt
-2. Step 10: Hebbian → genomic_hebbian_v60.pt
-3. Step 11: classifier → classifier_v60.pt
-4. Step 26: W_FB (frozen W_FF, _skip_ff_update=True) → classifier_wfb_v60.pt
+1. Step 8: genomic (70% FORAGE/20% FLEE/10% EXPLORE) → genomic.pt
+2. Step 10: Hebbian → genomic_hebbian.pt
+3. Step 11: classifier → classifier.pt
+4. Step 26: W_FB (frozen W_FF, _skip_ff_update=True) → classifier_wfb.pt
 
 ## Motor Primitives (Step 28)
 - Bout types: IDLE, ROUTINE_FWD, BURST, ESCAPE, FLEE_BURST, CAPTURE

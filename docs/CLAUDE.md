@@ -7,20 +7,20 @@
 - Setup: `python -m venv .venv && .venv/bin/pip install torch numpy matplotlib gymnasium`
 
 ## Architecture
-- `zebra_v60/` — main package (v60 zebrafish brain simulation)
-- `zebra_v60/brain/` — 25 neural modules (SNN, optic tectum, dopamine, BG, etc.)
-- `zebra_v60/gym_env/` — Gymnasium environment + BrainAgent bridge
-- `zebra_v60/world/` — WorldEnv (ray-casting world) + renderer
-- `zebra_v60/tests/` — step-by-step integration tests (step1 through step29)
-- `zebra_v60/viz/` — neural monitor visualization
-- `zebra_v60/weights/` — pretrained weights (genomic, hebbian, classifier)
+- `zebrav1/` — main package (v1 zebrafish brain simulation)
+- `zebrav1/brain/` — 25 neural modules (SNN, optic tectum, dopamine, BG, etc.)
+- `zebrav1/gym_env/` — Gymnasium environment + BrainAgent bridge
+- `zebrav1/world/` — WorldEnv (ray-casting world) + renderer
+- `zebrav1/tests/` — step-by-step integration tests (step1 through step29)
+- `zebrav1/viz/` — neural monitor visualization
+- `zebrav1/weights/` — pretrained weights (genomic, hebbian, classifier)
 
 ## Key Files
 - `brain_agent.py` — main brain pipeline (~1500 lines), orchestrates all modules
-- `zebrafish_snn_v60.py` — SNN model with PredictiveTwoComp neurons + AttentionModulator
+- `zebrafish_snn.py` — SNN model with PredictiveTwoComp neurons + AttentionModulator
 - `zebrafish_env.py` — Gymnasium env (prey-predator arena with rocks, food, predator)
-- `hebbian_v60.py` — RPE-gated Hebbian + PE-driven anti-Hebbian feedback learning
-- `retina_sampling_v60.py` — binocular retinal sampling (800 per eye: 400 intensity + 400 type)
+- `hebbian.py` — RPE-gated Hebbian + PE-driven anti-Hebbian feedback learning
+- `retina_sampling.py` — binocular retinal sampling (800 per eye: 400 intensity + 400 type)
 
 ## SNN Architecture
 - **PredictiveTwoComp**: two-compartment neuron (soma V_s + apical V_a), PE = V_a - V_s
@@ -29,7 +29,7 @@
 - Layers: OT_L/OT_R (frozen TwoComp) → OT_F → PT_L → PC_per → PC_int → mot/eye/DA
 - Weight naming: W_FF (feedforward), W_FB (feedback) — NOT old W or weight/bias
 
-## Type Encoding (retina_sampling_v60.py)
+## Type Encoding (retina_sampling.py)
 - NONE=0.0, FOOD=1.0, ENEMY=0.5, COLLEAGUE=0.25, BOUNDARY=0.12, OBSTACLE=0.75, PREY=0.38
 - Detection tolerance: `|type - val| < 0.1` (boundary uses 0.05)
 
@@ -40,10 +40,10 @@
 - Class-weighted loss (3x for environment), n_integration=8 for environment class
 
 ## Training Pipeline
-1. **Step 8** (genomic pretraining): 70% FORAGE + 20% FLEE + 10% EXPLORE → `weights/genomic_v60.pt`
-2. **Step 10** (Hebbian fine-tuning): online RPE-gated plasticity → `weights/genomic_hebbian_v60.pt`
-3. **Step 11** (classifier): goal-matched context, obstacle scenes → `weights/classifier_v60.pt`
-4. **Step 26** (W_FB training): online layer-wise PE minimization, frozen W_FF → `weights/classifier_wfb_v60.pt`
+1. **Step 8** (genomic pretraining): 70% FORAGE + 20% FLEE + 10% EXPLORE → `weights/genomic.pt`
+2. **Step 10** (Hebbian fine-tuning): online RPE-gated plasticity → `weights/genomic_hebbian.pt`
+3. **Step 11** (classifier): goal-matched context, obstacle scenes → `weights/classifier.pt`
+4. **Step 26** (W_FB training): online layer-wise PE minimization, frozen W_FF → `weights/classifier_wfb.pt`
 - All training steps MUST pass `goal_probs` to `model.forward()` — without it, AttentionModulator trains on zeros
 - Step 26 MUST freeze W_FF (`_skip_ff_update=True`) and classifier to prevent representational drift
 
@@ -67,7 +67,7 @@
 - Urgent stimuli + starvation interrupt IBI immediately
 
 ## Binocular Depth + Predator Speed
-- `compute_binocular_depth()` in retina_sampling_v60.py
+- `compute_binocular_depth()` in retina_sampling.py
 - Mono intensity + stereo overlap → per-entity depth estimate
 - Predator speed from binocular depth temporal changes → TTC improvement
 - Looming detector: l/v ratio < 10 triggers Mauthner C-start
@@ -82,7 +82,7 @@
 - net_value = density + gain + urgency + proximity² - distance - risk - occlusion
 - Nearest food in highest-value patch pursued first
 
-## Social Learning (shoaling_v60.py)
+## Social Learning (shoaling.py)
 - observe_social_cues(): infer danger/food from conspecific behavior
 - social_alarm: fast-moving neighbours → boost p_enemy (flee signal)
 - social_food_bearing: slow neighbours clustered → food patch direction
@@ -108,7 +108,7 @@
 - **Physics rebound**: heading deflection gain 0.7 on collision
 - **Foraging override**: preserved for moderate coverage (<70%), removed at dense walls
 
-## Bayesian Survival Trade-off (goal_policy_v60.py)
+## Bayesian Survival Trade-off (goal_policy.py)
 - `starvation_risk = max(0, (0.50 - energy_ratio) / 0.50)` modulates all 4 goals
 - FORAGE urgency increases, FLEE/EXPLORE/SOCIAL become costly when starving
 - When both predator + starvation active: Bayesian model comparison via EFE softmax
@@ -118,17 +118,17 @@
 ## Running
 ```bash
 # Full demo
-.venv/bin/python -m zebra_v60.gym_env.demo --brain --render --monitor --record --sound --steps 500
+.venv/bin/python -m zebrav1.gym_env.demo --brain --render --monitor --record --sound --steps 500
 
 # Evaluation
-.venv/bin/python -m zebra_v60.tests.step19_full_evaluation
+.venv/bin/python -m zebrav1.tests.step19_full_evaluation
 
 # Training (in order)
-.venv/bin/python -m zebra_v60.tests.step8_genomic_pretraining
-.venv/bin/python -m zebra_v60.tests.step10_hebbian_finetuning
-.venv/bin/python -m zebra_v60.tests.step11_object_classification
-.venv/bin/python -m zebra_v60.tests.step26_wfb_pe_training
+.venv/bin/python -m zebrav1.tests.step8_genomic_pretraining
+.venv/bin/python -m zebrav1.tests.step10_hebbian_finetuning
+.venv/bin/python -m zebrav1.tests.step11_object_classification
+.venv/bin/python -m zebrav1.tests.step26_wfb_pe_training
 ```
 
 ## Branches
-- `master` — working v60 with steps 1-30 (PC, AIF, Bayesian brain, motor primitives, social learning, curriculum)
+- `master` — working v1 with steps 1-30 (PC, AIF, Bayesian brain, motor primitives, social learning, curriculum)
