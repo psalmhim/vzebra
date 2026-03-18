@@ -62,7 +62,7 @@ class NeuralMonitor:
     """
 
     WIDTH = 500
-    HEIGHT = 880
+    HEIGHT = 920
     BG_COLOR = (15, 15, 25)
     LABEL_COLOR = (200, 200, 200)
     GRID_COLOR = (40, 40, 55)
@@ -514,6 +514,104 @@ class NeuralMonitor:
             bc = min(255, int(100 + 155 * (threat_boost - 1.0) / 2.0))
             self._label(f"BOOST x{threat_boost:.1f}", 400, y6,
                         color=(bc, 50, 50), font=self.font_med)
+
+        # ── Row 7: Steps 37-41 Sensorimotor Extensions (y: 740-870) ──
+        y7 = 740
+        self._label("SENSORIMOTOR EXTENSIONS", 6, y7 - 12,
+                     font=self.font_med)
+
+        # Vestibular (Step 37): balance meter
+        vest = diag.get("vestibular", {})
+        balance = vest.get("balance", 1.0)
+        pitch = vest.get("pitch", 0.0)
+        bal_color = (50, 200, 50) if balance > 0.8 else (220, 150, 50)
+        self._bar(6, y7, 90, 12, balance, 1.0, bal_color, "Balance")
+        self._bar(6, y7 + 16, 90, 12, pitch, 0.5, (100, 150, 220), "Pitch")
+
+        # Spinal CPG (Step 38): L/R oscillation
+        cpg = diag.get("spinal_cpg", {})
+        cpg_L = cpg.get("v_L", 0.0)
+        cpg_R = cpg.get("v_R", 0.0)
+        phase = cpg.get("phase", 0.0)
+        self._bar(110, y7, 70, 12, cpg_L, 1.0, (100, 220, 100), "CPG L")
+        self._bar(110, y7 + 16, 70, 12, cpg_R, 1.0, (100, 220, 100), "CPG R")
+        self._label(f"ph:{phase:.2f}", 110, y7 + 32, color=(150, 200, 150))
+
+        # Color vision (Step 39): 4-channel bars
+        cv = diag.get("color_vision", {})
+        cv_names = ["UV", "B", "G", "R"]
+        cv_colors = [(128, 0, 255), (50, 100, 255), (50, 200, 50), (220, 50, 50)]
+        cv_keys = ["mean_uv", "mean_blue", "mean_green", "mean_red"]
+        for i, (n, c, k) in enumerate(zip(cv_names, cv_colors, cv_keys)):
+            v = cv.get(k, 0.0)
+            self._bar(220 + i * 50, y7, 40, 12, v, 0.5, c, n)
+
+        # Circadian (Step 40): phase dial
+        circ = diag.get("circadian", {})
+        c_phase = circ.get("phase", 0.0)
+        import math as _m
+        cx_c, cy_c = 430, y7 + 15
+        r_c = 14
+        pygame.draw.circle(self.surface, (40, 40, 60), (cx_c, cy_c), r_c)
+        # Day half (yellow), night half (blue)
+        pygame.draw.arc(self.surface, (180, 180, 50),
+                        (cx_c - r_c, cy_c - r_c, 2 * r_c, 2 * r_c),
+                        _m.pi / 2, 3 * _m.pi / 2, 2)
+        pygame.draw.arc(self.surface, (40, 60, 120),
+                        (cx_c - r_c, cy_c - r_c, 2 * r_c, 2 * r_c),
+                        -_m.pi / 2, _m.pi / 2, 2)
+        # Hand
+        hx = cx_c + int(r_c * 0.8 * _m.cos(2 * _m.pi * c_phase - _m.pi / 2))
+        hy = cy_c + int(r_c * 0.8 * _m.sin(2 * _m.pi * c_phase - _m.pi / 2))
+        pygame.draw.line(self.surface, (255, 255, 200),
+                         (cx_c, cy_c), (hx, hy), 2)
+        self._label("Circ", 450, y7, color=(180, 180, 100))
+
+        # Proprioception (Step 41): speed PE + collision
+        prop = diag.get("proprioception", {})
+        spd_pe = prop.get("speed_pe", 0.0)
+        collision = prop.get("collision", 0.0)
+        effort = prop.get("effort", 0.0)
+        self._bar(220, y7 + 18, 100, 12, spd_pe, 0.5,
+                  (200, 100, 255), "Spd PE")
+        self._bar(330, y7 + 18, 80, 12, effort, 1.0,
+                  (255, 200, 100), "Effort")
+        if collision > 0.1:
+            self._label("COLLISION!", 420, y7 + 18,
+                         color=(255, 50, 50), font=self.font_med)
+
+        # Lateral line (Step 32)
+        ll = diag.get("lateral_line", {})
+        rear_wake = ll.get("rear_wake_intensity", 0.0)
+        total_flow = ll.get("total_flow", 0.0)
+        self._bar(6, y7 + 50, 100, 12, rear_wake, 5.0,
+                  (50, 200, 200), "LL rear")
+        self._bar(120, y7 + 50, 100, 12, total_flow, 20.0,
+                  (50, 200, 200), "LL total")
+
+        # Olfaction (Step 35)
+        olf = diag.get("olfaction", {})
+        food_odour = olf.get("total_food_odour", 0.0)
+        alarm = olf.get("total_alarm", 0.0)
+        self._bar(240, y7 + 50, 90, 12, food_odour, 5.0,
+                  (50, 200, 50), "Smell")
+        self._bar(340, y7 + 50, 80, 12, alarm, 2.0,
+                  (220, 50, 50), "Alarm")
+
+        # Habenula (Step 36)
+        hab = diag.get("habenula", {})
+        helpless = hab.get("helplessness", 0.0)
+        self._bar(430, y7 + 50, 60, 12, helpless, 1.0,
+                  (180, 50, 180), "Help")
+
+        # Cerebellum (Step 33)
+        cb = diag.get("cerebellum", {})
+        cb_pe = cb.get("prediction_error", 0.0)
+        self._bar(6, y7 + 68, 100, 12, min(cb_pe, 5.0), 5.0,
+                  (255, 180, 50), "CB PE")
+        cb_turn = cb.get("turn_correction", 0.0)
+        self._bar(120, y7 + 68, 100, 12, cb_turn, 0.1,
+                  (255, 180, 50), "CB trn")
 
         # Frame counter
         self._label(f"frame {self._frame}", W - 80, self.HEIGHT - 16,

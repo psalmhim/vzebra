@@ -2319,6 +2319,18 @@ class BrainAgent:
                 "inferred_pred_dist_px": pred_dist_px,
             }
 
+        # Pass render state to env for visual effects (Steps 37-41)
+        if self.spinal_cpg is not None:
+            env._cpg_render_phase = self.spinal_cpg._phase
+        if self.circadian is not None:
+            circ_mod = self.circadian.step()
+            self.circadian._step -= 1  # peek only
+            env._circadian_activity = circ_mod["activity"]
+        if self.vestibular is not None:
+            env._vest_balance = self.vestibular.get_balance_penalty()
+        if self.proprioception is not None:
+            env._prop_collision = self.proprioception.collision_signal
+
         # Pass diagnostics to env for monitoring panel
         env.set_brain_diagnostics(self.last_diagnostics)
 

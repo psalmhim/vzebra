@@ -1652,8 +1652,13 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         else:
             surface = main_surf
 
-        # Background — light water blue
-        surface.fill((220, 232, 240))
+        # Background — circadian-modulated water color (Step 40)
+        # Day: light blue (220, 232, 240), Night: dark blue (40, 60, 90)
+        _circ_activity = getattr(self, '_circadian_activity', 1.0)
+        _bg_r = int(40 + 180 * _circ_activity)
+        _bg_g = int(60 + 172 * _circ_activity)
+        _bg_b = int(90 + 150 * _circ_activity)
+        surface.fill((_bg_r, _bg_g, _bg_b))
 
         # Draw rock formations — organic multi-layer rendering
         for rock in getattr(self, 'rock_formations', []):
@@ -1707,9 +1712,26 @@ class ZebrafishPreyPredatorEnv(gym.Env):
 
         # Draw zebrafish (blue, base=head with eyes, point=tail)
         if self.alive:
+            # Vestibular tilt effect (Step 37): slight size oscillation
+            _vest_balance = getattr(self, '_vest_balance', 1.0)
+            _fish_render_size = self.fish_size * (0.9 + 0.1 * _vest_balance)
+
             self._draw_zebrafish(
                 surface, self.fish_x, self.fish_y, self.fish_heading,
-                self.fish_size, (30, 60, 220))
+                _fish_render_size, (30, 60, 220))
+
+            # Proprioceptive collision flash (Step 41)
+            _collision = getattr(self, '_prop_collision', 0.0)
+            if _collision > 0.2:
+                flash_r = int(self.fish_size * 2 * _collision)
+                flash_surf = pygame.Surface((flash_r * 2, flash_r * 2),
+                                            pygame.SRCALPHA)
+                alpha = int(min(120, _collision * 200))
+                pygame.draw.circle(flash_surf, (255, 100, 50, alpha),
+                                   (flash_r, flash_r), flash_r)
+                surface.blit(flash_surf,
+                             (int(self.fish_x - flash_r),
+                              int(self.fish_y - flash_r)))
 
             # Eye anatomy indicator: perpendicular bisecting line divides
             # each eye into lens (front, toward gaze) and retina (back).
@@ -2355,14 +2377,18 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         pygame.draw.circle(surface, (0, 0, 0),
                            (int(eye_r_x), int(eye_r_y)), max(1, eye_r // 2))
 
-        # Tail oscillation: sinusoidal trail behind the fish
+        # Tail oscillation: CPG-driven undulation (Step 38)
         speed_ratio = self.fish_speed / max(self.fish_speed_base, 0.01)
         if speed_ratio > 0.05:
             n_segments = 6
             seg_len = size * 0.4
             amplitude = size * 0.3 * speed_ratio
-            omega = 0.4
-            phase = self.step_count * omega
+            # Use CPG phase if available, else fallback to step count
+            _cpg_phase = getattr(self, '_cpg_render_phase', None)
+            if _cpg_phase is not None:
+                phase = _cpg_phase * 2 * math.pi
+            else:
+                phase = self.step_count * 0.4
 
             perp_x = -math.sin(heading)
             perp_y = math.cos(heading)
