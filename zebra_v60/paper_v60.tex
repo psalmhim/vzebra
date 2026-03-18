@@ -2696,6 +2696,84 @@ components~\cite{yokogawa2012}.  The trajectory comparison implements
 before committing to a policy.
 
 %===================================================================
+\section{Sensorimotor Extensions (Steps 32--36)}\label{sec:extensions}
+
+\subsection{Lateral Line Mechanosensation (Step 32)}
+
+Sixteen virtual neuromasts (8 per side, anterior to posterior) detect
+hydrodynamic flow from nearby moving entities using a dipole flow model:
+\begin{equation}
+  f_k = \sum_i \frac{v_i \cos\theta_{ik}}{r_{ik}^2 / 100 + 1},
+\end{equation}
+where $v_i$ is entity speed, $\theta_{ik}$ the angle between entity
+velocity and the neuromast-to-entity direction, and $r_{ik}$ the distance.
+Reafference cancellation subtracts predicted self-motion flow
+(efference copy from cerebellum or motor command).
+
+The rear wake signal detects predator approach from behind---outside
+the visual field---and boosts $p_\text{enemy}$ by up to 12\%.
+This implements the ``blind spot'' compensation observed in larval
+zebrafish lateral line ablation studies~\cite{stewart2013}.
+
+\subsection{Cerebellum Forward Model (Step 33)}
+
+A Marr-Albus-Ito architecture predicts sensory consequences of motor
+commands.  Mossy fiber input (motor command + sensory context, 11 dims)
+undergoes granule cell sparse expansion ($4\times$, 50\% active), and
+Purkinje cells form a linear readout predicting 6 outcome variables:
+$\Delta$heading, $\Delta$speed, visual change L/R, food eaten, and
+$\Delta$energy.
+
+Climbing fiber error (actual -- predicted) drives LTD at parallel
+fiber--Purkinje synapses.  The output provides:
+motor correction (adaptive turn bias $\pm$0.1, speed factor 0.85--1.15),
+reafference prediction (fed to lateral line), and prediction error
+magnitude (novelty signal).
+
+\subsection{Multi-Agent Dynamics (Step 34)}
+
+The single-agent environment is extended to 5 fish: one focal agent
+(full BrainAgent, $\sim$30 modules) and four conspecifics, each with
+a lightweight \texttt{ConspecificBrain} using threshold-based goal
+selection (FORAGE/FLEE/SOCIAL).
+
+The predator targets the \emph{nearest} fish with hysteresis
+(10-step lock, must be 40\% closer to switch), creating the
+\emph{confusion effect}: more targets $\to$ more switching cost
+$\to$ lower catch rate.  Food is competitive (nearest fish eats first).
+Conspecifics exhibit Reynolds-like flocking with stronger cohesion
+and heading alignment, achieving school polarization $P > 0.5$.
+
+\subsection{Olfactory System (Step 35)}
+
+Bilateral nostrils sample chemical concentration from two channels:
+\begin{itemize}[nosep]
+  \item \textbf{Food odour}: Gaussian diffusion from each food item
+    (radius 200\,px), providing gradient-based chemotaxis when food
+    is beyond the visual field.
+  \item \textbf{Alarm substance} (Schreckstoff): released by injured
+    or fleeing conspecifics, triggers group flight response by boosting
+    $p_\text{enemy}$ proportional to concentration.  Decays with
+    half-life $\sim$14 steps.
+\end{itemize}
+Neuroscience: food odour activates the lateral olfactory tract (LOT)
+$\to$ posterior telencephalon; alarm substance activates the medial
+tract (MOT) $\to$ habenula~\cite{jesuthasan2012}.
+
+\subsection{Habenula: Behavioral Flexibility (Step 36)}
+
+The habenula computes a ``disappointment'' signal from accumulated
+negative RPE per goal.  When frustration for the current goal exceeds
+a threshold (0.7), a strategy switch is forced with a 15-step
+cooldown.  Frustrated goals receive positive EFE bias (avoided),
+modulated by dopamine level (low dopa amplifies helplessness).
+
+This implements learned helplessness and behavioral
+flexibility~\cite{amo2014}: a fish that repeatedly fails to find
+food will switch from FORAGE to EXPLORE, and one that cannot escape
+a predator will try cover-seeking rather than sustained flight.
+
+%===================================================================
 \section{Summary of Architecture}\label{sec:summary}
 
 \begin{figure}[H]
@@ -2855,6 +2933,11 @@ Step & Module Added & Key Equation & Figure \\
 29 & Decision rationality evaluation & --- & --- \\
 30 & Curriculum training + starvation fix & Eq.~\ref{eq:flee_energy_cost} & --- \\
 31 & Structured world models & Eq.~\ref{eq:pred_predict}, \ref{eq:pred_update}, \ref{eq:metabolic_pe} & --- \\
+32 & Lateral line mechanosensation & --- & --- \\
+33 & Cerebellum forward model & --- & --- \\
+34 & Multi-agent dynamics & --- & --- \\
+35 & Olfactory system & --- & --- \\
+36 & Habenula (behavioral flexibility) & --- & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -2964,7 +3047,7 @@ well-defined interfaces:
 %===================================================================
 \section{Discussion}\label{sec:discussion}
 
-The thirty-one-step developmental curriculum demonstrates that a biologically
+The thirty-six-step developmental curriculum demonstrates that a biologically
 grounded spiking neural network, equipped with local Hebbian plasticity and
 neuromodulatory control, can implement the full active inference loop:
 perception, learning, goal selection, world modeling, spatial navigation,
@@ -3158,7 +3241,7 @@ Key findings:
     comparing energy futures under different policies before committing.
 \end{enumerate}
 
-Taken together, the thirty-one steps demonstrate that the free energy
+Taken together, the thirty-six steps demonstrate that the free energy
 principle provides a \emph{unified computational language} for the
 diverse functions of the vertebrate brain: exteroceptive perception
 (predictive coding), interoceptive regulation (allostatic inference),
@@ -3382,6 +3465,21 @@ Figures are auto-generated by running:
   T.~Yokogawa et~al.,
   ``Characterization of sleep in zebrafish and insomnia in hypocretin receptor mutants,''
   \textit{PLoS Biology}, vol.~5, no.~10, e277, 2007.
+\bibitem{stewart2013}
+  W.~J.~Stewart et~al.,
+  ``Prey fish escape by sensing the bow wave of a predator,''
+  \textit{Journal of Experimental Biology}, vol.~217, pp.~4328--4336, 2013.
+
+\bibitem{jesuthasan2012}
+  S.~Jesuthasan, C.~L.~Bhatt,
+  ``The role of the habenula in zebrafish behavior,''
+  \textit{Current Opinion in Neurobiology}, vol.~22, pp.~496--501, 2012.
+
+\bibitem{amo2014}
+  R.~Amo et~al.,
+  ``The habenulo-raphe serotonergic circuit encodes an aversive expectation value essential for adaptive active avoidance of danger,''
+  \textit{Neuron}, vol.~84, pp.~1034--1048, 2014.
+
 \end{thebibliography}
 
 \end{document}

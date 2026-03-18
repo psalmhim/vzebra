@@ -118,20 +118,21 @@ class CerebellumForwardModel:
         actual = np.asarray(actual_outcome, dtype=np.float32)
         error = actual - self._prediction
 
-        # LTD: decrease weights that contributed to wrong prediction
-        # dW = -lr * outer(eligibility, error)
-        if self._step_count > 5:  # skip first few unstable steps
-            dW = -self.lr * np.outer(self._eligibility, error)
-            # Clip update to prevent instability
-            dW = np.clip(dW, -0.01, 0.01)
-            self.W_pf += dW
+        # Normalise error to prevent large gradients
+        error_norm = np.clip(error, -1.0, 1.0)
 
-            # Weight decay (prevent unbounded growth)
-            self.W_pf *= 0.9999
+        # LTD: decrease weights that contributed to wrong prediction
+        if self._step_count > 5:
+            elig_norm = self._eligibility / (
+                np.linalg.norm(self._eligibility) + 1e-8)
+            dW = -self.lr * np.outer(elig_norm, error_norm)
+            dW = np.clip(dW, -0.005, 0.005)
+            self.W_pf += dW
+            self.W_pf *= 0.9999  # weight decay
 
         # Update error EMA for motor correction (clamped)
         self._error_ema = np.clip(
-            0.9 * self._error_ema + 0.1 * error, -5.0, 5.0)
+            0.95 * self._error_ema + 0.05 * error_norm, -1.0, 1.0)
 
     def get_motor_correction(self):
         """Additive motor correction from recent prediction errors.
