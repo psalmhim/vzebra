@@ -2144,22 +2144,23 @@ class BrainAgent:
 
         # Spinal CPG: brain commands → muscle activations (Step 38)
         # Brain provides descending drive (speed) and turn bias to the CPG.
-        # CPG produces bilateral muscle activations (motor_L, motor_R).
-        # Muscles drive the body: L contraction → tail bends left → head turns right.
+        # CPG adds phasic L/R oscillation for tail beat on top of tonic drive.
+        # Muscles: L contraction → tail bends left → head turns right.
         if self.spinal_cpg is not None:
-            cpg_mL, cpg_mR, cpg_speed, cpg_turn, cpg_diag = \
+            cpg_mL, cpg_mR, _, _, cpg_diag = \
                 self.spinal_cpg.step(
                     descending_drive=float(np.clip(speed, 0, 1)),
                     turn_bias=float(turn_rate))
-            # Muscle-driven kinematics:
-            #   forward thrust = (L + R) / 2
-            #   turn = (R - L) * gain  (right muscle → bend right → turn left)
-            muscle_speed = (cpg_mL + cpg_mR) / 2.0
-            muscle_turn = (cpg_mR - cpg_mL) * 1.5
-            # Blend: 70% muscle, 30% brain direct (reticulospinal fast path)
-            speed = 0.7 * muscle_speed + 0.3 * float(np.clip(speed, 0, 1))
-            turn_rate = 0.7 * muscle_turn + 0.3 * float(turn_rate)
-            turn_rate = float(np.clip(turn_rate, -1.0, 1.0))
+            # Tonic drive: brain's speed command provides sustained thrust
+            # Phasic modulation: CPG L/R difference adds tail-beat turning
+            muscle_turn = (cpg_mR - cpg_mL) * 0.3  # small phasic wobble
+            # Brain turn is primary, CPG adds biological oscillation
+            turn_rate = float(np.clip(turn_rate + muscle_turn, -1.0, 1.0))
+            # Speed stays brain-controlled (tonic reticulospinal drive)
+            # CPG modulates bout timing: suppress speed during CPG quiet phase
+            cpg_activity = (cpg_mL + cpg_mR) / 2.0
+            if cpg_activity < 0.1 and speed > 0.3:
+                speed *= 0.7  # glide phase: reduced thrust
             # Pass muscle state to env for tail rendering
             env._muscle_L = cpg_mL
             env._muscle_R = cpg_mR
