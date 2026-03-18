@@ -13,7 +13,9 @@ atlas/*.npy
 atlas/*.mat
 atlas/*.mat.gz
 atlas/*.pkl
-zebra_v60/weights/*.pt
+atlas/*.nii.gz
+zebrav1/weights/*.pt
+old/
 
 # IDE
 .vscode/
