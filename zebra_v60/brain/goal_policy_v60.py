@@ -206,7 +206,7 @@ class GoalPolicy_v60:
         p_colleague = cls_probs[3] if len(cls_probs) > 3 else 0.0
         starvation_urgency = max(0.0, (0.50 - energy_ratio) / 0.50)
 
-        if p_enemy > 0.25 and starvation_urgency < 0.5:
+        if p_enemy > 0.20 and starvation_urgency < 0.5:
             # Predator threat + adequate energy → hard FLEE
             choice = GOAL_FLEE
             self.last_choice = choice
@@ -217,7 +217,7 @@ class GoalPolicy_v60:
             choice = GOAL_FORAGE
             self.last_choice = choice
             self.timer = 0
-        elif p_enemy > 0.25 and starvation_urgency >= 0.5:
+        elif p_enemy > 0.20 and starvation_urgency >= 0.5:
             # BOTH threats active at high intensity → Bayesian comparison
             # Bias posterior toward FORAGE based on starvation excess
             forage_bias = starvation_urgency - 0.5
@@ -234,9 +234,9 @@ class GoalPolicy_v60:
             choice = GOAL_FORAGE
             self.last_choice = choice
             self.timer = 0
-        elif (self.last_choice == GOAL_FLEE and p_enemy < 0.20
-              and self.timer >= 3):
-            # Early exit from FLEE when no enemy detected
+        elif (self.last_choice == GOAL_FLEE and p_enemy < 0.10
+              and self.timer >= 5):
+            # Early exit from FLEE only when enemy clearly gone
             choice = int(np.argmax(posterior))
             self.last_choice = choice
             self.timer = 0
@@ -427,7 +427,7 @@ class SpikingGoalSelector(nn.Module):
 
         flee_boost = 0.0
         forage_boost = 0.0
-        if p_enemy > 0.25:
+        if p_enemy > 0.20:
             # Scale FLEE injection by how safe energy is
             # Full boost (5.0) when energy adequate, reduced when starving
             flee_boost = 5.0 * max(0.2, 1.0 - starvation_urgency * 0.8)
@@ -441,7 +441,7 @@ class SpikingGoalSelector(nn.Module):
             excitation[0, GOAL_FORAGE] += forage_boost
 
         # Dual threat: amplify the dominant drive for faster WTA convergence
-        if p_enemy > 0.25 and starvation_urgency > 0.4:
+        if p_enemy > 0.20 and starvation_urgency > 0.4:
             if forage_boost > flee_boost:
                 excitation[0, GOAL_FORAGE] += 1.5
             else:

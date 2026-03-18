@@ -36,6 +36,8 @@ from zebra_v60.brain.hebbian_v60 import HebbianPlasticity
 from zebra_v60.brain.geographic_model_v60 import GeographicModel
 from zebra_v60.brain.predator_model_v60 import PredatorModel
 from zebra_v60.brain.internal_state_model_v60 import InternalStateModel
+from zebra_v60.brain.lateral_line_v60 import LateralLineOrgan
+from zebra_v60.brain.cerebellum_v60 import CerebellumForwardModel
 from zebra_v60.brain.device_util import get_device
 from zebra_v60.world.world_env import WorldEnv
 from zebra_v60.tests.step1_vision_pursuit import TurnSmoother
@@ -310,6 +312,17 @@ class BrainAgent:
         # Step 31: Structured world models (always-on — pure numpy, cheap)
         self.predator_model = PredatorModel()
         self.geographic_model = None  # initialised after place_cells (below)
+
+        # Step 32: Lateral line mechanosensation
+        self.lateral_line = LateralLineOrgan()
+        self._ll_flow = None
+        self._ll_entities = []
+
+        # Step 33: Cerebellum forward model
+        self.cerebellum = CerebellumForwardModel()
+        self._cb_prev_heading = 0.0
+        self._cb_prev_speed = 0.0
+        self._cb_prev_energy = 100.0
 
         # World model (Step 16/17)
         self._prev_z = None
@@ -1053,6 +1066,39 @@ class BrainAgent:
         # 1b. Active inference food prospection
         food_prospects = self._evaluate_food_prospects(env, fish_pos, world)
 
+        # 1c. Cerebellum error update from previous step (Step 33)
+        if self.cerebellum is not None and self._step_count > 1:
+            actual = np.array([
+                env.fish_heading - self._cb_prev_heading,
+                getattr(env, 'fish_speed', 0.5) - self._cb_prev_speed,
+                0.0, 0.0,  # visual change L/R (placeholder)
+                float(self._eaten_buffer > 0),
+                getattr(env, 'fish_energy', 100.0) - self._cb_prev_energy,
+            ], dtype=np.float32)
+            self.cerebellum.update(actual)
+        self._cb_prev_heading = env.fish_heading
+        self._cb_prev_speed = getattr(env, 'fish_speed', 0.5)
+        self._cb_prev_energy = getattr(env, 'fish_energy', 100.0)
+
+        # 1d. Lateral line mechanosensation (Step 32)
+        if self.lateral_line is not None:
+            ll_ents = []
+            # Predator
+            ll_ents.append({"x": env.pred_x, "y": env.pred_y,
+                            "type": "predator"})
+            # Colleagues
+            for c in getattr(env, 'colleagues', []):
+                ll_ents.append({"x": c["x"], "y": c["y"], "type": "fish"})
+            efference = self.last_diagnostics.get("speed", 0.5)
+            # Use cerebellum reafference prediction if available
+            if self.cerebellum is not None:
+                cb_L, cb_R = self.cerebellum.get_reafference_prediction()
+                efference = max(efference, abs(cb_L) + abs(cb_R))
+            ll_L, ll_R, ll_diag = self.lateral_line.step(
+                [env.fish_x, env.fish_y], env.fish_heading,
+                getattr(env, 'fish_speed', 0.5), ll_ents, efference)
+            self._ll_flow = ll_diag
+
         # 2. Effective heading with eye position
         effective_heading = world_heading + self.ot.eye_pos * 0.25
 
@@ -1184,6 +1230,18 @@ class BrainAgent:
                 self.allostasis.stress = min(
                     1.0, self.allostasis.stress + 0.1 * threat_arousal)
 
+        # 7b3a. Lateral line wake alarm (Step 32)
+        if self._ll_flow is not None:
+            rear_wake = self._ll_flow.get("rear_wake_intensity", 0.0)
+            if rear_wake > 0.3 and cls_probs[2] < 0.3:
+                # Predator approaching from behind — boost threat
+                cls_probs[2] = min(0.4, cls_probs[2] + 0.12 * rear_wake)
+                cls_probs /= cls_probs.sum() + 1e-8
+            # Feed lateral line to predator model
+            if self.predator_model is not None and rear_wake > 0.2:
+                self.predator_model.belief.intent = max(
+                    self.predator_model.belief.intent, 0.3 * rear_wake)
+
         # 7b3b. Predator model update (Step 31)
         if self.predator_model is not None:
             if self.use_active_inference and hasattr(self, 'place_cells'):
@@ -1215,7 +1273,7 @@ class BrainAgent:
         #      complex multi-entity scenes.  Cap p_enemy based on actual
         #      enemy pixels in the type channel (ground truth).
         #      Need ~25 pixels for full confidence; 0 pixels → cap at 0.02.
-        max_p_enemy = max(0.02, min(1.0, self._enemy_pixels_total / 15.0))
+        max_p_enemy = max(0.02, min(1.0, self._enemy_pixels_total / 10.0))
         if cls_probs[2] > max_p_enemy:
             cls_probs[2] = max_p_enemy
             cls_probs /= cls_probs.sum() + 1e-8
@@ -1960,6 +2018,23 @@ class BrainAgent:
             turn_rate = np.clip(_capture_result[0], -1.0, 1.0)
             speed = _capture_result[1]
 
+        # Cerebellum motor correction (Step 33)
+        if self.cerebellum is not None:
+            # Forward prediction
+            motor_cmd = np.array([turn_rate, speed, effective_goal],
+                                 dtype=np.float32)
+            ctx = np.array([
+                env.fish_heading, getattr(env, 'fish_speed', 0.5),
+                getattr(env, 'fish_energy', 100.0) / 100.0,
+                cls_probs[1], cls_probs[2],
+                self._retinal_features.get("obstacle_px_L", 0) / 20.0,
+                self._retinal_features.get("obstacle_px_R", 0) / 20.0,
+                dopa], dtype=np.float32)
+            self.cerebellum.step(motor_cmd, ctx)
+            cb_turn, cb_speed = self.cerebellum.get_motor_correction()
+            turn_rate = np.clip(turn_rate + cb_turn, -1.0, 1.0)
+            speed = speed * cb_speed
+
         # Signal bout goal to env (Feature 1)
         env._bout_goal_mod = effective_goal
 
@@ -2075,6 +2150,13 @@ class BrainAgent:
         if self.sleep_regulator is not None:
             self.last_diagnostics["sleep"] = \
                 self.sleep_regulator.get_diagnostics()
+
+        # Step 32-33: Lateral line + cerebellum diagnostics
+        if self._ll_flow is not None:
+            self.last_diagnostics["lateral_line"] = self._ll_flow
+        if self.cerebellum is not None:
+            self.last_diagnostics["cerebellum"] = \
+                self.cerebellum.get_diagnostics()
 
         # Step 31: Structured world model diagnostics
         if self.geographic_model is not None:
@@ -2305,6 +2387,13 @@ class BrainAgent:
             self.amygdala.reset()
         if self.sleep_regulator is not None:
             self.sleep_regulator.reset()
+        # Step 32-33: lateral line + cerebellum reset
+        if self.lateral_line is not None:
+            self.lateral_line.reset()
+            self._ll_flow = None
+        if self.cerebellum is not None:
+            self.cerebellum.reset()
+
         # Step 31: structured world model resets
         if self.geographic_model is not None:
             self.geographic_model.reset_episode()  # keep learned maps
