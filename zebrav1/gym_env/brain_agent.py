@@ -2142,6 +2142,28 @@ class BrainAgent:
             turn_rate = np.clip(turn_rate + cb_turn, -1.0, 1.0)
             speed = speed * cb_speed
 
+        # Spinal CPG: brain commands → muscle activations (Step 38)
+        # Brain provides descending drive (speed) and turn bias to the CPG.
+        # CPG produces bilateral muscle activations (motor_L, motor_R).
+        # Muscles drive the body: L contraction → tail bends left → head turns right.
+        if self.spinal_cpg is not None:
+            cpg_mL, cpg_mR, cpg_speed, cpg_turn, cpg_diag = \
+                self.spinal_cpg.step(
+                    descending_drive=float(np.clip(speed, 0, 1)),
+                    turn_bias=float(turn_rate))
+            # Muscle-driven kinematics:
+            #   forward thrust = (L + R) / 2
+            #   turn = (R - L) * gain  (right muscle → bend right → turn left)
+            muscle_speed = (cpg_mL + cpg_mR) / 2.0
+            muscle_turn = (cpg_mR - cpg_mL) * 1.5
+            # Blend: 70% muscle, 30% brain direct (reticulospinal fast path)
+            speed = 0.7 * muscle_speed + 0.3 * float(np.clip(speed, 0, 1))
+            turn_rate = 0.7 * muscle_turn + 0.3 * float(turn_rate)
+            turn_rate = float(np.clip(turn_rate, -1.0, 1.0))
+            # Pass muscle state to env for tail rendering
+            env._muscle_L = cpg_mL
+            env._muscle_R = cpg_mR
+
         # Signal bout goal to env (Feature 1)
         env._bout_goal_mod = effective_goal
 

@@ -2377,18 +2377,24 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         pygame.draw.circle(surface, (0, 0, 0),
                            (int(eye_r_x), int(eye_r_y)), max(1, eye_r // 2))
 
-        # Tail oscillation: CPG-driven undulation (Step 38)
+        # Tail oscillation: muscle-driven undulation (Step 38)
+        # L/R muscle difference drives tail bend direction
+        _muscle_L = getattr(self, '_muscle_L', 0.0)
+        _muscle_R = getattr(self, '_muscle_R', 0.0)
+        muscle_diff = _muscle_R - _muscle_L  # positive = bend right
         speed_ratio = self.fish_speed / max(self.fish_speed_base, 0.01)
-        if speed_ratio > 0.05:
+        if speed_ratio > 0.05 or abs(muscle_diff) > 0.05:
             n_segments = 6
             seg_len = size * 0.4
-            amplitude = size * 0.3 * speed_ratio
-            # Use CPG phase if available, else fallback to step count
+            amplitude = size * 0.35 * max(speed_ratio, 0.3)
+            # Phase from CPG or step count
             _cpg_phase = getattr(self, '_cpg_render_phase', None)
             if _cpg_phase is not None:
                 phase = _cpg_phase * 2 * math.pi
             else:
                 phase = self.step_count * 0.4
+            # Muscle bias shifts the oscillation centre
+            muscle_bias = muscle_diff * size * 0.5
 
             perp_x = -math.sin(heading)
             perp_y = math.cos(heading)
@@ -2398,7 +2404,10 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                 t = k / n_segments
                 bx = tail_x - seg_len * k * math.cos(heading)
                 by = tail_y - seg_len * k * math.sin(heading)
-                offset = amplitude * (1.0 - t * 0.3) * math.sin(phase + k * 1.2)
+                # Muscle-biased oscillation: bend toward stronger muscle side
+                _mb = getattr(self, '_muscle_L', 0) - getattr(self, '_muscle_R', 0)
+                offset = (amplitude * (1.0 - t * 0.3) * math.sin(phase + k * 1.2)
+                          + _mb * size * 0.4 * (1.0 - t * 0.5))
                 bx += perp_x * offset
                 by += perp_y * offset
                 points.append((int(bx), int(by)))
