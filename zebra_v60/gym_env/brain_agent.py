@@ -38,6 +38,8 @@ from zebra_v60.brain.predator_model_v60 import PredatorModel
 from zebra_v60.brain.internal_state_model_v60 import InternalStateModel
 from zebra_v60.brain.lateral_line_v60 import LateralLineOrgan
 from zebra_v60.brain.cerebellum_v60 import CerebellumForwardModel
+from zebra_v60.brain.olfaction_v60 import OlfactorySystem
+from zebra_v60.brain.habenula_v60 import Habenula
 from zebra_v60.brain.device_util import get_device
 from zebra_v60.world.world_env import WorldEnv
 from zebra_v60.tests.step1_vision_pursuit import TurnSmoother
@@ -323,6 +325,12 @@ class BrainAgent:
         self._cb_prev_heading = 0.0
         self._cb_prev_speed = 0.0
         self._cb_prev_energy = 100.0
+
+        # Step 35: Olfactory system
+        self.olfaction = OlfactorySystem()
+
+        # Step 36: Habenula (anti-reward / behavioral flexibility)
+        self.habenula = Habenula()
 
         # World model (Step 16/17)
         self._prev_z = None
@@ -1099,6 +1107,22 @@ class BrainAgent:
                 getattr(env, 'fish_speed', 0.5), ll_ents, efference)
             self._ll_flow = ll_diag
 
+        # 1e. Olfactory system (Step 35)
+        self._olfaction_diag = {}
+        if self.olfaction is not None:
+            food_L, food_R, alarm_L, alarm_R, olf_diag = self.olfaction.step(
+                [env.fish_x, env.fish_y], env.fish_heading,
+                getattr(env, 'foods', []))
+            self._olfaction_diag = olf_diag
+            # Alarm substance boosts p_enemy (before classifier)
+            alarm_boost = self.olfaction.get_alarm_response(
+                olf_diag["total_alarm"])
+            if alarm_boost > 0.05:
+                # Will be applied after cls_probs are computed (section 7b3a)
+                self._olfaction_alarm_boost = alarm_boost
+            else:
+                self._olfaction_alarm_boost = 0.0
+
         # 2. Effective heading with eye position
         effective_heading = world_heading + self.ot.eye_pos * 0.25
 
@@ -1241,6 +1265,12 @@ class BrainAgent:
             if self.predator_model is not None and rear_wake > 0.2:
                 self.predator_model.belief.intent = max(
                     self.predator_model.belief.intent, 0.3 * rear_wake)
+
+        # 7b3a2. Olfactory alarm substance (Step 35)
+        _olf_alarm = getattr(self, '_olfaction_alarm_boost', 0.0)
+        if _olf_alarm > 0.05:
+            cls_probs[2] = min(0.5, cls_probs[2] + _olf_alarm)
+            cls_probs /= cls_probs.sum() + 1e-8
 
         # 7b3b. Predator model update (Step 31)
         if self.predator_model is not None:
@@ -1495,6 +1525,15 @@ class BrainAgent:
             # Blend weight ramps with exploration (more data → more trust)
             geo_w = min(0.3, self.geographic_model._step_count / 300.0)
             current_bonus += geo_w * G_geo
+
+        # 8.9c Habenula frustration bias (Step 36)
+        if self.habenula is not None:
+            _hab_rpe = self.last_diagnostics.get("rpe", 0.0)
+            _hab_dopa = self.last_diagnostics.get("dopa", 0.5)
+            _hab_goal = self.last_diagnostics.get("goal", GOAL_EXPLORE)
+            hab_switch, hab_bias, hab_diag = self.habenula.step(
+                _hab_goal, _hab_rpe, _hab_dopa)
+            current_bonus += hab_bias
 
         self.goal_policy.set_plan_bonus(current_bonus)
 
@@ -2151,6 +2190,12 @@ class BrainAgent:
             self.last_diagnostics["sleep"] = \
                 self.sleep_regulator.get_diagnostics()
 
+        # Step 35-36: Olfaction + habenula diagnostics
+        if self.olfaction is not None:
+            self.last_diagnostics["olfaction"] = self._olfaction_diag
+        if self.habenula is not None:
+            self.last_diagnostics["habenula"] = self.habenula.get_diagnostics()
+
         # Step 32-33: Lateral line + cerebellum diagnostics
         if self._ll_flow is not None:
             self.last_diagnostics["lateral_line"] = self._ll_flow
@@ -2387,6 +2432,12 @@ class BrainAgent:
             self.amygdala.reset()
         if self.sleep_regulator is not None:
             self.sleep_regulator.reset()
+        # Step 35-36: olfaction + habenula reset
+        if self.olfaction is not None:
+            self.olfaction.reset()
+        if self.habenula is not None:
+            self.habenula.reset()
+
         # Step 32-33: lateral line + cerebellum reset
         if self.lateral_line is not None:
             self.lateral_line.reset()

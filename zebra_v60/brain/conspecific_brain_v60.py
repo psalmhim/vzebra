@@ -124,13 +124,21 @@ class ConspecificBrain:
             diff = math.atan2(math.sin(diff), math.cos(diff))
             # Attract if far, repel if too close
             if social_dist > self.social_dist:
-                turn = np.clip(diff * 1.0, -0.6, 0.6)
+                turn = np.clip(diff * 1.5, -0.8, 0.8)
             else:
-                turn = np.clip(-diff * 0.5, -0.4, 0.4)
-            speed = 0.4
+                turn = np.clip(-diff * 0.8, -0.6, 0.6)
+            # Alignment: match average heading of neighbours
+            avg_heading = np.mean([
+                math.atan2(math.sin(o[1] if len(o) > 1 else 0),
+                           math.cos(o[1] if len(o) > 1 else 0))
+                for o in others]) if len(others[0]) > 1 else heading
+            align_diff = avg_heading - heading
+            align_diff = math.atan2(math.sin(align_diff), math.cos(align_diff))
+            turn += np.clip(align_diff * 0.3, -0.2, 0.2)
+            speed = 0.5
 
         else:
-            # Default: gentle random exploration
+            # Default: gentle random exploration with social tendency
             turn = np.random.uniform(-0.3, 0.3)
             speed = 0.4
 

@@ -196,7 +196,8 @@ def run_demo(use_heuristic=False, render=False, T=1000):
 
 def run_brain_demo(render=False, monitor=False, record=False, T=1000,
                    autosave=False, load_checkpoint=None,
-                   predator_brain=False, sound=False):
+                   predator_brain=False, sound=False,
+                   multi_agent=False):
     """Run the full brain agent with optional neural activity monitor.
 
     When --monitor is used, a single combined window is created:
@@ -208,6 +209,14 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
     """
     import pygame
     from zebra_v60.gym_env.brain_agent import BrainAgent
+
+    if multi_agent:
+        from zebra_v60.gym_env.multi_agent_env import MultiAgentZebrafishEnv
+        EnvClass = MultiAgentZebrafishEnv
+        env_kwargs = {"n_fish": 5}
+    else:
+        EnvClass = ZebrafishPreyPredatorEnv
+        env_kwargs = {}
 
     # Recording requires rgb_array rendering
     if record:
@@ -222,9 +231,10 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
         # Combined window: env renders off-screen, we composite
         from zebra_v60.viz.neural_monitor import NeuralMonitor
 
-        env = ZebrafishPreyPredatorEnv(
+        env = EnvClass(
             render_mode="rgb_array", n_food=15, max_steps=T,
-            side_panels=True, use_predator_brain=predator_brain)
+            side_panels=True, use_predator_brain=predator_brain,
+            **env_kwargs)
         mon = NeuralMonitor()
         MON_W = mon.WIDTH  # 500
         RENDER_W = env.render_width
@@ -241,10 +251,10 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
 
     elif render:
         # Env-only window (standard human mode)
-        env = ZebrafishPreyPredatorEnv(
+        env = EnvClass(
             render_mode="human" if not record else "rgb_array",
             n_food=15, max_steps=T, side_panels=True,
-            use_predator_brain=predator_brain)
+            use_predator_brain=predator_brain, **env_kwargs)
         RENDER_W = env.render_width
         RENDER_H = env.render_height
         if record:
@@ -258,9 +268,9 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
         # Monitor-only (no arena rendering)
         from zebra_v60.viz.neural_monitor import NeuralMonitor
 
-        env = ZebrafishPreyPredatorEnv(
+        env = EnvClass(
             render_mode=None, n_food=15, max_steps=T,
-            use_predator_brain=predator_brain)
+            use_predator_brain=predator_brain, **env_kwargs)
         mon = NeuralMonitor()
         MON_W = mon.WIDTH
         RENDER_W = MON_W
@@ -274,9 +284,9 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
 
     else:
         # Headless
-        env = ZebrafishPreyPredatorEnv(
+        env = EnvClass(
             render_mode=None, n_food=15, max_steps=T,
-            use_predator_brain=predator_brain)
+            use_predator_brain=predator_brain, **env_kwargs)
         RENDER_W = env.render_width
         RENDER_H = env.render_height
 
@@ -437,6 +447,9 @@ if __name__ == "__main__":
     parser.add_argument("--sound", action="store_true",
                         help="Enable spike sonification "
                              "(different sounds per neuron group)")
+    parser.add_argument("--multi-agent", action="store_true",
+                        help="5-fish multi-agent mode "
+                             "(1 focal + 4 conspecific brains)")
     args = parser.parse_args()
 
     if args.brain:
@@ -445,7 +458,8 @@ if __name__ == "__main__":
                        autosave=args.autosave,
                        load_checkpoint=args.load_checkpoint,
                        predator_brain=args.predator_brain,
-                       sound=args.sound)
+                       sound=args.sound,
+                       multi_agent=args.multi_agent)
     else:
         run_demo(use_heuristic=args.heuristic, render=args.render,
                  T=args.steps)
