@@ -1273,7 +1273,7 @@ class BrainAgent:
         #      complex multi-entity scenes.  Cap p_enemy based on actual
         #      enemy pixels in the type channel (ground truth).
         #      Need ~25 pixels for full confidence; 0 pixels → cap at 0.02.
-        max_p_enemy = max(0.02, min(1.0, self._enemy_pixels_total / 10.0))
+        max_p_enemy = max(0.02, min(1.0, self._enemy_pixels_total / 15.0))
         if cls_probs[2] > max_p_enemy:
             cls_probs[2] = max_p_enemy
             cls_probs /= cls_probs.sum() + 1e-8
