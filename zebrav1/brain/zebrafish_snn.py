@@ -267,16 +267,6 @@ class ZebrafishSNN(nn.Module):
         self.eye = PredictiveTwoComp(self.PC_INT, 100, n_fb=0, device=device)
         self.DA = PredictiveTwoComp(self.PC_INT, 50, n_fb=0, device=device)
 
-        # Reticulospinal shortcut: OT_L/OT_R → motor (bypasses deep PC)
-        # Direct ipsilateral tectal → motor projection:
-        #   Left tectum (OT_L, 600) → Left motor (0:100)
-        #   Right tectum (OT_R, 600) → Right motor (100:200)
-        # This preserves lateralisation for visuo-motor turning.
-        self.reticulo_L = nn.Linear(self.OTL, 100, bias=False)
-        self.reticulo_R = nn.Linear(self.OTR, 100, bias=False)
-        nn.init.normal_(self.reticulo_L.weight, 0, 0.02)
-        nn.init.normal_(self.reticulo_R.weight, 0, 0.02)
-
         # Classification head (800 type pixels + 4 aggregate pixel counts)
         self.cls_hidden = nn.Linear(804, 128)
         self.cls_out = nn.Linear(128, 5)
@@ -345,14 +335,9 @@ class ZebrafishSNN(nn.Module):
         e = self.eye.step(intent)
         d = self.DA.step(intent)
 
-        # Reticulospinal shortcut (crossed OT_L/R → motor R/L)
-        # Currently disabled: random weights add noise that degrades behavior.
-        # The retinal L/R balance pathway provides reliable turning.
-        # TODO: train reticulospinal weights with motor supervision
-        # retic_from_L = self.reticulo_L(oL)
-        # retic_from_R = self.reticulo_R(oR)
-        # retic_motor = torch.cat([retic_from_R, retic_from_L], dim=1)
-        # m = m + 0.1 * retic_motor
+        # Note: motor output driven by retinal L/R balance in brain_agent.py,
+        # not by these motor neurons (deep layer signal death). Future work:
+        # train reticulospinal shortcut with supervised motor targets.
 
         # 5. Feedback pass (top-down, update apical for NEXT timestep)
         self.PC_int.update_apical(d)         # DA → PC_int

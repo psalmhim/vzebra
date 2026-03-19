@@ -2066,6 +2066,15 @@ class BrainAgent:
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
             wall_turn = wall_urgency * 0.8 * np.sign(angle_diff)
 
+        # Forced escape turn: when predator is centered ahead, raw_turn ≈ 0
+        # and the fish can't decide direction. Force a decisive turn.
+        if (effective_goal == GOAL_FLEE
+                and abs(brain_turn) < 0.15
+                and self._enemy_pixels_total > 5):
+            # Pick a side (consistent per episode via last turn direction)
+            escape_dir = 1.0 if self.last_diagnostics.get("turn_rate", 0) >= 0 else -1.0
+            brain_turn = escape_dir * 0.8  # strong forced turn
+
         # Blend: brain turn weight decreases near walls
         brain_weight = max(0.2, 1.0 - wall_urgency)
         turn_rate = np.clip(
@@ -2074,9 +2083,9 @@ class BrainAgent:
         speed = np.clip(
             speed_mod_brain * (0.8 + 0.4 * dopa), 0.0, 1.0)
 
-        # Flee burst: speed boost for escape
+        # Flee burst: speed boost for escape (must outrun predator at 1.75)
         if self._flee_burst_steps > 0:
-            speed = min(1.6, speed * 1.5)
+            speed = min(2.0, speed * 1.8)
             self._flee_burst_steps -= 1
 
         # Reduce speed when low energy (use inferred energy in AI mode)
@@ -2094,7 +2103,9 @@ class BrainAgent:
         # Panic sprint override: adrenaline restores speed during threat
         panic_level = threat["panic_level"]
         if panic_level > 0.1:
-            speed = max(speed, 0.8 * panic_level + speed * (1 - panic_level))
+            # Panic sprint must outrun predator (1.75 hunt speed)
+            panic_speed = 1.5 * panic_level + speed * (1 - panic_level)
+            speed = max(speed, panic_speed)
             self._flee_burst_steps = max(
                 self._flee_burst_steps, int(8 * panic_level))
 
@@ -2123,12 +2134,8 @@ class BrainAgent:
             or self._mauthner_active,
             panic_intensity=panic_level)
 
-        # Apply Mauthner C-start override (Feature 2)
-        if _mauthner_result is not None:
-            turn_rate = np.clip(_mauthner_result[0], -1.0, 1.0)
-            speed = _mauthner_result[1]
-        # Apply prey capture override (Feature 5)
-        elif _capture_result is not None:
+        # Apply prey capture override (Feature 5) — before vestibular/CPG
+        if _mauthner_result is None and _capture_result is not None:
             turn_rate = np.clip(_capture_result[0], -1.0, 1.0)
             speed = _capture_result[1]
 
@@ -2184,6 +2191,11 @@ class BrainAgent:
             # Pass muscle state to env for tail rendering
             env._muscle_L = cpg_mL
             env._muscle_R = cpg_mR
+
+        # Mauthner C-start FINAL override (cannot be reduced by other modules)
+        if _mauthner_result is not None:
+            turn_rate = np.clip(_mauthner_result[0], -1.0, 1.0)
+            speed = max(speed, _mauthner_result[1])  # at least Mauthner speed
 
         # Signal bout goal to env (Feature 1)
         env._bout_goal_mod = effective_goal
