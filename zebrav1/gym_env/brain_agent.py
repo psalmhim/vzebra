@@ -1690,13 +1690,32 @@ class BrainAgent:
             approach_gain += shoal_turn * 0.5
             speed_mod_brain *= shoal_speed
 
-        # 12. Retinal turn signal
+        # 12. Motor turn signal: blend SNN motor neurons + retinal balance
         retL = out["retL"]
         retR = out["retR"]
         retR_sum = float(retR.sum())
         retL_sum = float(retL.sum())
         total = retR_sum + retL_sum + 1e-8
-        raw_turn = (retR_sum - retL_sum) / total
+        retinal_turn = (retR_sum - retL_sum) / total
+
+        # SNN motor neuron readout (L/R → turn direction)
+        motor_out = out.get("motor", None)
+        if motor_out is not None:
+            mot = motor_out.detach()
+            snn_mot_L = float(mot[0, :100].sigmoid().mean())
+            snn_mot_R = float(mot[0, 100:].sigmoid().mean())
+            snn_motor_turn = snn_mot_R - snn_mot_L  # [-1, 1]
+        else:
+            snn_motor_turn = 0.0
+            snn_mot_L = snn_mot_R = 0.0
+
+        # Dual pathway: retinal (primary) + SNN motor (secondary/learning)
+        # The retinal pathway provides the reliable signal.
+        # The SNN motor learns to predict and eventually replace it.
+        raw_turn = retinal_turn  # retinal is primary pathway
+        self._snn_mot_L = snn_mot_L
+        self._snn_mot_R = snn_mot_R
+        self._snn_motor_turn = snn_motor_turn
 
         # 12b. Obstacle repulsion — steer away from rock-heavy side
         typeL_t = out["retL_full"][0, 400:].cpu().numpy()
@@ -2608,6 +2627,17 @@ class BrainAgent:
         if hasattr(self.goal_policy, 'get_saveable_state'):
             checkpoint["spiking_goal"] = self.goal_policy.get_saveable_state()
         checkpoint["hebbian"] = self.hebbian.get_saveable_state()
+        # Step 31-36: structured world models + extensions
+        if self.geographic_model is not None:
+            checkpoint["geographic_model"] = self.geographic_model.get_saveable_state()
+        if self.predator_model is not None:
+            checkpoint["predator_model"] = self.predator_model.get_saveable_state()
+        if isinstance(self.interoceptive, InternalStateModel):
+            checkpoint["internal_state"] = self.interoceptive.get_saveable_state()
+        if self.cerebellum is not None:
+            checkpoint["cerebellum"] = self.cerebellum.get_saveable_state()
+        if self.habenula is not None:
+            checkpoint["habenula"] = self.habenula.get_saveable_state()
 
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         torch.save(checkpoint, path)
@@ -2648,4 +2678,13 @@ class BrainAgent:
             self.goal_policy.load_saveable_state(checkpoint["spiking_goal"])
         if "hebbian" in checkpoint:
             self.hebbian.load_saveable_state(checkpoint["hebbian"])
+        # Step 31-36: structured world models + extensions
+        if "geographic_model" in checkpoint and self.geographic_model is not None:
+            self.geographic_model.load_saveable_state(checkpoint["geographic_model"])
+        if "internal_state" in checkpoint and isinstance(self.interoceptive, InternalStateModel):
+            self.interoceptive.load_saveable_state(checkpoint["internal_state"])
+        if "cerebellum" in checkpoint and self.cerebellum is not None:
+            self.cerebellum.load_saveable_state(checkpoint["cerebellum"])
+        if "habenula" in checkpoint and self.habenula is not None:
+            self.habenula.load_saveable_state(checkpoint["habenula"])
         print("[checkpoint] Loaded successfully")
