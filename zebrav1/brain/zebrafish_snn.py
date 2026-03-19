@@ -126,12 +126,17 @@ class PredictiveTwoComp(nn.Module):
                     + (1.0 - self.tau_s) * ff_drive
                     + apical_drive
                     + self.alpha_att * self.m_att)
-        # Divisive normalization (homeostatic gain control):
-        # prevents cascading activity growth up the hierarchy.
-        # Biologically: neurons maintain a target firing rate.
+        # Bidirectional homeostatic gain control:
+        # Both suppresses overactive AND boosts underactive layers.
+        # Biologically: neurons maintain a target firing rate via
+        # synaptic scaling (Turrigiano 2008).
         v_rms = (self.v_s ** 2).mean().sqrt()
-        if v_rms > self.TARGET_RMS:
-            self.v_s = self.v_s * (self.TARGET_RMS / v_rms)
+        if v_rms > 1e-6:
+            # Smooth gain adjustment toward TARGET_RMS
+            ratio = self.TARGET_RMS / (v_rms + 1e-8)
+            # Clamp gain: max 3x boost, no limit on suppression
+            gain = min(3.0, ratio)
+            self.v_s = self.v_s * gain
 
         # Compute prediction error (apical prediction - somatic evidence)
         self.pred_error = self.v_a - self.v_s
