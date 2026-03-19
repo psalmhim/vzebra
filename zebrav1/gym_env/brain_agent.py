@@ -2177,9 +2177,10 @@ class BrainAgent:
             turn_rate = float(np.clip(turn_rate + muscle_turn, -1.0, 1.0))
             # Speed stays brain-controlled (tonic reticulospinal drive)
             # CPG modulates bout timing: suppress speed during CPG quiet phase
+            # Exception: during FLEE, maintain full speed (no glide)
             cpg_activity = (cpg_mL + cpg_mR) / 2.0
-            if cpg_activity < 0.1 and speed > 0.3:
-                speed *= 0.7  # glide phase: reduced thrust
+            if cpg_activity < 0.1 and speed > 0.3 and effective_goal != GOAL_FLEE:
+                speed *= 0.7  # glide phase: reduced thrust (not during flee)
             # Pass muscle state to env for tail rendering
             env._muscle_L = cpg_mL
             env._muscle_R = cpg_mR

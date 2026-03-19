@@ -126,19 +126,13 @@ class PredictiveTwoComp(nn.Module):
                     + (1.0 - self.tau_s) * ff_drive
                     + apical_drive
                     + self.alpha_att * self.m_att)
-        # Bidirectional homeostatic gain control:
-        # Suppresses overactive AND gently boosts underactive layers.
-        # Boost is conservative (max 1.5x) to prevent noise amplification.
-        # Biologically: synaptic scaling (Turrigiano 2008).
+        # Homeostatic gain control: suppress overactive layers.
+        # Deep layers (PC_int, motor) have low activity by design —
+        # their signal reaches motor output via the reticulospinal
+        # shortcut (OT_L/R → motor) rather than the deep pathway.
         v_rms = (self.v_s ** 2).mean().sqrt()
         if v_rms > self.TARGET_RMS:
-            # Suppress: scale down to target
             self.v_s = self.v_s * (self.TARGET_RMS / v_rms)
-        elif v_rms > 0.1 and v_rms < self.TARGET_RMS * 0.5:
-            # Gentle boost: only when significantly below target
-            # and activity is non-trivial (>0.1 RMS)
-            boost = min(1.5, self.TARGET_RMS / (v_rms + 1e-8))
-            self.v_s = self.v_s * boost
 
         # Compute prediction error (apical prediction - somatic evidence)
         self.pred_error = self.v_a - self.v_s
@@ -351,13 +345,14 @@ class ZebrafishSNN(nn.Module):
         e = self.eye.step(intent)
         d = self.DA.step(intent)
 
-        # Reticulospinal shortcut: crossed OT_L/R → motor R/L (fast path)
-        # Contralateral: left tectum → right motor, right tectum → left motor
-        # (matches crossed tecto-bulbar projection in zebrafish)
-        retic_from_L = self.reticulo_L(oL)   # [1, 100] → drives RIGHT motor
-        retic_from_R = self.reticulo_R(oR)   # [1, 100] → drives LEFT motor
-        retic_motor = torch.cat([retic_from_R, retic_from_L], dim=1)  # [L_mot, R_mot]
-        m = m + 0.1 * retic_motor
+        # Reticulospinal shortcut (crossed OT_L/R → motor R/L)
+        # Currently disabled: random weights add noise that degrades behavior.
+        # The retinal L/R balance pathway provides reliable turning.
+        # TODO: train reticulospinal weights with motor supervision
+        # retic_from_L = self.reticulo_L(oL)
+        # retic_from_R = self.reticulo_R(oR)
+        # retic_motor = torch.cat([retic_from_R, retic_from_L], dim=1)
+        # m = m + 0.1 * retic_motor
 
         # 5. Feedback pass (top-down, update apical for NEXT timestep)
         self.PC_int.update_apical(d)         # DA → PC_int
