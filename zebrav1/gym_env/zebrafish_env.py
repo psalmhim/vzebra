@@ -2451,25 +2451,26 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         eye_r_x = head_x + eye_fwd * cos_h + eye_lat * sin_h
         eye_r_y = head_y + eye_fwd * sin_h - eye_lat * cos_h
 
-        # White sclera
-        pygame.draw.circle(surface, (240, 240, 240),
+        # Zebrafish larva eyes: large dark lens with thin silver iris
+        # Dark lens (fills most of the eye)
+        pygame.draw.circle(surface, (15, 15, 25),
                            (int(eye_l_x), int(eye_l_y)), eye_r)
-        pygame.draw.circle(surface, (240, 240, 240),
+        pygame.draw.circle(surface, (15, 15, 25),
                            (int(eye_r_x), int(eye_r_y)), eye_r)
-        # Black pupil (forward-looking)
-        pupil_r = max(1, eye_r // 2)
-        pupil_off = eye_r * 0.3
-        pygame.draw.circle(surface, (10, 10, 10),
-                           (int(eye_l_x + pupil_off * cos_h),
-                            int(eye_l_y + pupil_off * sin_h)), pupil_r)
-        pygame.draw.circle(surface, (10, 10, 10),
-                           (int(eye_r_x + pupil_off * cos_h),
-                            int(eye_r_y + pupil_off * sin_h)), pupil_r)
-        # Eye outline
-        pygame.draw.circle(surface, (30, 30, 60),
+        # Silver-gold iris ring
+        pygame.draw.circle(surface, (180, 170, 120),
                            (int(eye_l_x), int(eye_l_y)), eye_r, 1)
-        pygame.draw.circle(surface, (30, 30, 60),
+        pygame.draw.circle(surface, (180, 170, 120),
                            (int(eye_r_x), int(eye_r_y)), eye_r, 1)
+        # Bright reflection spot (forward of centre)
+        ref_r = max(1, eye_r // 3)
+        ref_off = eye_r * 0.25
+        pygame.draw.circle(surface, (220, 230, 255),
+                           (int(eye_l_x + ref_off * cos_h),
+                            int(eye_l_y + ref_off * sin_h)), ref_r)
+        pygame.draw.circle(surface, (220, 230, 255),
+                           (int(eye_r_x + ref_off * cos_h),
+                            int(eye_r_y + ref_off * sin_h)), ref_r)
 
     def _draw_predator(self, surface, x, y, heading, size, color):
         """Draw predator: isosceles triangle with base=head, eyes, mouth, vertex=tail."""
