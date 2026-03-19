@@ -1349,15 +1349,43 @@ class BrainAgent:
                 cls_probs[2] = min(0.15, cls_probs[2] + 0.05 * _vig)
                 cls_probs /= cls_probs.sum() + 1e-8
 
-        # 7b4. Final pixel-evidence cap on p_enemy
-        #      The classifier + amygdala boost can hallucinate threats in
-        #      complex multi-entity scenes.  Cap p_enemy based on actual
-        #      enemy pixels in the type channel (ground truth).
-        #      Need ~25 pixels for full confidence; 0 pixels → cap at 0.02.
-        max_p_enemy = max(0.02, min(1.0, self._enemy_pixels_total / 15.0))
-        if cls_probs[2] > max_p_enemy:
-            cls_probs[2] = max_p_enemy
-            cls_probs /= cls_probs.sum() + 1e-8
+        # 7b4. Distance-proportional threat perception
+        #      Replace flat pixel cap with intensity-based distance estimate.
+        #      Closer predator → brighter pixels → higher p_enemy.
+        #      Far predator → dim pixels → lower p_enemy.
+        enemy_px = self._enemy_pixels_total
+        rf = self._retinal_features if self._retinal_features else {}
+        enemy_intensity = rf.get("enemy_intensity_mean", 0.0)
+
+        if enemy_px == 0:
+            cls_probs[2] = min(cls_probs[2], 0.02)
+        else:
+            # Distance from intensity: bright = close, dim = far
+            proximity = min(1.0, enemy_intensity * 1.5)
+            pixel_evidence = min(1.0, enemy_px / 15.0)
+            # Base threat from proximity
+            p_enemy_scaled = pixel_evidence * (0.1 + 0.9 * proximity)
+            # Looming boost: rapid pixel growth = approaching fast
+            growth = rf.get("enemy_growth_rate", 0.0)
+            if growth > 5:  # pixels growing fast = charging
+                looming_boost = min(0.3, growth / 30.0)
+                p_enemy_scaled += looming_boost
+            # Close range emergency: high pixel count = very close
+            if enemy_px > 30:
+                p_enemy_scaled = max(p_enemy_scaled, 0.4)
+            if enemy_px > 60:
+                p_enemy_scaled = max(p_enemy_scaled, 0.7)
+            cls_probs[2] = min(1.0, p_enemy_scaled)
+
+        # Also fix food perception: use raw pixel count as food signal
+        # (classifier fails on mixed scenes — raw count is more reliable)
+        food_px = rf.get("food_px_total", 0.0)
+        if food_px > 5:
+            food_signal = min(0.8, food_px / 100.0)  # 100 px → 0.8
+            # Blend: max of classifier and raw pixel signal
+            cls_probs[1] = max(cls_probs[1], food_signal)
+
+        cls_probs /= cls_probs.sum() + 1e-8
 
         # 7c. Sleep/wake modulation (Step 23)
         sleep_state = None
