@@ -1733,58 +1733,6 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                              (int(self.fish_x - flash_r),
                               int(self.fish_y - flash_r)))
 
-            # Eye anatomy indicator: perpendicular bisecting line divides
-            # each eye into lens (front, toward gaze) and retina (back).
-            # Each eye has its own outward gaze direction (left eye looks
-            # left, right eye looks right) modulated by saccade eye_pos.
-            eye_pos = getattr(self, '_saccade_eye_pos', 0.0)
-            saccade_active = getattr(self, '_saccade_active', False)
-            eye_outward = 0.4  # base outward angle from heading
-            left_gaze = self.fish_heading + eye_outward + eye_pos * 0.3
-            right_gaze = self.fish_heading - eye_outward + eye_pos * 0.3
-
-            # Compute eye positions (same as _draw_zebrafish)
-            spread = 0.55
-            eye_off = 0.3
-            sz = self.fish_size
-            bl_x = self.fish_x + sz * math.cos(self.fish_heading + spread)
-            bl_y = self.fish_y + sz * math.sin(self.fish_heading + spread)
-            br_x = self.fish_x + sz * math.cos(self.fish_heading - spread)
-            br_y = self.fish_y + sz * math.sin(self.fish_heading - spread)
-            el_x = bl_x + sz * eye_off * math.cos(self.fish_heading)
-            el_y = bl_y + sz * eye_off * math.sin(self.fish_heading)
-            er_x = br_x + sz * eye_off * math.cos(self.fish_heading)
-            er_y = br_y + sz * eye_off * math.sin(self.fish_heading)
-            eye_r = max(3, int(sz * 0.4))
-
-            # Draw retina semicircle + bisecting line per eye
-            retina_color = (140, 140, 140)
-            line_color = (255, 255, 0) if saccade_active else (20, 20, 20)
-            n_arc = 10
-            for ex, ey, gaze in [
-                (el_x, el_y, left_gaze),
-                (er_x, er_y, right_gaze),
-            ]:
-                # Retina semicircle (back half of eye)
-                pts = [(int(ex), int(ey))]
-                for i in range(n_arc + 1):
-                    a = gaze + math.pi / 2 + math.pi * i / n_arc
-                    pts.append((int(ex + eye_r * math.cos(a)),
-                                int(ey + eye_r * math.sin(a))))
-                if len(pts) >= 3:
-                    pygame.draw.polygon(surface, retina_color, pts)
-
-                # Perpendicular bisecting line
-                perp_dx = -math.sin(gaze)
-                perp_dy = math.cos(gaze)
-                pygame.draw.line(
-                    surface, line_color,
-                    (int(ex + perp_dx * eye_r),
-                     int(ey + perp_dy * eye_r)),
-                    (int(ex - perp_dx * eye_r),
-                     int(ey - perp_dy * eye_r)),
-                    2)
-
         # Draw colleagues (teal triangles, Step 20)
         for c in getattr(self, 'colleagues', []):
             self._draw_zebrafish(
