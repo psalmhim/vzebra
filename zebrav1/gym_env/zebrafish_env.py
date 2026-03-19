@@ -2439,14 +2439,17 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                 pygame.draw.polygon(surface, color, outline)
                 pygame.draw.polygon(surface, (20, 40, 120), outline, 1)
 
-        # Eyes — large relative to head (larval zebrafish)
-        eye_r = max(3, int(size * 0.35))
-        eye_spread = 0.5
-        eye_fwd = 0.4
-        eye_l_x = x + size * eye_fwd * cos_h - size * eye_spread * sin_h
-        eye_l_y = y + size * eye_fwd * sin_h + size * eye_spread * cos_h
-        eye_r_x = x + size * eye_fwd * cos_h + size * eye_spread * sin_h
-        eye_r_y = y + size * eye_fwd * sin_h - size * eye_spread * cos_h
+        # Eyes — anchored to head segment, lateral to body axis
+        head_x = seg_cx[0]
+        head_y = seg_cy[0]
+        eye_r = max(2, int(size * 0.3))
+        # Eye position: slightly forward and to the sides of the head
+        eye_fwd = size * 0.3
+        eye_lat = size * 0.4
+        eye_l_x = head_x + eye_fwd * cos_h - eye_lat * sin_h
+        eye_l_y = head_y + eye_fwd * sin_h + eye_lat * cos_h
+        eye_r_x = head_x + eye_fwd * cos_h + eye_lat * sin_h
+        eye_r_y = head_y + eye_fwd * sin_h - eye_lat * cos_h
 
         # White sclera
         pygame.draw.circle(surface, (240, 240, 240),
