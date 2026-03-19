@@ -2066,14 +2066,18 @@ class BrainAgent:
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
             wall_turn = wall_urgency * 0.8 * np.sign(angle_diff)
 
-        # Forced escape turn: when predator is centered ahead, raw_turn ≈ 0
-        # and the fish can't decide direction. Force a decisive turn.
-        if (effective_goal == GOAL_FLEE
-                and abs(brain_turn) < 0.15
-                and self._enemy_pixels_total > 5):
-            # Pick a side (consistent per episode via last turn direction)
-            escape_dir = 1.0 if self.last_diagnostics.get("turn_rate", 0) >= 0 else -1.0
-            brain_turn = escape_dir * 0.8  # strong forced turn
+        # Evasive dodge: when predator is close during FLEE, use sudden
+        # direction changes instead of trying to outrun.  Real zebrafish
+        # exploit the predator's larger turning radius (Domenici & Blake 1997).
+        if effective_goal == GOAL_FLEE and self._enemy_pixels_total > 3:
+            # Forced escape turn when predator centered ahead
+            if abs(brain_turn) < 0.15:
+                escape_dir = 1.0 if self.last_diagnostics.get("turn_rate", 0) >= 0 else -1.0
+                brain_turn = escape_dir * 1.0  # maximum turn
+            # Periodic dodge: alternate direction every ~8 steps when close
+            if self._enemy_pixels_total > 15 and self._step_count % 8 < 2:
+                dodge_dir = 1.0 if (self._step_count // 8) % 2 == 0 else -1.0
+                brain_turn = dodge_dir * 0.7  # sharp dodge
 
         # Blend: brain turn weight decreases near walls
         brain_weight = max(0.2, 1.0 - wall_urgency)
@@ -2196,6 +2200,9 @@ class BrainAgent:
         if _mauthner_result is not None:
             turn_rate = np.clip(_mauthner_result[0], -1.0, 1.0)
             speed = max(speed, _mauthner_result[1])  # at least Mauthner speed
+
+        # Pass turn rate to env for body curve rendering
+        env._last_turn_rate = turn_rate
 
         # Signal bout goal to env (Feature 1)
         env._bout_goal_mod = effective_goal

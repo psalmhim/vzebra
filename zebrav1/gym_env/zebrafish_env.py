@@ -2334,85 +2334,139 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             surface.blit(killed, (tx, ty))
 
     def _draw_zebrafish(self, surface, x, y, heading, size, color):
-        """Draw zebrafish: isosceles triangle with base=head, vertex=tail, plus eyes."""
+        """Draw zebrafish larva: smooth segmented body with undulating tail.
+
+        10 connected elliptical segments taper from head to tail.
+        Muscle-driven oscillation bends the body like a real larva.
+        """
         import pygame
 
-        spread = 0.55  # half-angle of the base from heading direction
+        n_seg = 10
+        seg_len = size * 0.35
+        cos_h = math.cos(heading)
+        sin_h = math.sin(heading)
+        perp_x = -sin_h
+        perp_y = cos_h
 
-        # Base corners (head side, facing heading)
-        base_l_x = x + size * math.cos(heading + spread)
-        base_l_y = y + size * math.sin(heading + spread)
-        base_r_x = x + size * math.cos(heading - spread)
-        base_r_y = y + size * math.sin(heading - spread)
-
-        # Tail vertex (behind)
-        tail_x = x - size * 1.5 * math.cos(heading)
-        tail_y = y - size * 1.5 * math.sin(heading)
-
-        points = [(base_l_x, base_l_y), (base_r_x, base_r_y),
-                  (tail_x, tail_y)]
-        pygame.draw.polygon(surface, color, points)
-        pygame.draw.polygon(surface, (20, 40, 150), points, 2)  # outline
-
-        # Eyes — circles at base corners
-        eye_r = max(3, int(size * 0.4))
-        # Offset eyes slightly forward from the base corners
-        eye_off = 0.3
-        eye_l_x = base_l_x + size * eye_off * math.cos(heading)
-        eye_l_y = base_l_y + size * eye_off * math.sin(heading)
-        eye_r_x = base_r_x + size * eye_off * math.cos(heading)
-        eye_r_y = base_r_y + size * eye_off * math.sin(heading)
-
-        pygame.draw.circle(surface, (255, 255, 255),
-                           (int(eye_l_x), int(eye_l_y)), eye_r)
-        pygame.draw.circle(surface, (0, 0, 0),
-                           (int(eye_l_x), int(eye_l_y)), eye_r, 1)
-        pygame.draw.circle(surface, (0, 0, 0),
-                           (int(eye_l_x), int(eye_l_y)), max(1, eye_r // 2))
-
-        pygame.draw.circle(surface, (255, 255, 255),
-                           (int(eye_r_x), int(eye_r_y)), eye_r)
-        pygame.draw.circle(surface, (0, 0, 0),
-                           (int(eye_r_x), int(eye_r_y)), eye_r, 1)
-        pygame.draw.circle(surface, (0, 0, 0),
-                           (int(eye_r_x), int(eye_r_y)), max(1, eye_r // 2))
-
-        # Tail oscillation: muscle-driven undulation (Step 38)
-        _muscle_L = getattr(self, '_muscle_L', 0.0)
-        _muscle_R = getattr(self, '_muscle_R', 0.0)
-        muscle_sum = _muscle_L + _muscle_R
-        muscle_diff = _muscle_R - _muscle_L  # positive = bend right
+        # Body undulation driven by actual turn rate + swim speed
+        # Turn rate determines sustained body curve direction
+        # Speed determines tail-beat amplitude
+        _turn_rate = getattr(self, '_last_turn_rate', 0.0)
         speed_ratio = self.fish_speed / max(self.fish_speed_base, 0.01)
-        if speed_ratio > 0.05 or muscle_sum > 0.1:
-            n_segments = 6
-            seg_len = size * 0.4
-            # Amplitude driven by muscle activity, not just speed
-            amplitude = size * 0.35 * max(speed_ratio, muscle_sum * 0.5, 0.2)
-            # Fast oscillation phase from step count (visible tail beat)
-            phase = self.step_count * 0.5
+        phase = self.step_count * 0.6
+        amplitude = size * 0.25 * max(speed_ratio, 0.15)
+        # Body curve from turning: positive turn → curve right
+        muscle_diff = _turn_rate * 0.5
 
-            perp_x = -math.sin(heading)
-            perp_y = math.cos(heading)
+        # Build segment centres along the body (head=0, tail=n_seg-1)
+        seg_cx = []
+        seg_cy = []
+        seg_widths = []
+        cumulative_angle = heading
 
-            points = [(int(tail_x), int(tail_y))]
-            for k in range(1, n_segments + 1):
-                t = k / n_segments
-                bx = tail_x - seg_len * k * math.cos(heading)
-                by = tail_y - seg_len * k * math.sin(heading)
-                # Muscle-biased oscillation: L>R → tail bends left (head right)
-                offset = (amplitude * (1.0 - t * 0.3)
-                          * math.sin(phase + k * 1.2)
-                          + muscle_diff * size * 0.5 * (1.0 - t * 0.4))
-                bx += perp_x * offset
-                by += perp_y * offset
-                points.append((int(bx), int(by)))
+        px, py = x, y
+        for i in range(n_seg):
+            t = i / (n_seg - 1)  # 0 at head, 1 at tail
 
-            # Bright tail with contrasting color for visibility
-            tail_color = (min(255, color[0] + 80),
-                          min(255, color[1] + 100),
-                          min(255, color[2] + 40))
-            pygame.draw.lines(surface, tail_color, False, points, 3)
-            pygame.draw.lines(surface, (20, 40, 150), False, points, 1)
+            # Body width: widest at head (0.7*size), tapers to tail (0.15*size)
+            width = size * (0.7 - 0.55 * t)
+            seg_widths.append(width)
+
+            # Undulation: traveling wave from head to tail
+            wave = amplitude * t * math.sin(phase + i * 0.9)
+            # Muscle bias: asymmetric bend
+            bias = muscle_diff * size * 0.3 * t
+
+            # Position: advance along body axis + lateral wave
+            if i > 0:
+                px -= seg_len * math.cos(cumulative_angle)
+                py -= seg_len * math.sin(cumulative_angle)
+                # Bend the body axis
+                bend = (wave + bias) * 0.08
+                cumulative_angle += bend
+
+            seg_cx.append(px + perp_x * (wave + bias) * 0.3)
+            seg_cy.append(py + perp_y * (wave + bias) * 0.3)
+
+        # Draw body segments (back to front for proper layering)
+        for i in range(n_seg - 1, -1, -1):
+            t = i / (n_seg - 1)
+            w = int(seg_widths[i])
+            cx, cy = int(seg_cx[i]), int(seg_cy[i])
+
+            # Body color: darker stripes (zebrafish pattern)
+            if i % 3 == 0:
+                seg_color = (max(0, color[0] - 30),
+                             max(0, color[1] - 20),
+                             min(255, color[2] + 20))
+            else:
+                seg_color = color
+
+            # Tail fin: last 2 segments are transparent/thin
+            if i >= n_seg - 2:
+                fin_color = (min(255, color[0] + 60),
+                             min(255, color[1] + 80),
+                             min(255, color[2] + 30))
+                if w > 2:
+                    pygame.draw.ellipse(surface, fin_color,
+                                        (cx - w, cy - w // 2, w * 2, w))
+            else:
+                pygame.draw.ellipse(surface, seg_color,
+                                    (cx - w // 2, cy - w // 2, w, w))
+
+        # Draw body outline (smooth curve through segment centres)
+        if len(seg_cx) > 2:
+            # Left edge
+            left_pts = []
+            right_pts = []
+            for i in range(n_seg):
+                cx, cy = seg_cx[i], seg_cy[i]
+                w = seg_widths[i] * 0.5
+                # Perpendicular to body axis at this segment
+                if i < n_seg - 1:
+                    dx = seg_cx[i + 1] - seg_cx[i]
+                    dy = seg_cy[i + 1] - seg_cy[i]
+                else:
+                    dx = seg_cx[i] - seg_cx[i - 1]
+                    dy = seg_cy[i] - seg_cy[i - 1]
+                d = math.sqrt(dx * dx + dy * dy) + 1e-8
+                nx, ny = -dy / d, dx / d
+                left_pts.append((int(cx + nx * w), int(cy + ny * w)))
+                right_pts.append((int(cx - nx * w), int(cy - ny * w)))
+
+            outline = left_pts + list(reversed(right_pts))
+            if len(outline) > 2:
+                pygame.draw.polygon(surface, color, outline)
+                pygame.draw.polygon(surface, (20, 40, 120), outline, 1)
+
+        # Eyes — large relative to head (larval zebrafish)
+        eye_r = max(3, int(size * 0.35))
+        eye_spread = 0.5
+        eye_fwd = 0.4
+        eye_l_x = x + size * eye_fwd * cos_h - size * eye_spread * sin_h
+        eye_l_y = y + size * eye_fwd * sin_h + size * eye_spread * cos_h
+        eye_r_x = x + size * eye_fwd * cos_h + size * eye_spread * sin_h
+        eye_r_y = y + size * eye_fwd * sin_h - size * eye_spread * cos_h
+
+        # White sclera
+        pygame.draw.circle(surface, (240, 240, 240),
+                           (int(eye_l_x), int(eye_l_y)), eye_r)
+        pygame.draw.circle(surface, (240, 240, 240),
+                           (int(eye_r_x), int(eye_r_y)), eye_r)
+        # Black pupil (forward-looking)
+        pupil_r = max(1, eye_r // 2)
+        pupil_off = eye_r * 0.3
+        pygame.draw.circle(surface, (10, 10, 10),
+                           (int(eye_l_x + pupil_off * cos_h),
+                            int(eye_l_y + pupil_off * sin_h)), pupil_r)
+        pygame.draw.circle(surface, (10, 10, 10),
+                           (int(eye_r_x + pupil_off * cos_h),
+                            int(eye_r_y + pupil_off * sin_h)), pupil_r)
+        # Eye outline
+        pygame.draw.circle(surface, (30, 30, 60),
+                           (int(eye_l_x), int(eye_l_y)), eye_r, 1)
+        pygame.draw.circle(surface, (30, 30, 60),
+                           (int(eye_r_x), int(eye_r_y)), eye_r, 1)
 
     def _draw_predator(self, surface, x, y, heading, size, color):
         """Draw predator: isosceles triangle with base=head, eyes, mouth, vertex=tail."""
