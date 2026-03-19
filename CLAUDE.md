@@ -1,157 +1,102 @@
 # vzebra — Zebrafish Brain Simulation
 
 ## Environment
-- Python: `.venv/bin/python` (Python 3.12, has numpy/torch/etc.)
-- Do NOT use system python3 or conda — use `.venv` in project root
+- Python: `.venv/bin/python` (Python 3.12)
+- Setup: `python -m venv .venv && .venv/bin/pip install torch numpy matplotlib gymnasium pygame imageio imageio-ffmpeg`
+- If Dropbox sync breaks .so: `rm -rf .venv` and recreate
 - Device: MPS (Apple Silicon) via `get_device()` in `brain/device_util.py`
-- Setup: `python -m venv .venv && .venv/bin/pip install torch numpy matplotlib gymnasium pygame`
-- If Dropbox sync invalidates .so signatures: `rm -rf .venv && python3.12 -m venv .venv && .venv/bin/pip install torch numpy matplotlib gymnasium pygame`
 
 ## Architecture
-- `zebrav1/` — main package (zebrafish brain simulation)
-- `zebrav1/brain/` — 28 neural modules (SNN, optic tectum, dopamine, BG, world models, etc.)
-- `zebrav1/gym_env/` — Gymnasium environment + BrainAgent bridge
-- `zebrav1/world/` — WorldEnv (ray-casting world) + renderer
-- `zebrav1/tests/` — step-by-step integration tests (step1 through step31)
-- `zebrav1/viz/` — neural monitor visualization
-- `zebrav1/weights/` — pretrained weights (genomic, hebbian, classifier) — git-ignored
+- `zebrav1/` — main package (35+ brain modules, renamed from zebra_v60)
+- `zebrav1/brain/` — SNN, world models, sensory, motor, neuromodulatory modules
+- `zebrav1/gym_env/` — Gymnasium env + BrainAgent + MultiAgentEnv
+- `zebrav1/world/` — WorldEnv (ray-casting) + renderer
+- `zebrav1/tests/` — step-by-step tests (step1 through step34)
+- `zebrav1/viz/` — neural monitor (920px, shows all 41 steps)
+- `zebrav1/paper.tex` — 65-page technical report (Steps 1-41)
 
 ## Key Files
-- `brain_agent.py` — main brain pipeline (~2300 lines), orchestrates all modules
-- `zebrafish_snn.py` — SNN model with PredictiveTwoComp neurons + AttentionModulator
-- `zebrafish_env.py` — Gymnasium env (prey-predator arena with rocks, food, predator)
-- `hebbian.py` — RPE-gated Hebbian + PE-driven anti-Hebbian feedback learning
-- `retina_sampling.py` — binocular retinal sampling (800 per eye: 400 intensity + 400 type)
-- `geographic_model.py` — grid-based obstacle/food spatial map (Step 31)
-- `predator_model.py` — Kalman-filter predator tracker with object permanence (Step 31)
-- `internal_state_model.py` — energy trajectory simulator with learned metabolic costs (Step 31)
+- `brain_agent.py` — main pipeline (~2500 lines), orchestrates all modules
+- `zebrafish_snn.py` — SNN with PredictiveTwoComp + reticulospinal shortcut (disabled)
+- `zebrafish_env.py` — Gymnasium env with circadian background, muscle-driven tail
+- `multi_agent_env.py` — 5-fish environment (1 focal + 4 conspecific brains)
+- `spinal_cpg.py` — 32-neuron spiking half-centre oscillator (LIF)
 
-## SNN Architecture
-- **PredictiveTwoComp**: two-compartment neuron (soma V_s + apical V_a), PE = V_a - V_s
-- **AttentionModulator**: goal → 8 attention neurons → per-layer projection
-- **Homeostatic gain control**: TARGET_RMS=5.0, divisive normalization
-- Layers: OT_L/OT_R (frozen TwoComp) → OT_F → PT_L → PC_per → PC_int → mot/eye/DA
-- Weight naming: W_FF (feedforward), W_FB (feedback) — NOT old W or weight/bias
+## SNN Architecture & Motor Pathway
+- Layers: OT_L/OT_R → OT_F → PT_L → PC_per → PC_int → mot/eye/DA
+- **Signal death**: deep layers (PC_int, motor) have near-zero activity (RMS 0.002)
+- **Primary turn signal**: retinal L/R balance (retR_sum - retL_sum) — NOT SNN motor output
+- **Reticulospinal shortcut**: OT_L→motor_R, OT_R→motor_L (DISABLED — random weights add noise)
+- **Homeostatic gain**: unidirectional (suppress only). Bidirectional boost was tried but degraded behavior.
+- **SNN motor neurons**: alive via reticulospinal (RMS ~1.8 when enabled) but untrained for correct L/R
+- **Next step**: train reticulospinal weights with supervised motor targets
 
-## Type Encoding (retina_sampling.py)
-- NONE=0.0, FOOD=1.0, ENEMY=0.5, COLLEAGUE=0.25, BOUNDARY=0.12, OBSTACLE=0.75, PREY=0.38
-- Detection tolerance: `|type - val| < 0.1` (boundary uses 0.05)
+## Spinal CPG (Step 38)
+- 32 LIF neurons: 8 V2a excitatory + 4 V0d inhibitory + 4 motor per side
+- Brain provides tonic drive (speed) + turn bias → CPG adds phasic L/R oscillation
+- CPG glide phase bypassed during FLEE (maintain full escape speed)
+- Muscle L/R drives tail rendering asymmetry
 
-## Classifier Architecture
-- Input: 804 dims (800 raw type pixels + 4 aggregate pixel counts: obs/ene/food/boundary)
-- Hidden: 128 ReLU units, Output: 5 classes
-- Pixel count features enable obstacle vs enemy/food disambiguation (large vs point entities)
-- Class-weighted loss (3x for environment), n_integration=8 for environment class
+## Modules (Steps 31-41)
+- Geographic model, Predator model, Internal state model (Step 31)
+- Lateral line (Step 32), Cerebellum (Step 33), Multi-agent (Step 34)
+- Olfaction + alarm substance (Step 35), Habenula (Step 36)
+- Vestibular (Step 37), Spiking CPG (Step 38), Color vision (Step 39)
+- Circadian clock (Step 40), Proprioception (Step 41)
 
 ## Training Pipeline
-1. **Step 8** (genomic pretraining): 70% FORAGE + 20% FLEE + 10% EXPLORE → `weights/genomic.pt`
-2. **Step 10** (Hebbian fine-tuning): online RPE-gated plasticity → `weights/genomic_hebbian.pt`
-3. **Step 11** (classifier): goal-matched context, obstacle scenes → `weights/classifier.pt`
-4. **Step 26** (W_FB training): online layer-wise PE minimization, frozen W_FF → `weights/classifier_wfb.pt`
-- All training steps MUST pass `goal_probs` to `model.forward()` — without it, AttentionModulator trains on zeros
-- Step 26 MUST freeze W_FF (`_skip_ff_update=True`) and classifier to prevent representational drift
+1. **Step 8** genomic → `weights/genomic.pt` (74% direction accuracy)
+2. **Step 10** Hebbian → `weights/genomic_hebbian.pt`
+3. **Step 11** classifier → `weights/classifier.pt` (100% all 5 classes)
+4. **Step 26** W_FB → `weights/classifier_wfb.pt`
+- Step 11 is slow (~1hr on MPS)
+- All steps MUST pass `goal_probs` to `model.forward()`
 
-## Weight Loading
-- `brain_agent.py` uses `model.load_saveable_state(state)` (NOT `load_state_dict`)
-- `load_saveable_state()` handles migration from old format (TwoComp.W → W_FF, nn.Linear → W_FF.t())
+## Checkpoint System
+- `save_checkpoint`: SNN, habit, critic, VAE, place cells, Hebbian, geographic, internal state, cerebellum, habenula
+- `load_checkpoint`: restores all learned state
+- Use `--autosave` flag in demo to persist online learning
 
-## Free Energy & Bayesian Brain
-- **Free energy**: F = accuracy (Σ π_l·PE²) + 0.01·complexity (Σ γ²) — upper bounds surprise
-- **Bayesian surprise**: |F(t) - F(t-1)| — regime change detection
-- **Attention = precision optimization**: goal-driven additive somatic bias (Feldman & Friston 2010)
-- **Interoceptive PE**: allostatic errors are prediction errors across the interoceptive Markov blanket
-- **EFE precision modulation**: σ_E tightens under hunger, σ_S tightens under stress
-- **DP-like memory**: AssociativeMemory with CRP allocation (concentration α)
-
-## Structured World Models (Step 31)
-Three domain-specific generative models (always-on, pure numpy):
-- **Geographic model** (`geographic_model.py`): 40×30 grid obstacle/food map, lateralised retinal updates, epistemic exploration bonus, persists across episodes
-- **Predator model** (`predator_model.py`): Kalman filter, object permanence when predator invisible, intent inference (hunting vs patrol), TTC + flee direction, used in cover-seeking
-- **Internal state model** (`internal_state_model.py`): replaces InteroceptiveEnergyModel, 30-step energy trajectory simulation, learned metabolic costs, counterfactual policy comparison, cached every 5 steps
-
-## Motor Primitives (zebrafish_env.py)
-- Bout types: IDLE, ROUTINE_FWD/L/R, J_TURN, BURST, C_START, CAPTURE, ESCAPE, FLEE_BURST
-- Brain controls DIRECTION (turn_rate), motor system controls TIMING (burst-glide-idle)
-- Biological noise: σ=0.03 during burst, σ=0.015 during idle (fidgeting)
-- Goal-modulated IBI: FLEE=1, FORAGE=2, EXPLORE/SOCIAL=3 steps
-- Urgent stimuli + starvation interrupt IBI immediately
-
-## Binocular Depth + Predator Speed
-- `compute_binocular_depth()` in retina_sampling.py
-- Mono intensity + stereo overlap → per-entity depth estimate
-- Predator speed from binocular depth temporal changes → TTC improvement
-- Looming detector: l/v ratio < 10 triggers Mauthner C-start
-
-## Escape Reflex (Mauthner C-start)
-- Looming trigger → 4-step stereotyped escape (C-bend 1.5 rad + propulsive 1.6x)
-- 12-step refractory period, away from enemy lateral bias
-- Prey capture: J-TURN (3 steps) → APPROACH (5) → STRIKE (2, 1.4x eat radius)
-
-## Optimal Foraging (density-based)
-- Local density = neighbors within 80px radius
-- net_value = density + gain + urgency + proximity² - distance - risk - occlusion
-- State-dependent risk: starving fish discount predator risk at food (Lima & Dill 1990)
-- Nearest food in highest-value patch pursued first
-
-## Social Learning (shoaling.py)
-- observe_social_cues(): infer danger/food from conspecific behavior
-- social_alarm: fast-moving neighbours → boost p_enemy (flee signal)
-- social_food_bearing: slow neighbours clustered → food patch direction
-- Always active (not just during SOCIAL goal)
-
-## Decision Rationality (Step 29)
-- 6 metrics: foraging efficiency, patch selection, flee timing, path efficiency, energy management, threat response
-- 5 structured scenarios: safe/risky, occluded/open, predator charge, starvation dilemma, detour
-- Overall: 87/100 RATIONAL (A=80, B=80, C=87, D=100, E=86)
-
-## Curriculum Training (Step 30)
-- 4 stages: FORAGE_EASY → FORAGE_HARD → SURVIVE_EASY → SURVIVE_HARD
-- Current: 4/4 EXPERT (passes all stages including full environment survival)
-- Bayesian starvation trade-off: orexigenic override of flee when energy critical
-- Amygdala damping below 25% energy, flee burst truncation when starving
+## Current Scores
+- Classifier: 100% all classes
+- Curriculum: 2/4 LEARNING (regression from architecture changes)
+- Decision quality: ~60/100 (regression from SNN retrain)
+- Known issue: Scenario C (predator charge) — fish flees but can't outrun predator
 
 ## Flee Behavior
-- Hard flee threshold: p_enemy > 0.20 (sensitive)
-- Pixel-evidence cap: enemy_pixels / 10 (allows p_enemy up to 1.0 at 10 pixels)
-- Flee exit: needs p_enemy < 0.10 for 5 steps (sticky)
-- Emergency flee threshold: p_enemy > 0.20
+- Hard flee threshold: p_enemy > 0.25
+- Pixel-evidence cap: enemy_pixels / 15
+- Flee exit: p_enemy < 0.10 for 5 steps
 - Looming trigger: l/v < 10, enemy_px > 3
 
-## Interactive Commands (during --render demo)
-- P: predator ATTACK (charge at fish), R: predator RETREAT, F: spawn FOOD cluster
-
-## Obstacle Navigation (brain_agent.py section 12b-12d)
-- **Bilateral repulsion**: steer away from rock-heavy eye, 1.5x amplification above 15 pixels
-- **Center-escape**: post-gain escape turn when rock centered ahead (|L-R| < 5, total > 20)
-- **Stuck detection**: 8+ steps barely moving near obstacle → force EXPLORE
-- **Occluded food exclusion**: skip food behind rocks when urgency < 0.5
-- **Physics rebound**: heading deflection gain 0.7 on collision
-- **Foraging override**: preserved for moderate coverage (<70%), removed at dense walls
-
-## Bayesian Survival Trade-off (goal_policy.py)
-- `starvation_risk = max(0, (0.50 - energy_ratio) / 0.50)` modulates all 4 goals
-- FORAGE urgency increases via orexigenic coefficient, FLEE cost scales nonlinearly
-- When both predator + starvation active: Bayesian model comparison via EFE softmax with forage bias
-- Starvation mechanics: 1.3x metabolic cost below 30%, 1.15x below 50% energy
-- Speed cap: below 20% energy, max speed scales down linearly
+## Rendering
+- Circadian day/night background color (Step 40)
+- Muscle-driven tail oscillation with L/R bend asymmetry (Step 38)
+- Vestibular tilt effect on fish size (Step 37)
+- Proprioceptive collision flash (Step 41)
+- Neural monitor: CPG L/R, color UV/B/G/R, circadian dial, LL flow, olfaction, habenula, cerebellum PE
 
 ## Running
 ```bash
-# Full demo
-.venv/bin/python -m zebrav1.gym_env.demo --brain --render --monitor --record --sound --steps 500
+# Demo (single fish)
+.venv/bin/python -m zebrav1.gym_env.demo --brain --render --monitor --steps 500
 
-# Evaluation
-.venv/bin/python -m zebrav1.tests.step19_full_evaluation
-.venv/bin/python -m zebrav1.tests.step29b_decision_scenarios
-.venv/bin/python -m zebrav1.tests.step30_curriculum_motor
-.venv/bin/python -m zebrav1.tests.step31_structured_world_models
+# Multi-agent (5 fish)
+.venv/bin/python -m zebrav1.gym_env.demo --brain --render --monitor --multi-agent --steps 500
 
-# Training (in order)
+# Record video
+.venv/bin/python -m zebrav1.gym_env.demo --brain --render --record --monitor --steps 1500
+
+# Training (in order, step11 is ~1hr)
 .venv/bin/python -m zebrav1.tests.step8_genomic_pretraining
 .venv/bin/python -m zebrav1.tests.step10_hebbian_finetuning
 .venv/bin/python -m zebrav1.tests.step11_object_classification
 .venv/bin/python -m zebrav1.tests.step26_wfb_pe_training
+
+# Evaluation
+.venv/bin/python -m zebrav1.tests.step29b_decision_scenarios
+.venv/bin/python -m zebrav1.tests.step30_curriculum_motor
 ```
 
 ## Branches
-- `main` — working v1 with steps 1-31 (PC, AIF, Bayesian brain, motor primitives, social learning, curriculum, structured world models)
+- `main` — Steps 1-41, 35+ modules, 65-page paper
