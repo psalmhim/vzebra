@@ -127,16 +127,18 @@ class PredictiveTwoComp(nn.Module):
                     + apical_drive
                     + self.alpha_att * self.m_att)
         # Bidirectional homeostatic gain control:
-        # Both suppresses overactive AND boosts underactive layers.
-        # Biologically: neurons maintain a target firing rate via
-        # synaptic scaling (Turrigiano 2008).
+        # Suppresses overactive AND gently boosts underactive layers.
+        # Boost is conservative (max 1.5x) to prevent noise amplification.
+        # Biologically: synaptic scaling (Turrigiano 2008).
         v_rms = (self.v_s ** 2).mean().sqrt()
-        if v_rms > 1e-6:
-            # Smooth gain adjustment toward TARGET_RMS
-            ratio = self.TARGET_RMS / (v_rms + 1e-8)
-            # Clamp gain: max 3x boost, no limit on suppression
-            gain = min(3.0, ratio)
-            self.v_s = self.v_s * gain
+        if v_rms > self.TARGET_RMS:
+            # Suppress: scale down to target
+            self.v_s = self.v_s * (self.TARGET_RMS / v_rms)
+        elif v_rms > 0.1 and v_rms < self.TARGET_RMS * 0.5:
+            # Gentle boost: only when significantly below target
+            # and activity is non-trivial (>0.1 RMS)
+            boost = min(1.5, self.TARGET_RMS / (v_rms + 1e-8))
+            self.v_s = self.v_s * boost
 
         # Compute prediction error (apical prediction - somatic evidence)
         self.pred_error = self.v_a - self.v_s
