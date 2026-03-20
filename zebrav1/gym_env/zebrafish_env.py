@@ -831,7 +831,11 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # Bouts modulate speed timing + add turn noise; brain controls direction
         bout_turn_noise, bout_speed = self._update_bout_state(speed_mod, turn_rate)
         # Brain turn + biological noise from motor primitive
-        self.fish_heading += turn_rate * self.fish_turn_max + bout_turn_noise
+        # Flee turn boost: only when actively fleeing (previous step's state)
+        effective_turn_max = self.fish_turn_max
+        if getattr(self, '_flee_active', False):
+            effective_turn_max *= 3.0  # 0.15 → 0.45 rad/step during flee
+        self.fish_heading += turn_rate * effective_turn_max + bout_turn_noise
         self.fish_heading = math.atan2(
             math.sin(self.fish_heading), math.cos(self.fish_heading))
         self.fish_speed = self.fish_speed_base * bout_speed
