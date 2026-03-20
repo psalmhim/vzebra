@@ -1364,11 +1364,17 @@ class BrainAgent:
                 _pm_pos = np.array([env.fish_x, env.fish_y])
                 _pm_heading = env.fish_heading
             self.predator_model.predict()
-            # Feed retinal features in both AI and non-AI mode
+            # Feed retinal features + ground truth (non-AI) or retinal only (AI)
             rf = getattr(self, '_retinal_features', None)
+            gt_pos = None if self.use_active_inference else (env.pred_x, env.pred_y)
             if rf:
                 self.predator_model.update(
-                    rf, _pm_pos, _pm_heading, env.step_count)
+                    rf, _pm_pos, _pm_heading, env.step_count,
+                    gt_pred_pos=gt_pos)
+            elif gt_pos is not None:
+                self.predator_model.update(
+                    {}, _pm_pos, _pm_heading, env.step_count,
+                    gt_pred_pos=gt_pos)
             # Blend model TTC with existing threat TTC
             pm_ttc, pm_conf = self.predator_model.get_ttc(_pm_pos)
             if pm_conf > 0.3:

@@ -125,15 +125,47 @@ class PredatorModel:
     # Observation update
     # ------------------------------------------------------------------
 
-    def update(self, retinal_features, fish_pos, fish_heading, step):
-        """Update belief from retinal observation.
+    def update(self, retinal_features, fish_pos, fish_heading, step,
+               gt_pred_pos=None):
+        """Update belief from retinal observation + optional ground truth.
 
         Args:
             retinal_features: dict from _extract_retinal_features()
             fish_pos: array-like [2] — fish gym position
             fish_heading: float — fish heading (radians)
             step: int — current step
+            gt_pred_pos: (x, y) or None — ground truth predator position
+                         (used in non-AI mode for accurate tracking)
         """
+        # Ground truth update (non-AI mode): direct position with small noise
+        if gt_pred_pos is not None:
+            b = self.belief
+            # Noisy observation (simulates imperfect omniscience)
+            noise = 10.0  # 10px noise
+            obs_x = gt_pred_pos[0] + np.random.normal(0, noise)
+            obs_y = gt_pred_pos[1] + np.random.normal(0, noise)
+            # Kalman update with low noise
+            K = 0.5
+            b.x += K * (obs_x - b.x)
+            b.y += K * (obs_y - b.y)
+            b.pos_var = (1 - K) * b.pos_var + 50.0
+            b.visible = True
+            b.steps_since_seen = 0
+            b.last_seen_pos = (obs_x, obs_y)
+            # Velocity from position delta
+            self._obs_history.append((step, obs_x, obs_y))
+            if len(self._obs_history) > 20:
+                self._obs_history = self._obs_history[-20:]
+            if len(self._obs_history) >= 3:
+                recent = self._obs_history[-3:]
+                dt = recent[-1][0] - recent[0][0]
+                if dt > 0:
+                    b.vx = 0.7 * b.vx + 0.3 * (recent[-1][1] - recent[0][1]) / dt
+                    b.vy = 0.7 * b.vy + 0.3 * (recent[-1][2] - recent[0][2]) / dt
+            self._infer_intent(fish_pos)
+            return
+
+        # Retinal update (AI mode)
         rf = retinal_features
         enemy_px = rf.get("enemy_px_total", 0.0)
 
