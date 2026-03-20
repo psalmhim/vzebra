@@ -1391,10 +1391,10 @@ class BrainAgent:
             if growth > 5:
                 p_enemy_scaled += min(0.3, growth / 20.0)
 
-            # Close range emergency override
-            if enemy_px > 50:
+            # Close range emergency: high pixel count AND bright = truly close
+            if enemy_px > 50 and proximity > 0.4:
                 p_enemy_scaled = max(p_enemy_scaled, 0.5)
-            if enemy_px > 80:
+            if enemy_px > 80 and proximity > 0.6:
                 p_enemy_scaled = max(p_enemy_scaled, 0.8)
 
             cls_probs[2] = min(1.0, p_enemy_scaled)
@@ -2121,18 +2121,24 @@ class BrainAgent:
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
             wall_turn = wall_urgency * 0.8 * np.sign(angle_diff)
 
-        # Evasive dodge: when predator is close during FLEE, use sudden
-        # direction changes instead of trying to outrun.  Real zebrafish
-        # exploit the predator's larger turning radius (Domenici & Blake 1997).
+        # Flee escape: forced turn when predator centered + wall avoidance
         if effective_goal == GOAL_FLEE and self._enemy_pixels_total > 3:
-            # Forced escape turn when predator centered ahead
+            # Forced turn when predator centered ahead (retinal balance ~0)
             if abs(brain_turn) < 0.15:
                 escape_dir = 1.0 if self.last_diagnostics.get("turn_rate", 0) >= 0 else -1.0
-                brain_turn = escape_dir * 1.0  # maximum turn
-            # Periodic dodge: alternate direction every ~8 steps when close
-            if self._enemy_pixels_total > 15 and self._step_count % 8 < 2:
-                dodge_dir = 1.0 if (self._step_count // 8) % 2 == 0 else -1.0
-                brain_turn = dodge_dir * 0.7  # sharp dodge
+                brain_turn = escape_dir * 1.0
+
+            # Wall avoidance during flee: if heading toward wall, bias turn
+            fx, fy = env.fish_x, env.fish_y
+            margin = 60
+            if fx < margin:
+                brain_turn += 0.3 * (margin - fx) / margin
+            elif fx > env.arena_w - margin:
+                brain_turn -= 0.3 * (fx - (env.arena_w - margin)) / margin
+            if fy < margin:
+                brain_turn += 0.3 * (margin - fy) / margin
+            elif fy > env.arena_h - margin:
+                brain_turn -= 0.3 * (fy - (env.arena_h - margin)) / margin
 
         # Blend: brain turn weight decreases near walls
         brain_weight = max(0.2, 1.0 - wall_urgency)

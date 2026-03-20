@@ -113,7 +113,7 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         self.fish_size = 12        # triangle half-length
         self.fish_speed_base = 3.0    # 1x normal swim speed (px/step)
         self.fish_turn_max = 0.15  # radians per step
-        self.eat_radius = 28.0
+        self.eat_radius = 35.0     # scaled with fish_speed_base=3.0
 
         # Predator parameters (1.5x bigger)
         self.pred_size = 18        # 1.5x fish
@@ -1387,10 +1387,11 @@ class ZebrafishPreyPredatorEnv(gym.Env):
 
         elif self.pred_state == "HUNT":
             # Active sprint — burns stamina proportional to chase effort
-            _chase_drain = 0.005 * (1.0 + 0.5 * getattr(self, '_last_chase_boost', 0.0))
+            # Stamina drains faster during sustained chase (realistic fatigue)
+            _chase_drain = 0.008 * (1.0 + 0.5 * getattr(self, '_last_chase_boost', 0.0))
             self.pred_stamina = max(0.0, self.pred_stamina - _chase_drain)
             # Give up if exhausted or fish too far
-            if self.pred_stamina < 0.03 or dist > self.pred_chase_radius:
+            if self.pred_stamina < 0.05 or dist > self.pred_chase_radius:
                 self.pred_state = "PATROL"
                 self.pred_state_timer = 0
             # Transition to stalk if fish gets far but still visible
@@ -1450,20 +1451,29 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             # Predictive intercept: aim where the fish will be
             fish_vx = self.fish_speed * math.cos(self.fish_heading)
             fish_vy = self.fish_speed * math.sin(self.fish_heading)
-            # Predict fish position ~10 steps ahead
+            # Predict fish position ~10 steps ahead (imperfect)
             intercept_steps = min(10.0, dist / max(0.5, self.pred_speed))
             target_x = self.fish_x + fish_vx * intercept_steps
             target_y = self.fish_y + fish_vy * intercept_steps
-            # Clamp to arena
+
+            # Predator error: noisy prediction (real predators aren't perfect)
+            pred_noise = self.np_random.normal(0, 15.0)  # 15px position error
+            target_x += pred_noise
+            target_y += pred_noise * 0.7
             target_x = np.clip(target_x, 30, self.arena_w - 30)
             target_y = np.clip(target_y, 30, self.arena_h - 30)
+
+            # Occasional distraction: predator loses focus (5% chance/step)
+            if self.np_random.random() < 0.05:
+                # Random heading jitter — momentary confusion
+                self.pred_heading += self.np_random.uniform(-0.3, 0.3)
 
             angle_to_target = math.atan2(target_y - self.pred_y,
                                           target_x - self.pred_x)
             angle_diff = angle_to_target - self.pred_heading
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
-            # Faster turning during hunt
-            self.pred_heading += np.clip(angle_diff, -0.15, 0.15)
+            # Turn rate limited (predator can't turn as sharply as fish)
+            self.pred_heading += np.clip(angle_diff, -0.12, 0.12)
             # Hunt: max 1.4x fish speed = 4.2 px/step
             # pred_speed=2.7, so need mult ~1.56 at full chase
             hunger_boost = 1.0 + 0.1 * self.pred_hunger
