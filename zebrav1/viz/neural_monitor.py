@@ -62,7 +62,7 @@ class NeuralMonitor:
     """
 
     WIDTH = 500
-    HEIGHT = 920
+    HEIGHT = 960
     BG_COLOR = (15, 15, 25)
     LABEL_COLOR = (200, 200, 200)
     GRID_COLOR = (40, 40, 55)
@@ -639,6 +639,68 @@ class NeuralMonitor:
                   (220, 50, 50), "Fear")
         val_color = (50, 180, 50) if valence > 0 else (180, 50, 50)
         self._bar(440, y7 + 68, 50, 12, valence, 1.0, val_color, "Val")
+
+        # ── Row 8: Mini-map + Goal timeline (y: 830-910) ──
+        y8 = 830
+
+        # Mini-map (100x75 px, shows fish + predator + food positions)
+        map_w, map_h = 100, 75
+        map_x = 6
+        pygame.draw.rect(self.surface, (30, 40, 60), (map_x, y8, map_w, map_h))
+        pygame.draw.rect(self.surface, (60, 70, 90), (map_x, y8, map_w, map_h), 1)
+        # Scale positions to mini-map
+        aw = diag.get("arena_w", 800)
+        ah = diag.get("arena_h", 600)
+        fx = diag.get("fish_x", 400)
+        fy = diag.get("fish_y", 300)
+        px_m = int(map_x + fx / aw * map_w)
+        py_m = int(y8 + fy / ah * map_h)
+        pygame.draw.circle(self.surface, (50, 100, 255), (px_m, py_m), 3)
+        # Predator
+        pred_x = diag.get("pred_x", 0)
+        pred_y = diag.get("pred_y", 0)
+        ppx = int(map_x + pred_x / aw * map_w)
+        ppy = int(y8 + pred_y / ah * map_h)
+        pygame.draw.circle(self.surface, (255, 50, 50), (ppx, ppy), 3)
+        self._label("MAP", map_x + map_w + 4, y8, color=(100, 120, 150))
+
+        # Goal history timeline (last 100 steps)
+        if not hasattr(self, '_goal_history'):
+            self._goal_history = []
+        goal = diag.get("goal", 2)
+        self._goal_history.append(goal)
+        if len(self._goal_history) > 100:
+            self._goal_history = self._goal_history[-100:]
+
+        tl_x, tl_y = 120, y8
+        tl_w, tl_h = W - 130, 12
+        goal_colors_rgb = [(50, 200, 50), (220, 50, 50), (80, 130, 220), (0, 180, 170)]
+        for i, g in enumerate(self._goal_history):
+            gx = tl_x + int(i * tl_w / 100)
+            gc = goal_colors_rgb[min(g, 3)]
+            pygame.draw.line(self.surface, gc, (gx, tl_y), (gx, tl_y + tl_h))
+        pygame.draw.rect(self.surface, (60, 60, 80), (tl_x, tl_y, tl_w, tl_h), 1)
+        self._label("GOAL TIMELINE", tl_x, tl_y - 10, font=self.font_small,
+                    color=(150, 150, 180))
+
+        # Energy sparkline
+        if not hasattr(self, '_energy_history'):
+            self._energy_history = []
+        energy = diag.get("energy", 100)
+        self._energy_history.append(energy)
+        if len(self._energy_history) > 100:
+            self._energy_history = self._energy_history[-100:]
+
+        el_y = tl_y + 20
+        for i in range(1, len(self._energy_history)):
+            ex1 = tl_x + int((i - 1) * tl_w / 100)
+            ex2 = tl_x + int(i * tl_w / 100)
+            ey1 = int(el_y + 20 * (1 - self._energy_history[i - 1] / 100))
+            ey2 = int(el_y + 20 * (1 - self._energy_history[i] / 100))
+            ec = (50, 200, 50) if self._energy_history[i] > 30 else (220, 80, 30)
+            pygame.draw.line(self.surface, ec, (ex1, ey1), (ex2, ey2))
+        self._label("ENERGY", tl_x, el_y - 2, font=self.font_small,
+                    color=(100, 200, 100))
 
         # Frame counter
         self._label(f"frame {self._frame}", W - 80, self.HEIGHT - 16,

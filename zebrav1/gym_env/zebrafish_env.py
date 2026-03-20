@@ -1688,6 +1688,31 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         _bg_b = int(90 + 150 * _circ_activity)
         surface.fill((_bg_r, _bg_g, _bg_b))
 
+        # Arena border — sandy shore edge
+        border_w = 8
+        shore_color = (180, 160, 120)
+        pygame.draw.rect(surface, shore_color,
+                         (0, 0, self.arena_w, self.arena_h), border_w)
+        pygame.draw.rect(surface, (140, 120, 80),
+                         (0, 0, self.arena_w, self.arena_h), 2)
+
+        # Water current particles (subtle drifting dots)
+        if not hasattr(self, '_water_particles'):
+            self._water_particles = [
+                [np.random.uniform(0, self.arena_w),
+                 np.random.uniform(0, self.arena_h),
+                 np.random.uniform(0.2, 0.6)]
+                for _ in range(30)]
+        for wp in self._water_particles:
+            wp[0] += 0.3  # slow drift right
+            wp[1] += math.sin(self.step_count * 0.02 + wp[2] * 10) * 0.2
+            if wp[0] > self.arena_w:
+                wp[0] = 0
+            alpha = int(40 + 20 * math.sin(self.step_count * 0.05 + wp[2] * 5))
+            pygame.draw.circle(surface,
+                               (_bg_r + 15, _bg_g + 15, min(255, _bg_b + 20)),
+                               (int(wp[0]), int(wp[1])), 1)
+
         # Draw rock formations — organic multi-layer rendering
         for rock in getattr(self, 'rock_formations', []):
             poly = rock["polygon"]
@@ -1786,16 +1811,95 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                              (int(self.fish_x - flash_r),
                               int(self.fish_y - flash_r)))
 
+        # Energy bar floating above fish
+        if self.alive:
+            bar_w, bar_h = 24, 3
+            bar_x = int(self.fish_x - bar_w // 2)
+            bar_y = int(self.fish_y - self.fish_size - 10)
+            ef = max(0, min(1, self.fish_energy / self.energy_max))
+            ec = (50, 200, 50) if ef > 0.3 else (220, 80, 30)
+            pygame.draw.rect(surface, (40, 40, 50), (bar_x, bar_y, bar_w, bar_h))
+            pygame.draw.rect(surface, ec, (bar_x, bar_y, int(bar_w * ef), bar_h))
+
+            # Emotion icon (simple text: scared/happy/calm)
+            _diag = getattr(self, '_brain_diagnostics', {})
+            goal = _diag.get("goal", 2)
+            if goal == 1:  # FLEE
+                emo = "!"
+                emo_c = (255, 50, 50)
+            elif goal == 0 and self.food_eaten_this_step > 0:
+                emo = "♦"
+                emo_c = (50, 255, 50)
+            elif goal == 0:
+                emo = "~"
+                emo_c = (100, 200, 100)
+            else:
+                emo = ""
+                emo_c = (150, 150, 150)
+            if emo:
+                emo_lbl = self._font.render(emo, True, emo_c)
+                surface.blit(emo_lbl,
+                             (int(self.fish_x + self.fish_size + 2),
+                              int(self.fish_y - 8)))
+
+            # Speed trail (small fading dots behind fish)
+            if self.fish_speed > 1.0:
+                cos_h = math.cos(self.fish_heading)
+                sin_h = math.sin(self.fish_heading)
+                for i in range(1, 4):
+                    tx = self.fish_x - cos_h * i * 8
+                    ty = self.fish_y - sin_h * i * 8
+                    alpha = max(30, 100 - i * 30)
+                    trail_surf = pygame.Surface((6, 6), pygame.SRCALPHA)
+                    pygame.draw.circle(trail_surf, (100, 150, 255, alpha), (3, 3), 3 - i)
+                    surface.blit(trail_surf, (int(tx - 3), int(ty - 3)))
+
+        # Eating animation (sparkle burst)
+        if not hasattr(self, '_eat_flash'):
+            self._eat_flash = 0
+        if self.food_eaten_this_step > 0:
+            self._eat_flash = 8
+        if self._eat_flash > 0:
+            for _ in range(5):
+                angle = np.random.uniform(0, 2 * math.pi)
+                dist = np.random.uniform(5, 15)
+                sx = self.fish_x + dist * math.cos(angle)
+                sy = self.fish_y + dist * math.sin(angle)
+                spark_c = (255, 255, 100) if np.random.random() > 0.5 else (100, 255, 100)
+                pygame.draw.circle(surface, spark_c, (int(sx), int(sy)), 2)
+            self._eat_flash -= 1
+
         # Draw colleagues (teal triangles, Step 20)
         for c in getattr(self, 'colleagues', []):
             self._draw_zebrafish(
                 surface, c["x"], c["y"], c["heading"],
                 self.fish_size * 0.85, (0, 180, 170))
 
-        # Draw predator (red, base=head with mouth, point=tail)
+        # Predator danger aura when hunting
+        if self.pred_state == "HUNT":
+            aura_r = int(self.pred_size * 3)
+            aura_pulse = int(30 + 20 * math.sin(self.step_count * 0.3))
+            aura_surf = pygame.Surface((aura_r * 2, aura_r * 2), pygame.SRCALPHA)
+            pygame.draw.circle(aura_surf, (255, 30, 30, aura_pulse),
+                               (aura_r, aura_r), aura_r)
+            surface.blit(aura_surf,
+                         (int(self.pred_x - aura_r), int(self.pred_y - aura_r)))
+
+        # Draw predator
+        pred_color = ((220, 40, 40) if self.pred_state == "HUNT"
+                      else (180, 60, 60) if self.pred_state == "STALK"
+                      else (150, 80, 80))
         self._draw_predator(
             surface, self.pred_x, self.pred_y, self.pred_heading,
-            self.pred_size, (200, 50, 50))
+            self.pred_size, pred_color)
+
+        # Predator state label
+        state_colors = {"PATROL": (150, 150, 150), "STALK": (200, 150, 50),
+                        "HUNT": (255, 50, 50), "AMBUSH": (150, 50, 150)}
+        sc = state_colors.get(self.pred_state, (150, 150, 150))
+        lbl = self._font.render(self.pred_state, True, sc)
+        surface.blit(lbl, (int(self.pred_x - lbl.get_width() // 2),
+                           int(self.pred_y - self.pred_size - 12)))
 
         # Death splash
         if self._death_timer > 0:

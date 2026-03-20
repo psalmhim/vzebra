@@ -1387,9 +1387,10 @@ class BrainAgent:
             p_enemy_scaled += min(0.1, enemy_px / 200.0)
 
             # Looming boost: rapid pixel growth = charging predator
+            # More aggressive: even small growth triggers alert
             growth = rf.get("enemy_growth_rate", 0.0)
-            if growth > 5:
-                p_enemy_scaled += min(0.3, growth / 20.0)
+            if growth > 3:
+                p_enemy_scaled += min(0.4, growth / 15.0)
 
             # Close range emergency: high pixel count AND bright = truly close
             if enemy_px > 50 and proximity > 0.4:
@@ -2121,24 +2122,61 @@ class BrainAgent:
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
             wall_turn = wall_urgency * 0.8 * np.sign(angle_diff)
 
-        # Flee escape: forced turn when predator centered + wall avoidance
+        # Flee escape: multi-strategy survival system
         if effective_goal == GOAL_FLEE and self._enemy_pixels_total > 3:
-            # Forced turn when predator centered ahead (retinal balance ~0)
+            fx, fy = env.fish_x, env.fish_y
+            aw, ah = env.arena_w, env.arena_h
+
+            # 1. Forced turn when predator centered ahead
             if abs(brain_turn) < 0.15:
                 escape_dir = 1.0 if self.last_diagnostics.get("turn_rate", 0) >= 0 else -1.0
                 brain_turn = escape_dir * 1.0
 
-            # Wall avoidance during flee: if heading toward wall, bias turn
-            fx, fy = env.fish_x, env.fish_y
+            # 2. Zigzag: alternate direction every 6 steps (breaks intercept)
+            if self._enemy_pixels_total > 20:
+                zigzag = 0.4 * (1.0 if (self._step_count // 6) % 2 == 0 else -1.0)
+                brain_turn += zigzag
+
+            # 3. Rock shelter: steer toward nearest rock between fish and predator
+            best_cover_turn = 0.0
+            for rock in getattr(env, 'rock_formations', []):
+                rcx, rcy = rock["cx"], rock["cy"]
+                rdist = math.sqrt((fx - rcx)**2 + (fy - rcy)**2)
+                if 30 < rdist < 150:
+                    rock_angle = math.atan2(rcy - fy, rcx - fx)
+                    rock_diff = rock_angle - env.fish_heading
+                    rock_diff = math.atan2(math.sin(rock_diff), math.cos(rock_diff))
+                    if abs(rock_diff) < 1.0:  # rock roughly ahead
+                        best_cover_turn = rock_diff * 0.3
+                        break
+            brain_turn += best_cover_turn
+
+            # 4. Wall avoidance during flee
             margin = 60
             if fx < margin:
-                brain_turn += 0.3 * (margin - fx) / margin
-            elif fx > env.arena_w - margin:
-                brain_turn -= 0.3 * (fx - (env.arena_w - margin)) / margin
+                brain_turn += 0.4 * (margin - fx) / margin
+            elif fx > aw - margin:
+                brain_turn -= 0.4 * (fx - (aw - margin)) / margin
             if fy < margin:
-                brain_turn += 0.3 * (margin - fy) / margin
-            elif fy > env.arena_h - margin:
-                brain_turn -= 0.3 * (fy - (env.arena_h - margin)) / margin
+                brain_turn += 0.4 * (margin - fy) / margin
+            elif fy > ah - margin:
+                brain_turn -= 0.4 * (fy - (ah - margin)) / margin
+
+            # 5. Energy-aware: switch to dodge (sharp turns, low speed) when tired
+            _energy = getattr(env, 'fish_energy', 100)
+            if _energy < 30:
+                brain_turn *= 1.5  # sharper turns (dodge mode)
+
+        # Arena center bias: during EXPLORE/FORAGE, gentle pull toward center
+        elif effective_goal in (GOAL_EXPLORE, GOAL_FORAGE):
+            fx, fy = env.fish_x, env.fish_y
+            cx, cy = env.arena_w * 0.5, env.arena_h * 0.5
+            center_angle = math.atan2(cy - fy, cx - fx)
+            center_diff = center_angle - env.fish_heading
+            center_diff = math.atan2(math.sin(center_diff), math.cos(center_diff))
+            edge_dist = min(fx, env.arena_w - fx, fy, env.arena_h - fy)
+            if edge_dist < 100:
+                brain_turn += center_diff * 0.15  # gentle center pull
 
         # Blend: brain turn weight decreases near walls
         brain_weight = max(0.2, 1.0 - wall_urgency)
@@ -2313,6 +2351,12 @@ class BrainAgent:
             "bg_gate": bg_gate,
             "eye_pos": eye_pos,
             "energy": energy,
+            "fish_x": env.fish_x,
+            "fish_y": env.fish_y,
+            "pred_x": env.pred_x,
+            "pred_y": env.pred_y,
+            "arena_w": env.arena_w,
+            "arena_h": env.arena_h,
             "turn_rate": float(turn_rate),
             "speed": float(speed),
             "retL_max": float(retL.max()),
