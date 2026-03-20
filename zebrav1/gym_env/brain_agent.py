@@ -179,7 +179,8 @@ class BrainAgent:
                  base_turn_gain=0.15, swim_speed=1.5, use_habit=True,
                  use_rl_critic=False, use_vae_planner=False,
                  world_model="none", use_allostasis=False,
-                 use_sleep_cycle=False, use_active_inference=False):
+                 use_sleep_cycle=False, use_active_inference=False,
+                 use_spiking=False):
         """
         Args:
             world_model: str — world model type for planning.
@@ -218,9 +219,16 @@ class BrainAgent:
             self.critic = None
             self.adapter = None
 
-        # Brain modules
-        self.dopa_sys = DopamineSystem()
-        self.bg = BasalGanglia(mode="exploratory")
+        # Brain modules (spiking or numpy)
+        self.use_spiking = use_spiking
+        if use_spiking:
+            from zebrav1.brain.spiking_dopamine import SpikingDopamine
+            from zebrav1.brain.spiking_basal_ganglia import SpikingBasalGanglia
+            self.dopa_sys = SpikingDopamine(device=str(self.device))
+            self.bg = SpikingBasalGanglia(device=str(self.device))
+        else:
+            self.dopa_sys = DopamineSystem()
+            self.bg = BasalGanglia(mode="exploratory")
         self.ot = OpticTectum()
         self.thal = ThalamusRelay()
         self.goal_policy = SpikingGoalSelector(
@@ -291,7 +299,11 @@ class BrainAgent:
         self.use_allostasis = use_allostasis
         if use_allostasis:
             self.allostasis = AllostaticRegulator()
-            self.amygdala = Amygdala()
+            if use_spiking:
+                from zebrav1.brain.spiking_amygdala import SpikingAmygdala
+                self.amygdala = SpikingAmygdala(device=str(self.device))
+            else:
+                self.amygdala = Amygdala()
         else:
             self.allostasis = None
             self.amygdala = None
@@ -1247,8 +1259,13 @@ class BrainAgent:
         # 7. Dopamine system
         oL_mean = float(out["oL"].abs().mean())
         oR_mean = float(out["oR"].abs().mean())
-        dopa, rpe, valL, valR = self.dopa_sys.step(
-            F_visual, oL_mean, oR_mean, eaten=self._eaten_buffer)
+        if self.use_spiking:
+            dopa, rpe, valL, valR = self.dopa_sys.step(
+                F_visual, oL_mean, oR_mean, eaten=self._eaten_buffer,
+                cls_probs=cls_probs)
+        else:
+            dopa, rpe, valL, valR = self.dopa_sys.step(
+                F_visual, oL_mean, oR_mean, eaten=self._eaten_buffer)
         self._eaten_buffer = 0  # consumed
 
         # 7b. Allostatic interoception (Step 18)

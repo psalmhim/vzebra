@@ -50,8 +50,9 @@ class SpikingDopamine(nn.Module):
         self.v_tonic = torch.zeros(n_tonic, device=device)
         self.v_phasic = torch.zeros(n_phasic, device=device)
 
-        # Output state
+        # Output state (dopa_level + alias 'dopa' for compatibility)
         self.dopa_level = 0.5  # [0, 1]
+        self.dopa = 0.5        # alias
         self.rpe = 0.0
         self.beta = 1.0  # gain parameter
 
@@ -112,6 +113,7 @@ class SpikingDopamine(nn.Module):
         # Dopamine level: tonic baseline + phasic modulation
         self.dopa_level = float(torch.clamp(
             0.3 * tonic_rate + 0.7 * (0.5 + self.rpe * 0.5), 0.0, 1.0))
+        self.dopa = self.dopa_level  # alias for compatibility
 
         # Lateral value (for BG gating)
         valL = oL_mean * self.dopa_level

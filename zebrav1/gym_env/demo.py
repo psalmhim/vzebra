@@ -197,7 +197,7 @@ def run_demo(use_heuristic=False, render=False, T=1000):
 def run_brain_demo(render=False, monitor=False, record=False, T=1000,
                    autosave=False, load_checkpoint=None,
                    predator_brain=False, sound=False,
-                   multi_agent=False):
+                   multi_agent=False, use_spiking=False):
     """Run the full brain agent with optional neural activity monitor.
 
     When --monitor is used, a single combined window is created:
@@ -291,7 +291,8 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
         RENDER_H = env.render_height
 
     agent = BrainAgent(device="auto", world_model="vae",
-                       use_allostasis=True)
+                       use_allostasis=True,
+                       use_spiking=use_spiking)
     if load_checkpoint is not None:
         agent.load_checkpoint(load_checkpoint)
     obs, info = env.reset(seed=42)
@@ -467,6 +468,9 @@ if __name__ == "__main__":
     parser.add_argument("--multi-agent", action="store_true",
                         help="5-fish multi-agent mode "
                              "(1 focal + 4 conspecific brains)")
+    parser.add_argument("--spiking", action="store_true",
+                        help="Use spiking versions of classifier, "
+                             "dopamine, BG, amygdala (188 extra LIF neurons)")
     args = parser.parse_args()
 
     if args.brain:
@@ -476,7 +480,8 @@ if __name__ == "__main__":
                        load_checkpoint=args.load_checkpoint,
                        predator_brain=args.predator_brain,
                        sound=args.sound,
-                       multi_agent=args.multi_agent)
+                       multi_agent=args.multi_agent,
+                       use_spiking=getattr(args, 'spiking', False))
     else:
         run_demo(use_heuristic=args.heuristic, render=args.render,
                  T=args.steps)
