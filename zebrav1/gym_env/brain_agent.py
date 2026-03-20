@@ -45,6 +45,7 @@ from zebrav1.brain.spinal_cpg import SpinalCPG
 from zebrav1.brain.color_vision import ColorVisionProcessor
 from zebrav1.brain.circadian import CircadianClock
 from zebrav1.brain.proprioception import ProprioceptiveSystem
+from zebrav1.brain.insula import Insula
 from zebrav1.brain.device_util import get_device
 from zebrav1.world.world_env import WorldEnv
 from zebrav1.tests.step1_vision_pursuit import TurnSmoother
@@ -352,6 +353,9 @@ class BrainAgent:
 
         # Step 41: Proprioceptive feedback
         self.proprioception = ProprioceptiveSystem()
+
+        # Step 42: Insula (interoceptive awareness + emotional expression)
+        self.insula = Insula()
 
         # World model (Step 16/17)
         self._prev_z = None
@@ -1305,6 +1309,17 @@ class BrainAgent:
                 self.allostasis.stress = min(
                     1.0, self.allostasis.stress + 0.1 * threat_arousal)
 
+        # 7b2b. Insula interoceptive awareness (Step 42)
+        self._insula_diag = {}
+        if self.insula is not None:
+            _hr = getattr(env, '_heart_rate', 0.3)
+            _energy_r = energy / getattr(env, 'energy_max', 100.0)
+            _spd = getattr(env, 'fish_speed', 0) / max(getattr(env, 'fish_speed_base', 3.0), 0.01)
+            _is_flee = (self.last_diagnostics.get('goal', 2) == GOAL_FLEE)
+            _threat = self.predator_model.get_threat_level() if self.predator_model else 0.0
+            self._insula_diag = self.insula.step(
+                _hr, _energy_r, _spd, _is_flee, _threat)
+
         # 7b3a. Lateral line wake alarm (Step 32)
         if self._ll_flow is not None:
             rear_wake = self._ll_flow.get("rear_wake_intensity", 0.0)
@@ -1604,6 +1619,11 @@ class BrainAgent:
             # Blend weight ramps with exploration (more data → more trust)
             geo_w = min(0.3, self.geographic_model._step_count / 300.0)
             current_bonus += geo_w * G_geo
+
+        # 8.9c00 Insula emotional bias (Step 42)
+        if self.insula is not None:
+            insula_bias = self.insula.get_emotional_bias()
+            current_bonus += insula_bias
 
         # 8.9c0 Circadian EFE bias (Step 40)
         if self.circadian is not None:
@@ -2173,6 +2193,10 @@ class BrainAgent:
             turn_rate = np.clip(_capture_result[0], -1.0, 1.0)
             speed = _capture_result[1]
 
+        # Insula HR-driven speed boost (Step 42)
+        if self.insula is not None:
+            speed *= self.insula.get_speed_boost()
+
         # Vestibular speed correction (Step 37)
         if self.vestibular is not None:
             speed *= self.vestibular.get_speed_correction()
@@ -2349,6 +2373,11 @@ class BrainAgent:
         if self.sleep_regulator is not None:
             self.last_diagnostics["sleep"] = \
                 self.sleep_regulator.get_diagnostics()
+
+        # Step 42: Insula
+        if self.insula is not None:
+            self.last_diagnostics["insula"] = self._insula_diag
+            self.last_diagnostics["heart_rate"] = getattr(env, '_heart_rate', 0.3)
 
         # Step 37-41: New module diagnostics
         if self.vestibular is not None:
@@ -2620,6 +2649,10 @@ class BrainAgent:
             self.amygdala.reset()
         if self.sleep_regulator is not None:
             self.sleep_regulator.reset()
+        # Step 42: insula reset
+        if self.insula is not None:
+            self.insula.reset()
+
         # Step 37-41: new module resets
         if self.vestibular is not None:
             self.vestibular.reset()

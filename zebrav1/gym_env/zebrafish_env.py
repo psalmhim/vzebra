@@ -901,27 +901,36 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             self.foods.append([fx, fy, "large"])
             n_large += 1
 
-        # === Energy drain (Feature A) ===
-        # Flee multiplier: escape bursts cost 2.5–3.5x (panic-scaled)
-        if self._flee_active:
-            flee_mult = 2.5 + 1.0 * self._panic_intensity
-        else:
-            flee_mult = 1.0
+        # === Energy drain (speed² scaling) ===
+        # Energy cost ∝ speed² (kinetic energy). Flee is expensive.
+        actual_speed = self.fish_speed / max(0.01, self.fish_speed_base)
+        # Speed² cost: 0.03 * v² — at flee (v=1.5), cost = 0.03*2.25 = 0.067
+        speed_sq_cost = self.energy_drain_speed * actual_speed * (0.5 + 0.5 * actual_speed)
 
-        # Starvation pressure: below 50% energy, metabolic cost rises
-        # (weakened fish burns reserves faster). Below 30%, severe penalty.
+        # Starvation pressure
         energy_ratio = self.fish_energy / self.energy_max
         if energy_ratio < 0.30:
-            starvation_mult = 1.3   # critically starving
+            starvation_mult = 1.3
         elif energy_ratio < 0.50:
-            starvation_mult = 1.15  # danger zone
+            starvation_mult = 1.15
         else:
             starvation_mult = 1.0
 
-        actual_speed = self.fish_speed / max(0.01, self.fish_speed_base)
         self.fish_energy -= (self.energy_drain_base
-                             + self.energy_drain_speed * actual_speed * flee_mult
-                             ) * starvation_mult
+                             + speed_sq_cost) * starvation_mult
+        self.fish_energy = max(0.0, self.fish_energy)
+
+        # === Heart rate model ===
+        # Heart rate increases with speed and stress (fear/flee).
+        # High HR = more O2 to muscles = sustained speed, but costs energy.
+        # HR feeds back to insula as interoceptive arousal signal.
+        _stress = self._panic_intensity if hasattr(self, '_panic_intensity') else 0.0
+        target_hr = 0.3 + 0.4 * actual_speed + 0.3 * _stress
+        target_hr = min(1.0, target_hr)
+        prev_hr = getattr(self, '_heart_rate', 0.3)
+        self._heart_rate = 0.9 * prev_hr + 0.1 * target_hr  # smooth
+        # HR energy cost (cardiac work)
+        self.fish_energy -= 0.01 * self._heart_rate
         self.fish_energy = max(0.0, self.fish_energy)
 
         # === Check predator catch ===
