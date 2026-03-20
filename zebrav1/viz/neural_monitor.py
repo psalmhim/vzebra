@@ -613,6 +613,33 @@ class NeuralMonitor:
         self._bar(120, y7 + 68, 100, 12, cb_turn, 0.1,
                   (255, 180, 50), "CB trn")
 
+        # Insula / Heart rate (Step 42)
+        ins = diag.get("insula", {})
+        hr = diag.get("heart_rate", 0.3)
+        arousal = ins.get("arousal", 0.0)
+        fear = ins.get("fear", 0.0)
+        valence = ins.get("valence", 0.0)
+
+        # Heart rate: pulsing red circle
+        hr_x, hr_y = 260, y7 + 68
+        hr_radius = int(6 + 8 * hr)
+        # Pulse effect: size oscillates with HR frequency
+        import math as _m
+        pulse = 0.5 + 0.5 * _m.sin(self._frame * hr * 0.5)
+        pr = int(hr_radius * (0.8 + 0.4 * pulse))
+        hr_color = (int(150 + 105 * hr), int(40 * (1 - hr)), int(40 * (1 - hr)))
+        pygame.draw.circle(self.surface, hr_color, (hr_x, hr_y + 6), pr)
+        pygame.draw.circle(self.surface, (200, 60, 60), (hr_x, hr_y + 6), pr, 1)
+        self._label(f"HR {hr:.0%}", hr_x + pr + 4, hr_y, color=(220, 80, 80))
+
+        # Arousal/fear/valence bars
+        self._bar(320, y7 + 68, 50, 12, arousal, 1.0,
+                  (220, 120, 50), "Arsl")
+        self._bar(380, y7 + 68, 50, 12, fear, 1.0,
+                  (220, 50, 50), "Fear")
+        val_color = (50, 180, 50) if valence > 0 else (180, 50, 50)
+        self._bar(440, y7 + 68, 50, 12, valence, 1.0, val_color, "Val")
+
         # Frame counter
         self._label(f"frame {self._frame}", W - 80, self.HEIGHT - 16,
                     color=(80, 80, 100))

@@ -1730,6 +1730,21 @@ class ZebrafishPreyPredatorEnv(gym.Env):
 
         # Draw zebrafish (blue, base=head with eyes, point=tail)
         if self.alive:
+            # Heartbeat pulsing glow (Step 42)
+            _hr = getattr(self, '_heart_rate', 0.3)
+            if _hr > 0.5:
+                pulse = 0.5 + 0.5 * math.sin(self.step_count * _hr * 0.5)
+                glow_r = int(self.fish_size * (1.5 + pulse * _hr))
+                glow_alpha = int(min(80, _hr * 100 * pulse))
+                glow_surf = pygame.Surface((glow_r * 2, glow_r * 2),
+                                           pygame.SRCALPHA)
+                glow_color = (220, 60, 60, glow_alpha) if _hr > 0.7 else (180, 150, 50, glow_alpha)
+                pygame.draw.circle(glow_surf, glow_color,
+                                   (glow_r, glow_r), glow_r)
+                surface.blit(glow_surf,
+                             (int(self.fish_x - glow_r),
+                              int(self.fish_y - glow_r)))
+
             # Vestibular tilt effect (Step 37): slight size oscillation
             _vest_balance = getattr(self, '_vest_balance', 1.0)
             _fish_render_size = self.fish_size * (0.9 + 0.1 * _vest_balance)

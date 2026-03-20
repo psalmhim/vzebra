@@ -1375,21 +1375,28 @@ class BrainAgent:
         if enemy_px == 0:
             cls_probs[2] = min(cls_probs[2], 0.02)
         else:
-            # Distance from intensity: bright = close, dim = far
+            # Proximity is PRIMARY threat signal (intensity-based distance)
+            # dim (<0.15) = far patrol → low threat
+            # medium (0.15-0.4) = approaching → moderate threat
+            # bright (>0.4) = close/charging → high threat
             proximity = min(1.0, enemy_intensity * 1.5)
-            pixel_evidence = min(1.0, enemy_px / 15.0)
-            # Base threat from proximity
-            p_enemy_scaled = pixel_evidence * (0.1 + 0.9 * proximity)
-            # Looming boost: rapid pixel growth = approaching fast
+
+            # Threat = proximity² (quadratic: far=very low, close=high)
+            p_enemy_scaled = proximity * proximity
+            # Pixel count adds small bonus (more pixels = bigger/closer)
+            p_enemy_scaled += min(0.1, enemy_px / 200.0)
+
+            # Looming boost: rapid pixel growth = charging predator
             growth = rf.get("enemy_growth_rate", 0.0)
-            if growth > 5:  # pixels growing fast = charging
-                looming_boost = min(0.3, growth / 30.0)
-                p_enemy_scaled += looming_boost
-            # Close range emergency: high pixel count = very close
-            if enemy_px > 30:
-                p_enemy_scaled = max(p_enemy_scaled, 0.4)
-            if enemy_px > 60:
-                p_enemy_scaled = max(p_enemy_scaled, 0.7)
+            if growth > 5:
+                p_enemy_scaled += min(0.3, growth / 20.0)
+
+            # Close range emergency override
+            if enemy_px > 50:
+                p_enemy_scaled = max(p_enemy_scaled, 0.5)
+            if enemy_px > 80:
+                p_enemy_scaled = max(p_enemy_scaled, 0.8)
+
             cls_probs[2] = min(1.0, p_enemy_scaled)
 
         # Also fix food perception: use raw pixel count as food signal
