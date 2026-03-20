@@ -90,11 +90,22 @@ class ConspecificBrain:
             social_dist = 0
             social_angle = heading
 
+        # Information cascading: observe if neighbours are fleeing
+        # (fast-moving neighbours heading away from predator = social alarm)
+        n_fleeing_neighbours = 0
+        for other_pos in others:
+            if len(other_pos) > 2:  # has speed info
+                other_speed = other_pos[2] if len(other_pos) > 2 else 0
+                if other_speed > 3.0:  # fast = fleeing
+                    n_fleeing_neighbours += 1
+        social_alarm = n_fleeing_neighbours > 0
+
         # Goal selection (threshold-based with persistence)
         if self._persist_timer > 0:
             self._persist_timer -= 1
         else:
-            if pred_dist < 150:
+            # Flee if predator close OR neighbours fleeing (social alarm)
+            if pred_dist < 150 or (social_alarm and pred_dist < 250):
                 self.goal = GOAL_FLEE
                 self._persist_timer = self._persist_steps
             elif nearest_food_dist < self.forage_radius and fish["energy"] < 80:

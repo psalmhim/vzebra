@@ -297,11 +297,17 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
     obs, info = env.reset(seed=42)
     agent.reset()
 
-    # Spike audio engine
+    # Sound engines
     spike_audio = None
+    sound_engine = None
     if sound:
-        from zebrav1.viz.spike_audio import SpikeAudioEngine
-        spike_audio = SpikeAudioEngine(master_volume=0.4)
+        try:
+            from zebrav1.viz.spike_audio import SpikeAudioEngine
+            spike_audio = SpikeAudioEngine(master_volume=0.4)
+        except ImportError:
+            pass
+        from zebrav1.viz.sound_engine import SoundEngine
+        sound_engine = SoundEngine(enabled=True)
 
     rec_msg = " [RECORDING]" if record else ""
     pred_msg = " + predator brain" if predator_brain else ""
@@ -378,6 +384,17 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
                 and combined_screen is None
                 and hasattr(agent, '_last_snn_out')):
             spike_audio.update(agent._last_snn_out)
+
+        # Biological sound effects (heartbeat, splash, rumble)
+        if sound_engine is not None:
+            d = agent.last_diagnostics
+            sound_engine.update(
+                step=t,
+                heart_rate=d.get("heart_rate", 0.3),
+                is_fleeing=(d.get("goal", 2) == 1),
+                mauthner_fired=d.get("mauthner_active", False),
+                food_eaten=(info.get("food_eaten_this_step", 0) > 0),
+                enemy_proximity=d.get("cls_probs", [0]*5)[2])
 
         if t % 100 == 0:
             vae = agent.last_diagnostics.get("vae", {})

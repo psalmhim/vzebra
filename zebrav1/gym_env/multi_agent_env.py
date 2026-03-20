@@ -168,7 +168,7 @@ class MultiAgentZebrafishEnv(ZebrafishPreyPredatorEnv):
             "pred_y": self.pred_y,
             "pred_heading": self.pred_heading,
             "foods": [[f[0], f[1]] for f in self.foods],
-            "fish_positions": [[f["x"], f["y"]] for f in self.all_fish],
+            "fish_positions": [[f["x"], f["y"], f["speed"]] for f in self.all_fish],
             "rock_formations": getattr(self, 'rock_formations', []),
         }
 
