@@ -111,13 +111,13 @@ class ZebrafishPreyPredatorEnv(gym.Env):
 
         # Fish parameters
         self.fish_size = 12        # triangle half-length
-        self.fish_speed_base = 2.0
+        self.fish_speed_base = 3.0    # 1x normal swim speed (px/step)
         self.fish_turn_max = 0.15  # radians per step
         self.eat_radius = 28.0
 
         # Predator parameters (1.5x bigger)
         self.pred_size = 18        # 1.5x fish
-        self.pred_speed = 1.4      # threatening but escapable with C-start
+        self.pred_speed = 2.7      # base (patrol=0.9x fish, hunt=1.4x fish)
         self.pred_chase_radius = 280.0
         self.pred_catch_radius = 16.0
         self.pred_wander_turn = 0.03
@@ -830,6 +830,9 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         # === Fish movement (motor primitive bout dynamics) ===
         # Bouts modulate speed timing + add turn noise; brain controls direction
         bout_turn_noise, bout_speed = self._update_bout_state(speed_mod, turn_rate)
+        # Flee speed boost: 1.5x base when fleeing (applied after clamp)
+        if getattr(self, '_flee_active', False):
+            bout_speed = max(bout_speed, 1.5)  # 1.5x multiplier on base
         # Brain turn + biological noise from motor primitive
         # Flee turn boost: only when actively fleeing (previous step's state)
         effective_turn_max = self.fish_turn_max
@@ -1417,21 +1420,21 @@ class ZebrafishPreyPredatorEnv(gym.Env):
         strategy_detail = ""
 
         if self.pred_state == "PATROL":
-            # Systematic search: gentle turns with occasional direction change
+            # Patrol: 0.9x fish speed (pred_speed ≈ 0.9 * fish_base)
             if self.pred_state_timer % 80 < 40:
                 self.pred_heading += 0.02
             else:
                 self.pred_heading -= 0.02
             self.pred_heading += self.np_random.uniform(-0.01, 0.01)
-            speed = self.pred_speed * 0.55
+            speed = self.pred_speed * 1.0  # 2.7 = 0.9 * 3.0
             strategy_detail = "searching"
 
         elif self.pred_state == "STALK":
-            # Approach slowly, turning toward fish
+            # Stalk: slightly faster than patrol, approaching
             angle_diff = angle_to_fish - self.pred_heading
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
             self.pred_heading += np.clip(angle_diff, -0.04, 0.04)
-            speed = self.pred_speed * 0.5
+            speed = self.pred_speed * 0.85
             strategy_detail = f"closing d={dist:.0f}"
 
         elif self.pred_state == "HUNT":
@@ -1452,14 +1455,16 @@ class ZebrafishPreyPredatorEnv(gym.Env):
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
             # Faster turning during hunt
             self.pred_heading += np.clip(angle_diff, -0.15, 0.15)
-            # Sprint: faster when close, hunger-boosted, chase-accelerated
-            hunger_boost = 1.0 + 0.2 * self.pred_hunger
+            # Hunt: max 1.4x fish speed = 4.2 px/step
+            # pred_speed=2.7, so need mult ~1.56 at full chase
+            hunger_boost = 1.0 + 0.1 * self.pred_hunger
             dist_factor = min(1.0, dist / 60.0 + 0.6)
-            # Chase acceleration: up to 1.4x when locked on target
             aim_quality = max(0.0, 1.0 - abs(angle_diff) / (math.pi * 0.3))
-            chase_boost = 1.0 + 0.25 * aim_quality
+            chase_boost = 1.0 + 0.56 * aim_quality  # max 1.56
             speed = (self.pred_speed * dist_factor * hunger_boost
                      * self.pred_stamina * chase_boost)
+            # Hard cap at 1.4x fish speed
+            speed = min(speed, self.fish_speed_base * 1.4)
             self._last_chase_boost = chase_boost
             strategy_detail = (f"intercept d={dist:.0f} "
                                f"stam={self.pred_stamina:.1f} "

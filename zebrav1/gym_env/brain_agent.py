@@ -2115,9 +2115,12 @@ class BrainAgent:
         speed = np.clip(
             speed_mod_brain * (0.8 + 0.4 * dopa), 0.0, 1.0)
 
-        # Flee burst: speed boost for escape (must outrun predator at 1.75)
+        # Flee burst: ensure speed reaches 1.5x normal
+        # speed is normalised [0,1], env multiplies by fish_speed_base
+        # bout_speed at full burst ~0.7, so speed ~0.7 → actual 2.1
+        # For 1.5x = 4.5 actual, need normalised speed = 4.5/3.0 = 1.5
         if self._flee_burst_steps > 0:
-            speed = min(2.0, speed * 1.8)
+            speed = max(speed, 1.5)  # will be clamped by env to actual 4.5
             self._flee_burst_steps -= 1
 
         # Reduce speed when low energy (use inferred energy in AI mode)
@@ -2132,10 +2135,9 @@ class BrainAgent:
         if _energy_speed < 20:
             speed *= 0.5 + 0.5 * (_energy_speed / 20.0)
 
-        # Panic sprint override: adrenaline restores speed during threat
+        # Panic sprint: adrenaline boost proportional to panic
         panic_level = threat["panic_level"]
         if panic_level > 0.1:
-            # Panic sprint must outrun predator (1.75 hunt speed)
             panic_speed = 1.5 * panic_level + speed * (1 - panic_level)
             speed = max(speed, panic_speed)
             self._flee_burst_steps = max(
