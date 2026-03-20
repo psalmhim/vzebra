@@ -1958,10 +1958,22 @@ class BrainAgent:
                 _cover_turn = np.clip(cover_diff * 1.2, -0.5, 0.5)
                 threat["cover_target"] = best_target
 
-        # 13. Smoothed turn — center_escape added post-gain (Fix A)
-        #     so centered-rock escape isn't dampened by approach_gain
-        turn = self.smoother.step(
-            raw_turn * approach_gain + _center_escape)
+        # 13. Smoothed turn
+        if effective_goal == GOAL_FLEE and self._enemy_pixels_total > 3:
+            # FLEE: turn AWAY from predator using enemy lateral bias
+            rf = self._retinal_features if self._retinal_features else {}
+            enemy_lat = rf.get("enemy_lateral_bias", 0.0)
+            # Away from enemy: enemy on right (+) → turn left (-)
+            flee_turn = -enemy_lat * 2.5
+            # Centered enemy → force turn in last direction
+            if abs(flee_turn) < 0.3 and self._enemy_pixels_total > 5:
+                escape_dir = 1.0 if self.last_diagnostics.get("turn_rate", 0) >= 0 else -1.0
+                flee_turn = escape_dir * 1.0
+            turn = self.smoother.step(
+                flee_turn + _center_escape + _cover_turn)
+        else:
+            turn = self.smoother.step(
+                raw_turn * approach_gain + _center_escape)
 
         # 14. BG gating
         valL_eff = valL - 0.1 * turn
@@ -2122,50 +2134,19 @@ class BrainAgent:
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
             wall_turn = wall_urgency * 0.8 * np.sign(angle_diff)
 
-        # Flee escape: multi-strategy survival system
-        if effective_goal == GOAL_FLEE and self._enemy_pixels_total > 3:
+        # Flee wall avoidance + arena center bias
+        if effective_goal == GOAL_FLEE:
+            # Wall avoidance during flee
             fx, fy = env.fish_x, env.fish_y
-            aw, ah = env.arena_w, env.arena_h
-
-            # 1. Forced turn when predator centered ahead
-            if abs(brain_turn) < 0.15:
-                escape_dir = 1.0 if self.last_diagnostics.get("turn_rate", 0) >= 0 else -1.0
-                brain_turn = escape_dir * 1.0
-
-            # 2. Zigzag: alternate direction every 6 steps (breaks intercept)
-            if self._enemy_pixels_total > 20:
-                zigzag = 0.4 * (1.0 if (self._step_count // 6) % 2 == 0 else -1.0)
-                brain_turn += zigzag
-
-            # 3. Rock shelter: steer toward nearest rock between fish and predator
-            best_cover_turn = 0.0
-            for rock in getattr(env, 'rock_formations', []):
-                rcx, rcy = rock["cx"], rock["cy"]
-                rdist = math.sqrt((fx - rcx)**2 + (fy - rcy)**2)
-                if 30 < rdist < 150:
-                    rock_angle = math.atan2(rcy - fy, rcx - fx)
-                    rock_diff = rock_angle - env.fish_heading
-                    rock_diff = math.atan2(math.sin(rock_diff), math.cos(rock_diff))
-                    if abs(rock_diff) < 1.0:  # rock roughly ahead
-                        best_cover_turn = rock_diff * 0.3
-                        break
-            brain_turn += best_cover_turn
-
-            # 4. Wall avoidance during flee
             margin = 60
             if fx < margin:
                 brain_turn += 0.4 * (margin - fx) / margin
-            elif fx > aw - margin:
-                brain_turn -= 0.4 * (fx - (aw - margin)) / margin
+            elif fx > env.arena_w - margin:
+                brain_turn -= 0.4 * (fx - (env.arena_w - margin)) / margin
             if fy < margin:
                 brain_turn += 0.4 * (margin - fy) / margin
-            elif fy > ah - margin:
-                brain_turn -= 0.4 * (fy - (ah - margin)) / margin
-
-            # 5. Energy-aware: switch to dodge (sharp turns, low speed) when tired
-            _energy = getattr(env, 'fish_energy', 100)
-            if _energy < 30:
-                brain_turn *= 1.5  # sharper turns (dodge mode)
+            elif fy > env.arena_h - margin:
+                brain_turn -= 0.4 * (fy - (env.arena_h - margin)) / margin
 
         # Arena center bias: during EXPLORE/FORAGE, gentle pull toward center
         elif effective_goal in (GOAL_EXPLORE, GOAL_FORAGE):
