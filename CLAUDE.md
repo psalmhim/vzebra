@@ -7,13 +7,13 @@
 - Device: MPS (Apple Silicon) via `get_device()` in `brain/device_util.py`
 
 ## Architecture
-- `zebrav1/` — main package (35+ brain modules, renamed from zebra_v60)
+- `zebrav1/` — main package (36+ brain modules, renamed from zebra_v60)
 - `zebrav1/brain/` — SNN, world models, sensory, motor, neuromodulatory modules
 - `zebrav1/gym_env/` — Gymnasium env + BrainAgent + MultiAgentEnv
 - `zebrav1/world/` — WorldEnv (ray-casting) + renderer
 - `zebrav1/tests/` — step-by-step tests (step1 through step34)
-- `zebrav1/viz/` — neural monitor (920px, shows all 41 steps)
-- `zebrav1/paper.tex` — 65-page technical report (Steps 1-41)
+- `zebrav1/viz/` — neural monitor (920px, shows all 42 steps)
+- `zebrav1/paper.tex` — 65-page technical report (Steps 1-42)
 
 ## Key Files
 - `brain_agent.py` — main pipeline (~2500 lines), orchestrates all modules
@@ -37,17 +37,18 @@
 - CPG glide phase bypassed during FLEE (maintain full escape speed)
 - Muscle L/R drives tail rendering asymmetry
 
-## Modules (Steps 31-41)
+## Modules (Steps 31-42)
 - Geographic model, Predator model, Internal state model (Step 31)
 - Lateral line (Step 32), Cerebellum (Step 33), Multi-agent (Step 34)
 - Olfaction + alarm substance (Step 35), Habenula (Step 36)
 - Vestibular (Step 37), Spiking CPG (Step 38), Color vision (Step 39)
 - Circadian clock (Step 40), Proprioception (Step 41)
+- Insula: heart rate + emotional valence (Step 42)
 
 ## Training Pipeline
 1. **Step 8** genomic → `weights/genomic.pt` (74% direction accuracy)
 2. **Step 10** Hebbian → `weights/genomic_hebbian.pt`
-3. **Step 11** classifier → `weights/classifier.pt` (100% all 5 classes)
+3. **Step 11** classifier → `weights/classifier.pt` (retrained on gameplay data, 90.6% accuracy)
 4. **Step 26** W_FB → `weights/classifier_wfb.pt`
 - Step 11 is slow (~1hr on MPS)
 - All steps MUST pass `goal_probs` to `model.forward()`
@@ -58,10 +59,19 @@
 - Use `--autosave` flag in demo to persist online learning
 
 ## Current Scores
-- Classifier: 100% all classes
-- Curriculum: 2/4 LEARNING (regression from architecture changes)
-- Decision quality: ~60/100 (regression from SNN retrain)
-- Known issue: Scenario C (predator charge) — fish flees but can't outrun predator
+- Classifier: 90.6% (retrained on gameplay data)
+- Curriculum: 2/4 LEARNING
+- Decision quality: 84/100 RATIONAL (A=92, B=100, C=85, D=70, E=74)
+
+## Speed & Distance Parameters
+- Fish speed: 1x base (fish_speed_base=3.0), 1.5x flee
+- Predator speed: 0.9x base, 1.4x hunt
+- Eat radius: 35px
+- Distance-proportional threat: proximity² curve
+
+## Predator Behavior
+- Imperfection: 15px navigation noise, 5% distraction chance, faster stamina drain
+- Episodic fear conditioning in amygdala
 
 ## Flee Behavior
 - Hard flee threshold: p_enemy > 0.25
@@ -70,11 +80,12 @@
 - Looming trigger: l/v < 10, enemy_px > 3
 
 ## Rendering
+- Fish body: 10-segment articulated body, gaze-tracking eyes, heartbeat glow
 - Circadian day/night background color (Step 40)
 - Muscle-driven tail oscillation with L/R bend asymmetry (Step 38)
 - Vestibular tilt effect on fish size (Step 37)
 - Proprioceptive collision flash (Step 41)
-- Neural monitor: CPG L/R, color UV/B/G/R, circadian dial, LL flow, olfaction, habenula, cerebellum PE
+- Neural monitor: HR pulse, arousal/fear/valence bars, CPG L/R, color UV/B/G/R, circadian dial, LL flow, olfaction, habenula, cerebellum PE
 
 ## Running
 ```bash
@@ -99,4 +110,4 @@
 ```
 
 ## Branches
-- `main` — Steps 1-41, 35+ modules, 65-page paper
+- `main` — Steps 1-42, 36+ modules, 65-page paper

@@ -1724,15 +1724,25 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                                (pr, pr), pr)
             surface.blit(glow_surf, (pcx - pr, pcy - pr))
 
-        # Draw food (similar size, density indicates value)
+        # Draw food with pulsing glow
+        food_pulse = 0.5 + 0.5 * math.sin(self.step_count * 0.15)
         for food in self.foods:
             fx, fy = food[0], food[1]
             sz = food[2] if len(food) > 2 else "small"
-            r = 4 if sz == "large" else 3
-            color = (0, 180, 20)
-            outline = (0, 110, 10)
+            r = 5 if sz == "large" else 3
+            # Glow halo
+            glow_r = int(r * (2.5 + food_pulse))
+            glow_surf = pygame.Surface((glow_r * 2, glow_r * 2),
+                                       pygame.SRCALPHA)
+            glow_alpha = int(30 + 20 * food_pulse)
+            glow_color = (50, 255, 50, glow_alpha) if sz == "small" else (255, 220, 50, glow_alpha)
+            pygame.draw.circle(glow_surf, glow_color,
+                               (glow_r, glow_r), glow_r)
+            surface.blit(glow_surf, (int(fx - glow_r), int(fy - glow_r)))
+            # Food body
+            color = (30, 220, 40) if sz == "small" else (220, 180, 30)
             pygame.draw.circle(surface, color, (int(fx), int(fy)), r)
-            pygame.draw.circle(surface, outline, (int(fx), int(fy)), r, 1)
+            pygame.draw.circle(surface, (0, 100, 10), (int(fx), int(fy)), r, 1)
 
         # Draw receptive field cones (before fish so they appear behind)
         if self.alive:
@@ -2475,64 +2485,90 @@ class ZebrafishPreyPredatorEnv(gym.Env):
                            pupil_r)
 
     def _draw_predator(self, surface, x, y, heading, size, color):
-        """Draw predator: isosceles triangle with base=head, eyes, mouth, vertex=tail."""
+        """Draw predator: aggressive segmented body with jaw, distinct from fish."""
         import pygame
 
-        spread = 0.55
+        cos_h = math.cos(heading)
+        sin_h = math.sin(heading)
+        n_seg = 8
+        seg_len = size * 0.45
 
-        # Base corners (head)
-        base_l_x = x + size * math.cos(heading + spread)
-        base_l_y = y + size * math.sin(heading + spread)
-        base_r_x = x + size * math.cos(heading - spread)
-        base_r_y = y + size * math.sin(heading - spread)
+        # Build predator body segments (wider, more muscular than fish)
+        seg_cx, seg_cy, seg_w = [], [], []
+        px, py = x, y
+        for i in range(n_seg):
+            t = i / (n_seg - 1)
+            # Predator body: wide head tapering to narrow tail
+            w = size * (0.9 - 0.65 * t)
+            seg_w.append(w)
+            seg_cx.append(px)
+            seg_cy.append(py)
+            if i > 0:
+                # Slight tail undulation
+                wave = size * 0.1 * t * math.sin(self.step_count * 0.3 + i * 0.8)
+                px -= seg_len * cos_h + (-sin_h) * wave * 0.3
+                py -= seg_len * sin_h + cos_h * wave * 0.3
 
-        # Tail vertex
-        tail_x = x - size * 1.5 * math.cos(heading)
-        tail_y = y - size * 1.5 * math.sin(heading)
+        # Body outline
+        left_pts, right_pts = [], []
+        for i in range(n_seg):
+            cx, cy = seg_cx[i], seg_cy[i]
+            w = seg_w[i] * 0.5
+            if i < n_seg - 1:
+                dx = seg_cx[i + 1] - cx
+                dy = seg_cy[i + 1] - cy
+            else:
+                dx = cx - seg_cx[i - 1]
+                dy = cy - seg_cy[i - 1]
+            d = math.sqrt(dx * dx + dy * dy) + 1e-8
+            nx, ny = -dy / d, dx / d
+            left_pts.append((int(cx + nx * w), int(cy + ny * w)))
+            right_pts.append((int(cx - nx * w), int(cy - ny * w)))
 
-        points = [(base_l_x, base_l_y), (base_r_x, base_r_y),
-                  (tail_x, tail_y)]
-        pygame.draw.polygon(surface, color, points)
-        pygame.draw.polygon(surface, (120, 20, 20), points, 2)
+        outline = left_pts + list(reversed(right_pts))
+        if len(outline) > 2:
+            # Dark red body with darker stripe
+            pygame.draw.polygon(surface, color, outline)
+            pygame.draw.polygon(surface, (100, 15, 15), outline, 2)
 
-        # Eyes — bigger than zebrafish (predator is 1.5x)
+        # Dorsal stripe (dark line along spine)
+        spine = [(int(cx), int(cy)) for cx, cy in zip(seg_cx, seg_cy)]
+        if len(spine) > 1:
+            pygame.draw.lines(surface, (60, 10, 10), False, spine, 2)
+
+        # Jaw/mouth — open V-shape at front
+        jaw_len = size * 0.6
+        jaw_spread = 0.35
+        jaw_l_x = x + jaw_len * math.cos(heading + jaw_spread)
+        jaw_l_y = y + jaw_len * math.sin(heading + jaw_spread)
+        jaw_r_x = x + jaw_len * math.cos(heading - jaw_spread)
+        jaw_r_y = y + jaw_len * math.sin(heading - jaw_spread)
+        tip_x = x + jaw_len * 1.2 * cos_h
+        tip_y = y + jaw_len * 1.2 * sin_h
+        # Upper jaw
+        pygame.draw.line(surface, (180, 30, 30),
+                         (int(jaw_l_x), int(jaw_l_y)),
+                         (int(tip_x), int(tip_y)), 2)
+        pygame.draw.line(surface, (180, 30, 30),
+                         (int(jaw_r_x), int(jaw_r_y)),
+                         (int(tip_x), int(tip_y)), 2)
+
+        # Eyes — yellow with red slit pupils (menacing)
         eye_r = max(3, int(size * 0.3))
-        eye_off = 0.3
-        eye_l_x = base_l_x + size * eye_off * math.cos(heading)
-        eye_l_y = base_l_y + size * eye_off * math.sin(heading)
-        eye_r_x = base_r_x + size * eye_off * math.cos(heading)
-        eye_r_y = base_r_y + size * eye_off * math.sin(heading)
+        eye_fwd = size * 0.25
+        eye_lat = size * 0.45
+        el_x = x + eye_fwd * cos_h - eye_lat * sin_h
+        el_y = y + eye_fwd * sin_h + eye_lat * cos_h
+        er_x = x + eye_fwd * cos_h + eye_lat * sin_h
+        er_y = y + eye_fwd * sin_h - eye_lat * cos_h
 
-        # Yellow sclera, red iris for menacing look
-        pygame.draw.circle(surface, (255, 220, 50),
-                           (int(eye_l_x), int(eye_l_y)), eye_r)
-        pygame.draw.circle(surface, (0, 0, 0),
-                           (int(eye_l_x), int(eye_l_y)), eye_r, 1)
-        pygame.draw.circle(surface, (180, 20, 20),
-                           (int(eye_l_x), int(eye_l_y)), max(1, eye_r // 2))
-
-        pygame.draw.circle(surface, (255, 220, 50),
-                           (int(eye_r_x), int(eye_r_y)), eye_r)
-        pygame.draw.circle(surface, (0, 0, 0),
-                           (int(eye_r_x), int(eye_r_y)), eye_r, 1)
-        pygame.draw.circle(surface, (180, 20, 20),
-                           (int(eye_r_x), int(eye_r_y)), max(1, eye_r // 2))
-
-        # Mouth — V-shape on the base center
-        base_cx = (base_l_x + base_r_x) / 2
-        base_cy = (base_l_y + base_r_y) / 2
-        mouth_w = size * 0.35
-        mouth_l_x = base_cx + mouth_w * math.cos(heading + 1.57)
-        mouth_l_y = base_cy + mouth_w * math.sin(heading + 1.57)
-        mouth_r_x = base_cx + mouth_w * math.cos(heading - 1.57)
-        mouth_r_y = base_cy + mouth_w * math.sin(heading - 1.57)
-        mouth_inner_x = base_cx - size * 0.2 * math.cos(heading)
-        mouth_inner_y = base_cy - size * 0.2 * math.sin(heading)
-        pygame.draw.lines(surface, (60, 0, 0), False, [
-            (int(mouth_l_x), int(mouth_l_y)),
-            (int(mouth_inner_x), int(mouth_inner_y)),
-            (int(mouth_r_x), int(mouth_r_y)),
-        ], 2)
+        for ex, ey in [(el_x, el_y), (er_x, er_y)]:
+            pygame.draw.circle(surface, (255, 200, 30),
+                               (int(ex), int(ey)), eye_r)
+            pygame.draw.circle(surface, (200, 20, 20),
+                               (int(ex), int(ey)), max(1, eye_r // 2))
+            pygame.draw.circle(surface, (80, 10, 10),
+                               (int(ex), int(ey)), eye_r, 1)
 
     def close(self):
         if self._screen is not None:
