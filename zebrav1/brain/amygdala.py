@@ -70,9 +70,9 @@ class Amygdala:
         raw = max(retinal_threat, 0.5 * proximity, stress, gaze_threat)
 
         # Episodic fear conditioning: near-death creates lasting baseline
-        # Near-death = predator very close (proximity > 0.8)
-        if proximity > 0.8:
-            self.fear_baseline = min(0.5, self.fear_baseline + 0.05)
+        # Near-death = predator extremely close (proximity > 0.9) AND facing fish
+        if proximity > 0.9 and pred_facing_score > 0.5:
+            self.fear_baseline = min(0.3, self.fear_baseline + 0.03)
             self.near_death_count += 1
 
         # Add fear baseline to raw signal (more cautious after trauma)
