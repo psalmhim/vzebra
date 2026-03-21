@@ -46,6 +46,7 @@ from zebrav1.brain.color_vision import ColorVisionProcessor
 from zebrav1.brain.circadian import CircadianClock
 from zebrav1.brain.proprioception import ProprioceptiveSystem
 from zebrav1.brain.insula import Insula
+from zebrav1.brain.stdp import RewardModulatedSTDP, PopulationDecoder
 from zebrav1.brain.device_util import get_device
 from zebrav1.world.world_env import WorldEnv
 from zebrav1.tests.step1_vision_pursuit import TurnSmoother
@@ -368,6 +369,13 @@ class BrainAgent:
 
         # Step 42: Insula (interoceptive awareness + emotional expression)
         self.insula = Insula()
+
+        # Reward-modulated STDP for reticulospinal weights
+        self.stdp_reticulo = RewardModulatedSTDP(
+            n_pre=600, n_post=100)  # OT_L/R (600) → motor (100)
+
+        # Population decoder for motor output
+        self.pop_decoder = PopulationDecoder(n_neurons=200)
 
         # World model (Step 16/17)
         self._prev_z = None
@@ -1777,21 +1785,22 @@ class BrainAgent:
         total = retR_sum + retL_sum + 1e-8
         retinal_turn = (retR_sum - retL_sum) / total
 
-        # SNN motor neuron readout (L/R → turn direction)
+        # SNN motor: population vector decoding (Phase 1 improvement)
         motor_out = out.get("motor", None)
         if motor_out is not None:
-            mot = motor_out.detach()
-            snn_mot_L = float(mot[0, :100].sigmoid().mean())
-            snn_mot_R = float(mot[0, 100:].sigmoid().mean())
-            snn_motor_turn = snn_mot_R - snn_mot_L  # [-1, 1]
+            pop_turn, pop_speed = self.pop_decoder.decode_tensor(motor_out)
+            snn_mot_L = float(motor_out[0, :100].detach().abs().mean())
+            snn_mot_R = float(motor_out[0, 100:].detach().abs().mean())
+            snn_motor_turn = pop_turn
         else:
             snn_motor_turn = 0.0
+            pop_speed = 0.0
             snn_mot_L = snn_mot_R = 0.0
 
-        # Dual pathway: retinal (primary) + SNN motor (secondary/learning)
-        # The retinal pathway provides the reliable signal.
-        # The SNN motor learns to predict and eventually replace it.
-        raw_turn = retinal_turn  # retinal is primary pathway
+        # Dual pathway: retinal (primary) + SNN motor (blended)
+        # SNN motor weight grows as reticulospinal learns
+        mot_confidence = min(0.3, abs(snn_motor_turn))
+        raw_turn = (1 - mot_confidence) * retinal_turn + mot_confidence * snn_motor_turn
         self._snn_mot_L = snn_mot_L
         self._snn_mot_R = snn_mot_R
         self._snn_motor_turn = snn_motor_turn
@@ -2577,6 +2586,27 @@ class BrainAgent:
         """Feed actual eaten count to dopamine system and save reward for critic."""
         eaten = info.get("food_eaten_this_step", 0)
         self._eaten_buffer = eaten
+
+        # Reward-modulated STDP: train reticulospinal online
+        if (hasattr(self, 'stdp_reticulo') and hasattr(self, '_last_snn_out')
+                and self._last_snn_out):
+            out = self._last_snn_out
+            # OT_L activity → pre spikes (threshold at mean)
+            oL = out.get("oL")
+            if oL is not None:
+                oL_np = oL.detach().cpu().numpy().flatten()
+                pre_spikes = (oL_np > oL_np.mean()).astype(np.float32)
+                # Motor R activity → post spikes
+                mot = out.get("motor")
+                if mot is not None:
+                    mot_np = mot.detach().cpu().numpy().flatten()
+                    post_spikes = (mot_np[100:] > mot_np[100:].mean()).astype(np.float32)
+                    self.stdp_reticulo.update_traces(pre_spikes, post_spikes)
+                    # Apply reward: food=+1, death=-1, survival=+0.01
+                    rpe = eaten * 1.0 + (0.01 if not done else -1.0)
+                    dopa = self.last_diagnostics.get("dopa", 0.5)
+                    self.stdp_reticulo.apply_reward(
+                        self.model.reticulo_L.weight, dopa, rpe)
 
         # Patch memory: attribute eaten food to nearest patch
         if eaten > 0 and env is not None:

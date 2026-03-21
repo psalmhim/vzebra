@@ -267,6 +267,13 @@ class ZebrafishSNN(nn.Module):
         self.eye = PredictiveTwoComp(self.PC_INT, 100, n_fb=0, device=device)
         self.DA = PredictiveTwoComp(self.PC_INT, 50, n_fb=0, device=device)
 
+        # Reticulospinal shortcut: crossed OT_L/R → motor (trainable)
+        # Left tectum → right motor, right tectum → left motor
+        self.reticulo_L = nn.Linear(self.OTL, 100, bias=False)
+        self.reticulo_R = nn.Linear(self.OTR, 100, bias=False)
+        nn.init.zeros_(self.reticulo_L.weight)  # start at zero, train online
+        nn.init.zeros_(self.reticulo_R.weight)
+
         # Classification head (800 type pixels + 4 aggregate pixel counts)
         self.cls_hidden = nn.Linear(804, 128)
         self.cls_out = nn.Linear(128, 5)
@@ -335,9 +342,11 @@ class ZebrafishSNN(nn.Module):
         e = self.eye.step(intent)
         d = self.DA.step(intent)
 
-        # Note: motor output driven by retinal L/R balance in brain_agent.py,
-        # not by these motor neurons (deep layer signal death). Future work:
-        # train reticulospinal shortcut with supervised motor targets.
+        # Reticulospinal: crossed OT_L/R → motor L/R (trained shortcut)
+        retic_from_L = self.reticulo_L(oL)  # left tectum → right motor
+        retic_from_R = self.reticulo_R(oR)  # right tectum → left motor
+        retic_motor = torch.cat([retic_from_R, retic_from_L], dim=1)
+        m = m + retic_motor  # blend deep + shortcut
 
         # 5. Feedback pass (top-down, update apical for NEXT timestep)
         self.PC_int.update_apical(d)         # DA → PC_int
