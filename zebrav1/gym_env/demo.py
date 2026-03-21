@@ -293,8 +293,13 @@ def run_brain_demo(render=False, monitor=False, record=False, T=1000,
     agent = BrainAgent(device="auto", world_model="vae",
                        use_allostasis=True,
                        use_spiking=use_spiking)
+    # Auto-load checkpoint: explicit path > default path > no checkpoint
     if load_checkpoint is not None:
         agent.load_checkpoint(load_checkpoint)
+    else:
+        default_ckpt = "zebrav1/weights/brain_checkpoint.pt"
+        if os.path.exists(default_ckpt):
+            agent.load_checkpoint(default_ckpt)
     obs, info = env.reset(seed=42)
     agent.reset()
 
