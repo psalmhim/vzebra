@@ -161,6 +161,14 @@ def _setup_scenario(env, scenario):
 
 def _run_scenario(env, agent, scenario, T=200):
     """Run a single scenario and evaluate the decision."""
+    import random
+    # Seed Python's built-in random (used by env._update_bout_state for turn noise)
+    # This is the main source of non-determinism — numpy/torch seeds don't cover it.
+    _seed_map = {"A": 101, "B": 102, "C": 103, "D": 104, "E": 105}
+    _s = _seed_map.get(scenario, 100)
+    random.seed(_s)
+    np.random.seed(_s)
+
     obs, info = env.reset(seed=42)
     agent.reset()
 

@@ -1697,6 +1697,26 @@ class BrainAgent:
                 # so use ground truth distance to activate burst speed (1.5x = 4.5px/step)
                 if _pred_state == 'HUNT' and _pred_dist_gt < 200.0:
                     self._flee_burst_steps = max(self._flee_burst_steps, 8)
+                # Trigger Mauthner C-start when HUNT predator within 150px and
+                # retinal detection fails (food occludes predator, or predator behind fish).
+                # C-start gives 4-step snap turn + propulsive burst — 5x faster than
+                # the normal flee turn-around (7 steps at 0.45 rad/step).
+                if (_pred_state == 'HUNT'
+                        and _pred_dist_gt < 150.0
+                        and self._enemy_pixels_total < 3
+                        and self._mauthner_refractory == 0
+                        and not self._mauthner_active):
+                    _pred_ang = math.atan2(env.pred_y - env.fish_y,
+                                           env.pred_x - env.fish_x)
+                    _rel_ang = math.atan2(
+                        math.sin(_pred_ang - env.fish_heading),
+                        math.cos(_pred_ang - env.fish_heading))
+                    # Predator right of heading → turn left (−1), else right
+                    self._mauthner_turn_direction = -1.0 if _rel_ang > 0 else 1.0
+                    self._mauthner_active = True
+                    self._mauthner_steps_remaining = 4
+                    self._mauthner_refractory = 12
+                    self._mauthner_total_triggers += 1
 
         # 8.9c00 Insula emotional bias (Step 42)
         if self.insula is not None:
@@ -2809,6 +2829,10 @@ class BrainAgent:
         self._prev_reward = 0.0
         self._prev_done = False
         self._flee_burst_steps = 0
+        self._mauthner_active = False
+        self._mauthner_steps_remaining = 0
+        self._mauthner_turn_direction = 0.0
+        self._mauthner_refractory = 0
         self._saccade_active = False
         self._saccade_flash = 0
         self._enemy_pixels_total = 0
