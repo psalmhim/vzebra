@@ -37,6 +37,10 @@ GOAL_EXPLORE = 2
 def _setup_scenario(env, scenario):
     """Configure environment for a specific decision scenario."""
 
+    # Seed numpy for reproducible food placement across runs/code versions
+    _seed_map = {"A": 101, "B": 102, "C": 103, "D": 104, "E": 105}
+    np.random.seed(_seed_map.get(scenario, 100))
+
     # Clear existing food
     env.foods = []
 
@@ -295,6 +299,11 @@ def _score_scenario(scenario, result):
 
 
 def run_step29b():
+    import torch
+    # Global seeds for fully reproducible evaluation across code versions
+    np.random.seed(42)
+    torch.manual_seed(42)
+
     print("=" * 60)
     print("Step 29b: Structured Decision Scenarios")
     print("=" * 60)
@@ -311,6 +320,21 @@ def run_step29b():
         render_mode=None, n_food=15, max_steps=300, side_panels=False)
     agent = BrainAgent(device="auto", world_model="place_cell",
                        use_allostasis=True)
+
+    # Load trained classifier weights for consistent evaluation
+    # (brain_checkpoint may have old CLS head dimensions — skip it here)
+    _cls_ckpt = os.path.join(PROJECT_ROOT, "zebrav1", "weights", "classifier_wfb.pt")
+    if os.path.exists(_cls_ckpt):
+        _cls_state = torch.load(_cls_ckpt, map_location="cpu", weights_only=False)
+        _snn_state = _cls_state.get("snn", _cls_state)
+        _current = agent.model.state_dict()
+        _filtered = {k: v for k, v in _snn_state.items()
+                     if k in _current and v.shape == _current[k].shape}
+        agent.model.load_state_dict(_filtered, strict=False)
+
+    # Re-seed after initialization to ensure deterministic warm-up
+    np.random.seed(42)
+    torch.manual_seed(42)
 
     results = {}
     scores = {}

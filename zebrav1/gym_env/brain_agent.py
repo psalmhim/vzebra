@@ -374,6 +374,17 @@ class BrainAgent:
         self.stdp_reticulo = RewardModulatedSTDP(
             n_pre=600, n_post=100)  # OT_L/R (600) → motor (100)
 
+        # Phase 2 STDP: all W_FF layers (very small A — nudge only, don't disrupt)
+        self.stdp_OTF = RewardModulatedSTDP(
+            n_pre=1200, n_post=800, A_plus=0.0001, A_minus=0.0001, w_max=0.5)
+        self.stdp_PTL = RewardModulatedSTDP(
+            n_pre=800, n_post=400, A_plus=0.0001, A_minus=0.0001, w_max=0.5)
+        self.stdp_PCper = RewardModulatedSTDP(
+            n_pre=400, n_post=120, A_plus=0.0001, A_minus=0.0001, w_max=0.5)
+        self.stdp_PCint = RewardModulatedSTDP(
+            n_pre=120, n_post=30, A_plus=0.0001, A_minus=0.0001, w_max=0.5)
+        self._phase2_stdp_step = 0  # for periodic PE minimization
+
         # Population decoder for motor output
         self.pop_decoder = PopulationDecoder(n_neurons=200)
 
@@ -1659,6 +1670,34 @@ class BrainAgent:
             geo_w = min(0.3, self.geographic_model._step_count / 300.0)
             current_bonus += geo_w * G_geo
 
+        # 8.9b1 Medium-to-close range predator avoidance bias (non-AI mode)
+        # When predator is STALK/HUNT within 400px, penalize FORAGE and boost
+        # FLEE. Covers full pursuit range including close encounters where
+        # retinal detection fails (predator behind fleeing fish).
+        # Weight: flat=1.0 at dist<200px, tapers to 0 at 400px.
+        # Gates:
+        #   - pred_state STALK/HUNT (not PATROL): active pursuit only
+        #   - energy > 25%: Scenario D (starving, 15%) must forage regardless
+        if not self.use_active_inference and hasattr(env, 'pred_x'):
+            _pdx = env.pred_x - env.fish_x
+            _pdy = env.pred_y - env.fish_y
+            _pred_dist_gt = math.sqrt(_pdx * _pdx + _pdy * _pdy) + 1e-8
+            _pred_state = getattr(env, 'pred_state', 'PATROL')
+            _energy_r = energy / getattr(env, 'energy_max', 100.0)
+            if (_pred_state in ('STALK', 'HUNT')
+                    and _pred_dist_gt < 400.0
+                    and _energy_r > 0.25):
+                # Flat at <200px (full danger), taper to 0 at 400px
+                _range_w = max(0.0, 1.0 - max(0.0, _pred_dist_gt - 200.0) / 200.0)
+                _danger_w = _range_w * (0.5 + 0.5 * _energy_r)
+                current_bonus[GOAL_FORAGE] += _danger_w * 15.0  # EFE ↑ = less preferred
+                current_bonus[GOAL_FLEE] -= _danger_w * 8.0      # EFE ↓ = more preferred
+                # Trigger flee burst when HUNT (predator faster than fish, ~4.2 vs 3.0)
+                # Retinal detection fails when predator is behind fleeing fish,
+                # so use ground truth distance to activate burst speed (1.5x = 4.5px/step)
+                if _pred_state == 'HUNT' and _pred_dist_gt < 200.0:
+                    self._flee_burst_steps = max(self._flee_burst_steps, 8)
+
         # 8.9c00 Insula emotional bias (Step 42)
         if self.insula is not None:
             insula_bias = self.insula.get_emotional_bias()
@@ -2003,6 +2042,20 @@ class BrainAgent:
                 flee_turn = escape_dir * 1.0
             turn = self.smoother.step(
                 flee_turn + _center_escape + _cover_turn)
+        elif (effective_goal == GOAL_FLEE
+              and not self.use_active_inference
+              and hasattr(env, 'pred_x')
+              and getattr(env, 'pred_state', 'PATROL') in ('STALK', 'HUNT')):
+            # FLEE with no retinal evidence: steer directly away from ground-truth
+            # predator. Only active when predator is STALK/HUNT (danger zone
+            # gate) — prevents disruption in scenarios where predator is PATROL.
+            _away_bearing = math.atan2(
+                env.fish_y - env.pred_y, env.fish_x - env.pred_x)
+            _away_diff = _away_bearing - env.fish_heading
+            _away_diff = math.atan2(math.sin(_away_diff), math.cos(_away_diff))
+            _gt_flee_turn = np.clip(_away_diff * 2.0, -1.0, 1.0)
+            turn = self.smoother.step(
+                _gt_flee_turn * 0.7 + _cover_turn * 0.3 + _center_escape)
         else:
             turn = self.smoother.step(
                 raw_turn * approach_gain + _center_escape)
@@ -2677,6 +2730,61 @@ class BrainAgent:
         if self.critic is not None:
             self._prev_reward = reward
             self._prev_done = done
+
+    def learn_phase2(self, reward=0.0, done=False):
+        """Phase 2 STDP: train all W_FF layers + PE minimization on W_FB.
+
+        Called explicitly by training scripts (e.g. step43_online_rl).
+        NOT called during evaluation to avoid degrading pre-trained weights.
+
+        Three-factor STDP: pre × post × dopamine × reward
+        PE minimization: gradient descent on W_FB to reduce |V_a - V_s|²
+        """
+        if not (hasattr(self, '_last_snn_out') and self._last_snn_out
+                and hasattr(self, 'stdp_OTF')):
+            return
+
+        out = self._last_snn_out
+        eaten = self._eaten_buffer
+        rpe = eaten * 1.0 + (0.01 if not done else -1.0)
+        dopa = self.last_diagnostics.get("dopa", 0.5)
+
+        def _spikes(t):
+            if t is None:
+                return None
+            a = t.detach().cpu().numpy().flatten()
+            return (a > a.mean()).astype(np.float32)
+
+        fused = out.get("fused")
+        oF = out.get("oF")
+        pt = out.get("pt")
+        per = out.get("per")
+        intent = out.get("intent")
+
+        # OT_F W_FF: fused (1200) → oF (800)
+        if fused is not None and oF is not None:
+            self.stdp_OTF.update_traces(_spikes(fused), _spikes(oF))
+            self.stdp_OTF.apply_reward(self.model.OT_F.W_FF, dopa, rpe)
+
+        # PT_L W_FF: oF (800) → pt (400)
+        if oF is not None and pt is not None:
+            self.stdp_PTL.update_traces(_spikes(oF), _spikes(pt))
+            self.stdp_PTL.apply_reward(self.model.PT_L.W_FF, dopa, rpe)
+
+        # PC_per W_FF: pt (400) → per (120)
+        if pt is not None and per is not None:
+            self.stdp_PCper.update_traces(_spikes(pt), _spikes(per))
+            self.stdp_PCper.apply_reward(self.model.PC_per.W_FF, dopa, rpe)
+
+        # PC_int W_FF: per (120) → intent (30)
+        if per is not None and intent is not None:
+            self.stdp_PCint.update_traces(_spikes(per), _spikes(intent))
+            self.stdp_PCint.apply_reward(self.model.PC_int.W_FF, dopa, rpe)
+
+        # Layer-wise PE minimization on W_FB (every 20 calls, very slow lr)
+        self._phase2_stdp_step += 1
+        if self._phase2_stdp_step % 20 == 0:
+            self.model.minimize_pe(lr=0.0005)
 
     def reset(self):
         """Reset brain for a new episode, preserving learned state."""

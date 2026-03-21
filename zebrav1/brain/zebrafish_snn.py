@@ -151,6 +151,7 @@ class PredictiveTwoComp(nn.Module):
             fb: feedback from the next higher layer [1, n_fb]
         """
         if self.W_FB is not None:
+            self._last_fb = fb.detach()  # store for PE minimization
             self.v_a = (self.tau_a * self.v_a
                         + (1.0 - self.tau_a) * (fb @ self.W_FB))
             # Clamp apical to prevent runaway
@@ -462,6 +463,31 @@ class ZebrafishSNN(nn.Module):
             print("[SNN] Migrated old checkpoint → PredictiveTwoComp")
         else:
             self.load_state_dict(state, strict=False)
+
+    def minimize_pe(self, lr=0.0005):
+        """Layer-wise PE minimization: nudge W_FB to reduce |V_a - V_s|².
+
+        Gradient: ΔW_FB = -lr * (1-tau_a) * fb^T @ (V_a - V_s)
+        This brings V_a closer to V_s on the next step.
+        Applied every timestep with a very small lr to avoid disrupting
+        existing behavior while gradually reviving deep layers.
+
+        Phase 2 SNN: extends reticulospinal STDP to all feedback weights.
+        """
+        with torch.no_grad():
+            for layer in [self.OT_F, self.PT_L, self.PC_per, self.PC_int]:
+                if layer.W_FB is None:
+                    continue
+                if not hasattr(layer, '_last_fb'):
+                    continue
+                pe = layer.pred_error          # [1, n_out] = V_a - V_s
+                fb = layer._last_fb            # [1, n_fb]
+                if pe.abs().mean() < 1e-6:
+                    continue
+                # dW = -lr * (1-tau_a) * fb^T @ pe  → shape [n_fb, n_out]
+                dW = lr * (1.0 - layer.tau_a) * fb.T @ pe
+                layer.W_FB.data -= dW
+                layer.W_FB.data.clamp_(-2.0, 2.0)
 
     def compute_free_energy(self):
         """Compute variational free energy F as precision-weighted hierarchical PE.
