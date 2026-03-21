@@ -2947,10 +2947,13 @@ in zebrafish~\cite{orger2008}.
 
 \paragraph{Decision rationality improvement.}
 These additions improve the five-scenario decision quality score from
-66/100 to 75/100 (Table~\ref{tab:scenario_improvement}), with Scenario~C
-(predator charge) rising from 30 to 98 and Scenario~A (safe food) from
-49 to 90.  Scenario~E (obstacle detour) remains at 34, as the explore
-goal requires separate investigation.
+66/100 to 80/100 (Table~\ref{tab:scenario_improvement}), with
+Scenario~A rising from 49 to 90, Scenario~C from 30 to 80, and
+Scenario~E from 34 to 81.  The Scenario~E improvement comes from a
+forage-no-progress detector: after 30 steps of FORAGE with no food
+eaten and no predator visible, the fish switches to EXPLORE for 20
+steps, generating wider search arcs that naturally route around
+obstacles.
 
 \begin{table}[H]
 \centering
@@ -2962,12 +2965,12 @@ goal requires separate investigation.
 Scenario & Description & Before & After & Grade \\
 \hline
 A & Safe food (predator nearby)   & 49  & 90  & A \\
-B & Occluded food retrieval        & 84  & 84  & A \\
-C & Predator charge (survive)      & 30  & 98  & A \\
+B & Occluded food retrieval        & 84  & 81  & A \\
+C & Predator charge (survive)      & 30  & 80  & A \\
 D & Starvation dilemma             & 70  & 70  & B \\
-E & Obstacle detour                & 34  & 34  & D \\
+E & Obstacle detour                & 34  & 81  & A \\
 \hline
-\textbf{Overall} & & 66 & \textbf{75} & \textbf{B} \\
+\textbf{Overall} & & 66 & \textbf{80} & \textbf{B} \\
 \hline
 \end{tabular}
 \end{table}
@@ -2982,16 +2985,17 @@ complete 42-step system.
 
 Five structured decision scenarios evaluate cognitive abilities
 (Figure~\ref{fig:scenarios}).  After Steps~43--44 refinements the system
-achieves 75/100 overall (Table~\ref{tab:scenario_improvement}), with
-Scenario~C (predator charge) improving from 30 to 98 via the Mauthner
-C-start reflex and GT flee direction override.
+achieves 80/100 overall (Table~\ref{tab:scenario_improvement}), with
+Scenario~C (predator charge) improving from 30 to 80 via the Mauthner
+C-start reflex, and Scenario~E (obstacle detour) from 34 to 81 via
+the forage-no-progress EXPLORE trigger.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.7\textwidth]{../plots/paper/fig_decision_scenarios.png}
 \caption{Decision rationality scores across 5 structured scenarios.
-  A=90 (safe vs.\ risky food), B=84 (occluded food), C=98 (predator charge),
-  D=70 (starvation dilemma), E=34 (detour).  Overall: 75/100 \textsc{rational}.}
+  A=90 (safe vs.\ risky food), B=81 (occluded food), C=80 (predator charge),
+  D=70 (starvation dilemma), E=81 (detour).  Overall: 80/100 \textsc{rational}.}
 \label{fig:scenarios}
 \end{figure}
 
