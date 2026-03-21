@@ -2913,7 +2913,7 @@ giving a flat full-weight zone at $d_p < 200$\,px tapering to zero at
 $400$\,px.  Energy weighting reduces danger bias when the fish is starving
 ($e_r < 0.25$), preventing starvation-paralysis during low-energy episodes.
 
-\paragraph{GT flee direction.}
+\paragraph{GT flee direction and persistence.}
 When the active goal is FLEE but retinal evidence is absent (predator
 behind fish or occluded), the fish steers directly away from the GT
 predator position rather than following the food-direction turn signal:
@@ -2923,6 +2923,20 @@ predator position rather than following the food-direction turn signal:
 The turn command blends the away-bearing error ($70\%$) with a
 wall-clearance term ($30\%$), preventing the fish from being cornered
 while fleeing an unseen pursuer.
+
+\textit{Flee persistence:} when the predator exhausts and switches from
+HUNT to PATROL, the GT flee direction remains active for 40 additional
+steps using the last recorded HUNT position.  Without this, the fish
+wanders aimlessly once the danger zone turns off, allowing the PATROL
+predator to drift back into range.
+
+\paragraph{Mauthner reflex energy independence.}
+The Mauthner C-start is a brainstem circuit that operates below the level
+of voluntary control.  It is therefore decoupled from the energy gate:
+even when the fish is starving ($e_r < 0.25$) and the danger zone
+modulator is disabled, the Mauthner C-start still fires when a HUNT
+predator closes within 150\,px with no retinal evidence.  This prevents
+a starving fish from failing to respond to a direct attack.
 
 \subsection{Mauthner C-Start Reflex (Step 44b)}\label{sec:mauthner}
 
@@ -2945,15 +2959,30 @@ driven by the internal predator model (GT position), not retinal spikes,
 matching the dual-pathway architecture (Mauthner axon + tectum) documented
 in zebrafish~\cite{orger2008}.
 
+\subsection{Forage-No-Progress Detour (Step 44c)}\label{sec:detour}
+
+Scenario~E requires the fish to navigate around a rock formation to
+reach food on the far side.  The fish fails when FORAGE mode persists
+while a physical obstacle blocks the direct path: the fish approaches
+the rock, makes no progress, yet never switches mode.
+
+A \emph{forage-no-progress detector} counts consecutive FORAGE steps
+during which the fish eats no food and the retina shows no predator:
+\begin{equation}
+  n_{\text{stuck}} \mathrel{+}= 1 \;\text{ if }\;
+    g = \text{FORAGE},\; n_{\text{food}} = 0,\; e_{\text{px}} = 0
+\end{equation}
+When $n_{\text{stuck}} > 30$, the goal is overridden to EXPLORE for 20
+steps.  During EXPLORE, the basal ganglia exploration multiplier
+($\times 1.5$) drives wider random search arcs that naturally route
+around obstacles, after which FORAGE resumes.  The counter resets
+immediately on food consumption.
+
 \paragraph{Decision rationality improvement.}
 These additions improve the five-scenario decision quality score from
 66/100 to 80/100 (Table~\ref{tab:scenario_improvement}), with
 Scenario~A rising from 49 to 90, Scenario~C from 30 to 80, and
-Scenario~E from 34 to 81.  The Scenario~E improvement comes from a
-forage-no-progress detector: after 30 steps of FORAGE with no food
-eaten and no predator visible, the fish switches to EXPLORE for 20
-steps, generating wider search arcs that naturally route around
-obstacles.
+Scenario~E from 34 to 81.
 
 \begin{table}[H]
 \centering
