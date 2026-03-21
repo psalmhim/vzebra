@@ -263,6 +263,10 @@ class BrainAgent:
         self._prev_pos = None
         self._obs_stuck_force_explore = False
 
+        # Forage-no-progress detector (Scenario E: detour around obstacles)
+        self._forage_no_progress_steps = 0
+        self._explore_detour_steps = 0
+
         # Looming detector (Feature 3)
         self._prev_enemy_spread = 0.0
         self._looming_l_over_v = 999.0
@@ -1805,6 +1809,26 @@ class BrainAgent:
             effective_goal = GOAL_EXPLORE
             self._stuck_counter = 0  # reset after forcing explore
 
+        # 10d. Forage-no-progress → EXPLORE detour (Scenario E: obstacle detour)
+        # If fish has been trying to forage for >30 steps without eating AND
+        # there is food remaining AND no predator visible → try exploring around
+        _foods_left = len(getattr(env, 'foods', []))
+        _eaten_now = self._eaten_buffer  # updated by update_post_step last step
+        if _eaten_now > 0:
+            self._forage_no_progress_steps = 0
+        elif effective_goal == GOAL_FORAGE and _foods_left > 0 and self._enemy_pixels_total == 0:
+            self._forage_no_progress_steps += 1
+        else:
+            self._forage_no_progress_steps = max(0, self._forage_no_progress_steps - 1)
+
+        if self._explore_detour_steps > 0:
+            effective_goal = GOAL_EXPLORE
+            self._explore_detour_steps -= 1
+        elif self._forage_no_progress_steps > 30:
+            effective_goal = GOAL_EXPLORE
+            self._forage_no_progress_steps = 0
+            self._explore_detour_steps = 20  # stay in EXPLORE for 20 steps
+
         # 11. Goal-conditioned behavior
         approach_gain, speed_mod_brain, explore_mod, turn_strategy = \
             goal_to_behavior(effective_goal, cls_probs, posterior, confidence,
@@ -2839,6 +2863,8 @@ class BrainAgent:
         self._enemy_pixels_L = 0
         self._enemy_pixels_R = 0
         self._patch_visit_counts = {}
+        self._forage_no_progress_steps = 0
+        self._explore_detour_steps = 0
         self._prev_typeL = None
         self._prev_typeR = None
         self._novelty_ema = 0.0

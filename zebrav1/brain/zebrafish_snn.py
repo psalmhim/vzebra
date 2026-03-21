@@ -459,10 +459,20 @@ class ZebrafishSNN(nn.Module):
                         remapped[k] = v
                 else:
                     remapped[k] = v
-            self.load_state_dict(remapped, strict=False)
+            state = remapped
             print("[SNN] Migrated old checkpoint → PredictiveTwoComp")
-        else:
-            self.load_state_dict(state, strict=False)
+
+        # Shape-safe loading: skip keys where saved shape differs from current
+        # (handles classifier head size changes across architecture versions)
+        current = self.state_dict()
+        filtered = {k: v for k, v in state.items()
+                    if k in current and v.shape == current[k].shape}
+        skipped = [k for k in state if k in current
+                   and state[k].shape != current[k].shape]
+        if skipped:
+            print(f"[SNN] Skipped {len(skipped)} shape-mismatched keys: "
+                  f"{skipped[:3]}{'...' if len(skipped) > 3 else ''}")
+        self.load_state_dict(filtered, strict=False)
 
     def minimize_pe(self, lr=0.0005):
         """Layer-wise PE minimization: nudge W_FB to reduce |V_a - V_s|².
