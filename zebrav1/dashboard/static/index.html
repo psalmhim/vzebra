@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>vzebra — Zebrafish Brain Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #c9d1d9; }
+.header { background: #161b22; padding: 12px 20px; border-bottom: 1px solid #30363d; display: flex; align-items: center; gap: 20px; }
+.header h1 { font-size: 18px; color: #58a6ff; }
+.header .controls { display: flex; gap: 8px; }
+.btn { padding: 6px 14px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.btn:hover { background: #30363d; }
+.btn.active { background: #238636; border-color: #238636; }
+.btn.danger { background: #da3633; border-color: #da3633; }
+.status { font-size: 13px; color: #8b949e; }
+.status .live { color: #3fb950; }
+.status .dead { color: #f85149; }
+
+.grid { display: grid; grid-template-columns: 300px 1fr 300px; grid-template-rows: auto 1fr; gap: 8px; padding: 8px; height: calc(100vh - 52px); }
+
+.panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; overflow-y: auto; }
+.panel h2 { font-size: 14px; color: #58a6ff; margin-bottom: 8px; border-bottom: 1px solid #21262d; padding-bottom: 4px; }
+.panel h3 { font-size: 12px; color: #8b949e; margin: 8px 0 4px; }
+
+/* Architecture graph */
+#arch-panel { grid-row: 1 / 3; }
+.module-node { padding: 6px 10px; margin: 3px 0; border-radius: 4px; font-size: 12px; cursor: pointer; display: flex; justify-content: space-between; }
+.module-node:hover { filter: brightness(1.2); }
+.module-node .neurons { color: #8b949e; font-size: 11px; }
+.cat-sensory { background: #1a3a5c; border-left: 3px solid #58a6ff; }
+.cat-processing { background: #2a1a4c; border-left: 3px solid #bc8cff; }
+.cat-motor { background: #3a2a1a; border-left: 3px solid #d29922; }
+.cat-decision { background: #1a3a2a; border-left: 3px solid #3fb950; }
+.cat-neuromod { background: #3a1a2a; border-left: 3px solid #f85149; }
+.cat-emotion { background: #3a2a3a; border-left: 3px solid #db61a2; }
+.cat-world_model { background: #1a2a3a; border-left: 3px solid #79c0ff; }
+.cat-memory { background: #2a3a1a; border-left: 3px solid #7ee787; }
+.cat-interoception { background: #2a2a3a; border-left: 3px solid #d2a8ff; }
+.cat-attention { background: #3a3a1a; border-left: 3px solid #e3b341; }
+
+/* Monitor */
+#monitor-panel { grid-column: 2; grid-row: 1 / 3; }
+.monitor-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.metric { flex: 1; background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 8px; text-align: center; }
+.metric .label { font-size: 11px; color: #8b949e; }
+.metric .value { font-size: 22px; font-weight: bold; margin: 4px 0; }
+.metric .bar { height: 4px; background: #21262d; border-radius: 2px; margin-top: 4px; }
+.metric .bar-fill { height: 100%; border-radius: 2px; transition: width 0.1s; }
+
+/* Mini-map canvas */
+#minimap { width: 100%; height: 200px; background: #0d1117; border: 1px solid #21262d; border-radius: 6px; }
+
+/* Layer activity bars */
+.layer-bar { display: flex; align-items: center; margin: 3px 0; font-size: 11px; }
+.layer-bar .name { width: 60px; color: #8b949e; }
+.layer-bar .bar-bg { flex: 1; height: 12px; background: #21262d; border-radius: 3px; overflow: hidden; }
+.layer-bar .bar-fg { height: 100%; border-radius: 3px; transition: width 0.1s; }
+
+/* Goal timeline */
+#goal-timeline { width: 100%; height: 20px; background: #0d1117; border: 1px solid #21262d; border-radius: 4px; }
+
+/* Charts */
+.chart-container { width: 100%; height: 80px; position: relative; }
+.chart-container canvas { width: 100%; height: 100%; }
+
+/* Controls panel */
+#controls-panel { grid-row: 1 / 3; }
+.slider-group { margin: 8px 0; }
+.slider-group label { font-size: 12px; color: #8b949e; display: block; margin-bottom: 2px; }
+.slider-group input[type=range] { width: 100%; }
+.slider-group .val { float: right; color: #58a6ff; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>🐟 vzebra Brain Dashboard</h1>
+    <div class="controls">
+        <button class="btn active" id="btn-start" onclick="startSim()">▶ Start</button>
+        <button class="btn" id="btn-pause" onclick="togglePause()">⏸ Pause</button>
+        <button class="btn danger" id="btn-stop" onclick="stopSim()">⏹ Stop</button>
+        <button class="btn" onclick="saveCheckpoint()">💾 Save</button>
+    </div>
+    <div class="status">
+        Step: <span id="step-num">0</span> |
+        <span id="alive-status" class="live">ALIVE</span> |
+        Eaten: <span id="eaten-num">0</span> |
+        Speed: <input type="range" min="1" max="10" value="3" style="width:80px;vertical-align:middle" oninput="setSpeed(this.value)">
+    </div>
+</div>
+
+<div class="grid">
+    <!-- Left: Architecture -->
+    <div class="panel" id="arch-panel">
+        <h2>Architecture (36+ modules)</h2>
+        <div id="module-list"></div>
+    </div>
+
+    <!-- Center: Monitor -->
+    <div class="panel" id="monitor-panel">
+        <h2>Real-Time Monitor</h2>
+
+        <!-- Key metrics -->
+        <div class="monitor-row">
+            <div class="metric">
+                <div class="label">Goal</div>
+                <div class="value" id="m-goal" style="color:#3fb950">FORAGE</div>
+            </div>
+            <div class="metric">
+                <div class="label">Energy</div>
+                <div class="value" id="m-energy">100</div>
+                <div class="bar"><div class="bar-fill" id="m-energy-bar" style="width:100%;background:#3fb950"></div></div>
+            </div>
+            <div class="metric">
+                <div class="label">Heart Rate</div>
+                <div class="value" id="m-hr" style="color:#f85149">0.30</div>
+                <div class="bar"><div class="bar-fill" id="m-hr-bar" style="width:30%;background:#f85149"></div></div>
+            </div>
+            <div class="metric">
+                <div class="label">Dopamine</div>
+                <div class="value" id="m-dopa" style="color:#d29922">0.50</div>
+                <div class="bar"><div class="bar-fill" id="m-dopa-bar" style="width:50%;background:#d29922"></div></div>
+            </div>
+        </div>
+
+        <!-- Emotion row -->
+        <div class="monitor-row">
+            <div class="metric">
+                <div class="label">Fear</div>
+                <div class="value" id="m-fear" style="font-size:16px">0.00</div>
+                <div class="bar"><div class="bar-fill" id="m-fear-bar" style="width:0%;background:#f85149"></div></div>
+            </div>
+            <div class="metric">
+                <div class="label">Arousal</div>
+                <div class="value" id="m-arousal" style="font-size:16px">0.00</div>
+                <div class="bar"><div class="bar-fill" id="m-arousal-bar" style="width:0%;background:#d29922"></div></div>
+            </div>
+            <div class="metric">
+                <div class="label">Valence</div>
+                <div class="value" id="m-valence" style="font-size:16px">0.00</div>
+            </div>
+            <div class="metric">
+                <div class="label">Predator</div>
+                <div class="value" id="m-pred" style="font-size:14px;color:#8b949e">PATROL</div>
+            </div>
+        </div>
+
+        <!-- Mini-map -->
+        <h3>Arena Map</h3>
+        <canvas id="minimap"></canvas>
+
+        <!-- SNN Layer Activity -->
+        <h3>SNN Layer Activity (RMS)</h3>
+        <div id="layer-bars"></div>
+
+        <!-- Classification -->
+        <h3>Classification</h3>
+        <div id="cls-bars"></div>
+
+        <!-- Goal Timeline -->
+        <h3>Goal Timeline (last 200 steps)</h3>
+        <canvas id="goal-timeline"></canvas>
+
+        <!-- Energy History -->
+        <h3>Energy History</h3>
+        <canvas id="energy-chart" style="width:100%;height:60px"></canvas>
+    </div>
+
+    <!-- Right: Controls -->
+    <div class="panel" id="controls-panel">
+        <h2>Controls</h2>
+
+        <h3>Environment</h3>
+        <div class="slider-group">
+            <label>Food Count <span class="val" id="v-food">15</span></label>
+            <input type="range" min="0" max="30" value="15" oninput="document.getElementById('v-food').textContent=this.value">
+        </div>
+        <div class="slider-group">
+            <label>Predator Speed <span class="val" id="v-pred-spd">2.7</span></label>
+            <input type="range" min="0" max="50" value="27" oninput="document.getElementById('v-pred-spd').textContent=(this.value/10).toFixed(1)">
+        </div>
+
+        <h3>Training</h3>
+        <div class="slider-group">
+            <label>STDP Learning Rate <span class="val" id="v-lr">0.005</span></label>
+            <input type="range" min="0" max="100" value="50" oninput="document.getElementById('v-lr').textContent=(this.value/10000).toFixed(4)">
+        </div>
+        <div style="margin:8px 0">
+            <label style="font-size:12px"><input type="checkbox" checked> Hebbian Active</label><br>
+            <label style="font-size:12px"><input type="checkbox" checked> STDP Active</label><br>
+            <label style="font-size:12px"><input type="checkbox"> Spiking Mode</label>
+        </div>
+
+        <h3>Checkpoints</h3>
+        <button class="btn" onclick="saveCheckpoint()" style="width:100%;margin:4px 0">💾 Save Checkpoint</button>
+        <button class="btn" onclick="location.reload()" style="width:100%;margin:4px 0">🔄 Reset & Reload</button>
+
+        <h3>Info</h3>
+        <div style="font-size:11px;color:#8b949e;line-height:1.6">
+            Neurons: 5,823 spiking<br>
+            Modules: 36+<br>
+            Steps: 42<br>
+            Paper: 68 pages<br>
+            <br>
+            Keyboard:<br>
+            Space = Pause<br>
+            S = Save checkpoint<br>
+        </div>
+    </div>
+</div>
+
+<script>
+let ws = null;
+let goalHistory = [];
+let energyHistory = [];
+const GOAL_COLORS = ['#3fb950', '#f85149', '#58a6ff', '#3fb0b0'];
+const GOAL_NAMES = ['FORAGE', 'FLEE', 'EXPLORE', 'SOCIAL'];
+
+// WebSocket connection
+function connectWS() {
+    ws = new WebSocket(`ws://${location.host}/ws`);
+    ws.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+        updateDashboard(d);
+    };
+    ws.onclose = () => setTimeout(connectWS, 1000);
+}
+
+function updateDashboard(d) {
+    // Step counter
+    document.getElementById('step-num').textContent = d.step || 0;
+    document.getElementById('eaten-num').textContent = d.total_eaten || 0;
+
+    // Alive status
+    const alive = document.getElementById('alive-status');
+    alive.textContent = d.alive ? 'ALIVE' : 'DEAD';
+    alive.className = d.alive ? 'live' : 'dead';
+
+    // Goal
+    const goal = d.goal || 0;
+    const goalEl = document.getElementById('m-goal');
+    goalEl.textContent = GOAL_NAMES[goal];
+    goalEl.style.color = GOAL_COLORS[goal];
+
+    // Energy
+    const energy = d.energy || 0;
+    document.getElementById('m-energy').textContent = Math.round(energy);
+    const ebar = document.getElementById('m-energy-bar');
+    ebar.style.width = energy + '%';
+    ebar.style.background = energy > 30 ? '#3fb950' : '#d29922';
+
+    // Heart rate
+    const hr = d.heart_rate || 0.3;
+    document.getElementById('m-hr').textContent = hr.toFixed(2);
+    document.getElementById('m-hr-bar').style.width = (hr * 100) + '%';
+
+    // Dopamine
+    const dopa = d.dopa || 0.5;
+    document.getElementById('m-dopa').textContent = dopa.toFixed(2);
+    document.getElementById('m-dopa-bar').style.width = (dopa * 100) + '%';
+
+    // Emotions
+    document.getElementById('m-fear').textContent = (d.fear || 0).toFixed(2);
+    document.getElementById('m-fear-bar').style.width = ((d.fear || 0) * 100) + '%';
+    document.getElementById('m-arousal').textContent = (d.arousal || 0).toFixed(2);
+    document.getElementById('m-arousal-bar').style.width = ((d.arousal || 0) * 100) + '%';
+    const val = d.valence || 0;
+    const valEl = document.getElementById('m-valence');
+    valEl.textContent = val.toFixed(2);
+    valEl.style.color = val > 0 ? '#3fb950' : '#f85149';
+
+    // Predator state
+    document.getElementById('m-pred').textContent = d.pred_state || 'PATROL';
+    document.getElementById('m-pred').style.color =
+        d.pred_state === 'HUNT' ? '#f85149' :
+        d.pred_state === 'STALK' ? '#d29922' : '#8b949e';
+
+    // Mini-map
+    drawMinimap(d);
+
+    // Layer activity
+    updateLayerBars(d.layer_rms || {});
+
+    // Classification
+    updateClsBars(d.cls_probs || [0.2, 0.2, 0.2, 0.2, 0.2]);
+
+    // Goal timeline
+    goalHistory.push(goal);
+    if (goalHistory.length > 200) goalHistory.shift();
+    drawGoalTimeline();
+
+    // Energy history
+    energyHistory.push(energy);
+    if (energyHistory.length > 200) energyHistory.shift();
+    drawEnergyChart();
+}
+
+function drawMinimap(d) {
+    const c = document.getElementById('minimap');
+    const ctx = c.getContext('2d');
+    c.width = c.offsetWidth;
+    c.height = 200;
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, c.width, c.height);
+
+    const sx = c.width / 800, sy = c.height / 600;
+
+    // Food
+    ctx.fillStyle = '#3fb950';
+    for (let i = 0; i < (d.food_count || 0); i++) {
+        ctx.beginPath();
+        ctx.arc(Math.random() * c.width, Math.random() * c.height, 2, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Predator
+    ctx.fillStyle = '#f85149';
+    ctx.beginPath();
+    ctx.arc((d.pred_x || 0) * sx, (d.pred_y || 0) * sy, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#f85149';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Fish
+    ctx.fillStyle = '#58a6ff';
+    ctx.beginPath();
+    ctx.arc((d.fish_x || 0) * sx, (d.fish_y || 0) * sy, 5, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+function updateLayerBars(rms) {
+    const container = document.getElementById('layer-bars');
+    const layers = ['oF', 'pt', 'per', 'intent', 'motor', 'eye', 'DA'];
+    const colors = ['#58a6ff', '#bc8cff', '#bc8cff', '#bc8cff', '#d29922', '#d29922', '#f85149'];
+    let html = '';
+    layers.forEach((name, i) => {
+        const val = rms[name] || 0;
+        const pct = Math.min(100, val / 5.0 * 100);
+        html += `<div class="layer-bar"><span class="name">${name}</span>
+            <div class="bar-bg"><div class="bar-fg" style="width:${pct}%;background:${colors[i]}"></div></div>
+            <span style="width:40px;text-align:right;font-size:10px;color:#8b949e">${val.toFixed(2)}</span></div>`;
+    });
+    container.innerHTML = html;
+}
+
+function updateClsBars(probs) {
+    const container = document.getElementById('cls-bars');
+    const names = ['nothing', 'food', 'enemy', 'colleague', 'environ'];
+    const colors = ['#8b949e', '#3fb950', '#f85149', '#58a6ff', '#d29922'];
+    let html = '';
+    probs.forEach((p, i) => {
+        const pct = Math.min(100, p * 100);
+        html += `<div class="layer-bar"><span class="name">${names[i]}</span>
+            <div class="bar-bg"><div class="bar-fg" style="width:${pct}%;background:${colors[i]}"></div></div>
+            <span style="width:40px;text-align:right;font-size:10px;color:#8b949e">${(p*100).toFixed(0)}%</span></div>`;
+    });
+    container.innerHTML = html;
+}
+
+function drawGoalTimeline() {
+    const c = document.getElementById('goal-timeline');
+    const ctx = c.getContext('2d');
+    c.width = c.offsetWidth;
+    c.height = 20;
+    const w = c.width / 200;
+    goalHistory.forEach((g, i) => {
+        ctx.fillStyle = GOAL_COLORS[g];
+        ctx.fillRect(i * w, 0, w + 1, c.height);
+    });
+}
+
+function drawEnergyChart() {
+    const c = document.getElementById('energy-chart');
+    const ctx = c.getContext('2d');
+    c.width = c.offsetWidth;
+    c.height = 60;
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, c.width, c.height);
+    if (energyHistory.length < 2) return;
+    ctx.beginPath();
+    ctx.strokeStyle = '#3fb950';
+    ctx.lineWidth = 1.5;
+    energyHistory.forEach((e, i) => {
+        const x = i * c.width / 200;
+        const y = c.height - (e / 100 * c.height);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+}
+
+// API calls
+async function startSim() { await fetch('/api/start', {method: 'POST'}); }
+async function stopSim() { await fetch('/api/stop', {method: 'POST'}); }
+async function togglePause() { await fetch('/api/pause', {method: 'POST'}); }
+async function setSpeed(v) { await fetch(`/api/speed/${v}`, {method: 'POST'}); }
+async function saveCheckpoint() { await fetch('/api/save_checkpoint', {method: 'POST'}); }
+
+// Load modules
+async function loadModules() {
+    const resp = await fetch('/api/modules');
+    const modules = await resp.json();
+    const container = document.getElementById('module-list');
+    if (!modules.length) {
+        container.innerHTML = '<div style="color:#8b949e;font-size:12px">Start simulation to see modules</div>';
+        return;
+    }
+    // Group by category
+    const cats = {};
+    modules.forEach(m => {
+        if (!cats[m.category]) cats[m.category] = [];
+        cats[m.category].push(m);
+    });
+    let html = '';
+    for (const [cat, mods] of Object.entries(cats)) {
+        html += `<h3 style="text-transform:uppercase">${cat}</h3>`;
+        mods.forEach(m => {
+            const active = m.active ? '' : 'opacity:0.4';
+            html += `<div class="module-node cat-${cat}" style="${active}">
+                <span>${m.name}</span>
+                <span class="neurons">${m.neurons}n</span></div>`;
+        });
+    }
+    container.innerHTML = html;
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') { e.preventDefault(); togglePause(); }
+    if (e.code === 'KeyS') { saveCheckpoint(); }
+});
+
+// Init
+connectWS();
+loadModules();
+setInterval(loadModules, 5000);
+</script>
+</body>
+</html>
