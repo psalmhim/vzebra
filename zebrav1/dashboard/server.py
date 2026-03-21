@@ -24,6 +24,19 @@ if PROJECT_ROOT not in sys.path:
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+import json as _json
+
+
+class NumpyEncoder(_json.JSONEncoder):
+    """Handle numpy types in JSON serialization."""
+    def default(self, obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 app = FastAPI(title="vzebra Dashboard")
 
@@ -299,7 +312,8 @@ async def websocket_endpoint(websocket: WebSocket):
             # Stream diagnostics at ~20 fps
             diag = sim_state.get("diagnostics", {})
             if diag:
-                await websocket.send_json(diag)
+                await websocket.send_text(
+                    _json.dumps(diag, cls=NumpyEncoder))
             await asyncio.sleep(0.05)
     except WebSocketDisconnect:
         clients.discard(websocket)
