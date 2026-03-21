@@ -69,7 +69,7 @@ class NeuralMonitor:
 
     RASTER_HISTORY = 100
     RASTER_NEURONS = 80  # 30 PC_int + 20 PT_L + 10 Motor + 10 Eye + 10 DA
-    SPIKE_THRESHOLD = 0.15
+    SPIKE_THRESHOLD = 0.05  # delta threshold — leaky integrators, not LIF
 
     def __init__(self):
         if not HAS_PYGAME:
@@ -96,6 +96,7 @@ class NeuralMonitor:
         self._raster_buf = np.zeros(
             (self.RASTER_HISTORY, self.RASTER_NEURONS), dtype=np.float32)
         self._raster_ptr = 0
+        self._raster_prev_row = np.zeros(self.RASTER_NEURONS, dtype=np.float32)
 
         self._cls_names = ["Nothing", "Food", "Enemy", "Conspec", "Environ"]
         self._cls_colors = [
@@ -189,12 +190,18 @@ class NeuralMonitor:
         da_1d = da_np.flatten()
         da_sub = da_1d[::5][:10] if len(da_1d) >= 5 else da_1d[:10]
 
-        row = np.zeros(self.RASTER_NEURONS, dtype=np.float32)
-        row[:30] = np.abs(intent_1d)
-        row[30:50] = np.abs(pt_sub)
-        row[50:60] = np.abs(mot_sub)
-        row[60:70] = np.abs(eye_sub)
-        row[70:80] = np.abs(da_sub)
+        raw = np.zeros(self.RASTER_NEURONS, dtype=np.float32)
+        raw[:30] = np.abs(intent_1d)
+        raw[30:50] = np.abs(pt_sub)
+        raw[50:60] = np.abs(mot_sub)
+        raw[60:70] = np.abs(eye_sub)
+        raw[70:80] = np.abs(da_sub)
+
+        # Store delta (change in v_s) to show pulse events instead of tonic
+        # activity. Leaky-integrator neurons have continuous v_s near 5.0,
+        # so raw magnitude gives solid bands; the derivative gives real events.
+        row = np.abs(raw - self._raster_prev_row)
+        self._raster_prev_row = raw.copy()
 
         self._raster_buf[self._raster_ptr] = row
         self._raster_ptr = (self._raster_ptr + 1) % self.RASTER_HISTORY
