@@ -1,0 +1,78 @@
+{
+  "decision_scores": {
+    "A": 80,
+    "B": 30,
+    "C": 96,
+    "D": 81,
+    "E": 60
+  },
+  "decision_avg": 69.4,
+  "multi_seed": {
+    "n": 9,
+    "survival": "474+-72",
+    "food": "6.0+-2.4",
+    "caught": "1/9"
+  },
+  "ablation": {
+    "Full model": {
+      "survival_mean": 200.0,
+      "survival_std": 0.0,
+      "food_mean": 4.5,
+      "food_std": 1.5
+    },
+    "No cerebellum": {
+      "survival_mean": 200.0,
+      "survival_std": 0.0,
+      "food_mean": 4.0,
+      "food_std": 1.0
+    },
+    "No habenula": {
+      "survival_mean": 200.0,
+      "survival_std": 0.0,
+      "food_mean": 5.5,
+      "food_std": 2.5
+    },
+    "No critic": {
+      "survival_mean": 200.0,
+      "survival_std": 0.0,
+      "food_mean": 4.5,
+      "food_std": 0.5
+    },
+    "No amygdala": {
+      "survival_mean": 200.0,
+      "survival_std": 0.0,
+      "food_mean": 4.0,
+      "food_std": 1.0
+    },
+    "No predictive": {
+      "survival_mean": 200.0,
+      "survival_std": 0.0,
+      "food_mean": 4.5,
+      "food_std": 2.5
+    },
+    "No interoception": {
+      "survival_mean": 200.0,
+      "survival_std": 0.0,
+      "food_mean": 5.5,
+      "food_std": 1.5
+    },
+    "No VAE": {
+      "survival_mean": 200.0,
+      "survival_std": 0.0,
+      "food_mean": 4.0,
+      "food_std": 1.0
+    },
+    "No olfaction": {
+      "survival_mean": 200.0,
+      "survival_std": 0.0,
+      "food_mean": 3.5,
+      "food_std": 0.5
+    }
+  },
+  "v1_vs_v2": {
+    "v1_survival": 318.6666666666667,
+    "v2_survival": 421.6666666666667,
+    "v1_food": 3.0,
+    "v2_food": 7.666666666666667
+  }
+}
