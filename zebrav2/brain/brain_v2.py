@@ -41,6 +41,9 @@ from zebrav2.brain.proprioception import SpikingProprioception
 from zebrav2.brain.color_vision import SpikingColorVision
 from zebrav2.brain.circadian import SpikingCircadian
 from zebrav2.brain.sleep_wake import SpikingSleepWake
+from zebrav2.brain.saccade import SpikingSaccade
+from zebrav2.brain.geographic_model import GeographicModel
+from zebrav2.brain.binocular_depth import BinocularDepth
 
 GOAL_FORAGE, GOAL_FLEE, GOAL_EXPLORE, GOAL_SOCIAL = 0, 1, 2, 3
 
@@ -100,6 +103,9 @@ class ZebrafishBrainV2(nn.Module):
         self.color_vision = SpikingColorVision(device=device)
         self.circadian = SpikingCircadian(device=device)
         self.sleep_wake = SpikingSleepWake(device=device)
+        self.saccade = SpikingSaccade(device=device)
+        self.geo_model = GeographicModel()
+        self.binocular = BinocularDepth()
         # EFE state (adapted from v1)
         self.goal_probs = torch.tensor([0.25, 0.25, 0.25, 0.25], device=device)
         self.current_goal = GOAL_EXPLORE
@@ -141,6 +147,15 @@ class ZebrafishBrainV2(nn.Module):
         if hasattr(env, 'brain_L') and env.brain_L is not None:
             L = torch.tensor(env.brain_L, dtype=torch.float32, device=self.device)
             R = torch.tensor(env.brain_R, dtype=torch.float32, device=self.device)
+        # Binocular depth from retinal overlap
+        if L.sum() > 0:
+            bino_out = self.binocular.estimate(
+                L[400:].cpu().numpy(), R[400:].cpu().numpy(),
+                L[:400].cpu().numpy(), R[:400].cpu().numpy())
+        else:
+            bino_out = {'food_distance': 999, 'enemy_distance': 999,
+                        'food_confidence': 0, 'enemy_confidence': 0, 'stereo_correlation': 0}
+
         # Get entity info from env
         enemy_px = 0.0
         if hasattr(env, '_enemy_pixels_total'):
@@ -329,6 +344,11 @@ class ZebrafishBrainV2(nn.Module):
         # Olfactory bias: food odor attracts FORAGE, alarm drives FLEE
         G_forage += self.olfaction.get_forage_bias()
         G_flee += self.olfaction.get_flee_bias()
+        # Geographic model EFE bias
+        geo_bias = self.geo_model.get_efe_bias(self._last_fish_pos[0], self._last_fish_pos[1])
+        G_forage += geo_bias['forage_bias']
+        G_flee += geo_bias['flee_bias']
+        G_explore += geo_bias['explore_bias']
         # World learning: novelty drives exploration in unfamiliar environments
         # VAE surprise + place cell visit count → novelty estimate
         vae_novelty, _ = self.vae.memory.query_epistemic(self._z_prev if self._z_prev is not None else np.zeros(16, dtype=np.float32))
@@ -604,6 +624,8 @@ class ZebrafishBrainV2(nn.Module):
         else:
             speed = 0.7
         speed *= self.allostasis.get_speed_cap()
+        # Binocular depth: slow down for precise food approach
+        speed *= self.binocular.get_approach_gain()
         self._last_speed = speed
 
         # === 5b. SPINAL CPG (rhythmic motor output) ===
@@ -655,6 +677,22 @@ class ZebrafishBrainV2(nn.Module):
         py = getattr(env, 'fish_y', 300)
         self._last_fish_pos = (px, py)
         self.place(px, py, food_eaten=(eaten_now > 0), predator_near=(pred_dist < 150))
+
+        # Saccade: gaze shift for active vision
+        food_bearing = self.olfaction.food_gradient_dir if hasattr(self, 'olfaction') else 0.0
+        enemy_bearing = math.atan2(
+            getattr(env, 'pred_y', 300) - py,
+            getattr(env, 'pred_x', 400) - px) - fish_heading if enemy_px > 1 else 0.0
+        saccade_out = self.saccade(
+            food_bearing=food_bearing, enemy_bearing=enemy_bearing,
+            current_goal=self.current_goal,
+            salience_L=float(L[:400].sum()), salience_R=float(R[:400].sum()))
+
+        # Geographic model update
+        self.geo_model.update(
+            px, py, eaten_now, pred_dist,
+            pred_x=getattr(env, 'pred_x', None),
+            pred_y=getattr(env, 'pred_y', None))
 
         # === 7b. SENSORY MODULES ===
         vest_out = self.vestibular(fish_heading, speed, turn)
@@ -789,6 +827,9 @@ class ZebrafishBrainV2(nn.Module):
         self.color_vision.reset()
         self.circadian.reset()
         self.sleep_wake.reset()
+        self.saccade.reset()
+        self.geo_model.reset()
+        self.binocular.reset()
         self._z_prev = None
         self._last_action_ctx = None
         self._novelty_ema = 1.0
