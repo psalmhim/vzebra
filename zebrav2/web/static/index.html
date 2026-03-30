@@ -483,48 +483,52 @@ function drawArena(d) {
         });
     }
 
-    // === PREDATOR (faces movement direction, single top eye) ===
+    // === PREDATOR (tracks heading from velocity) ===
     if (d.pred_x > 0) {
         const px = d.pred_x*sx, py = d.pred_y*sy;
         const ps = 16;
-        // Compute heading toward fish (predator faces its target)
-        let predH = 0;
-        if (d.fish_x) predH = Math.atan2((d.fish_y-d.pred_y)*sy, (d.fish_x-d.pred_x)*sx);
+        // Track predator heading from position delta
+        if (!drawArena._prevPredX) { drawArena._prevPredX = d.pred_x; drawArena._prevPredY = d.pred_y; drawArena._predH = 0; }
+        const pdx = d.pred_x - drawArena._prevPredX;
+        const pdy = d.pred_y - drawArena._prevPredY;
+        if (Math.abs(pdx) + Math.abs(pdy) > 0.5) {
+            drawArena._predH = Math.atan2(pdy, pdx);
+        }
+        drawArena._prevPredX = d.pred_x; drawArena._prevPredY = d.pred_y;
+        const predH = drawArena._predH;
+
         // Danger zone
         ctx.beginPath(); ctx.arc(px, py, ps*3, 0, Math.PI*2);
         ctx.fillStyle = 'rgba(248,50,40,0.04)'; ctx.fill();
 
         ctx.save(); ctx.translate(px, py); ctx.rotate(predH);
-        // Main body
+        // Body
         ctx.beginPath(); ctx.ellipse(0, 0, ps*1.5, ps*0.7, 0, 0, Math.PI*2);
         ctx.fillStyle = 'rgba(200,40,30,0.85)'; ctx.fill();
         ctx.strokeStyle = 'rgba(255,80,60,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
-        // Tail fin (behind body)
+        // Tail
         ctx.beginPath();
         ctx.moveTo(-ps*1.3, 0); ctx.lineTo(-ps*2.2, -ps*0.8); ctx.lineTo(-ps*2.2, ps*0.8);
         ctx.closePath(); ctx.fillStyle = 'rgba(180,30,20,0.7)'; ctx.fill();
-        // Dorsal fin (top)
+        // Dorsal fin
         ctx.beginPath();
         ctx.moveTo(-ps*0.3, -ps*0.6); ctx.lineTo(ps*0.3, -ps*1.2); ctx.lineTo(ps*0.8, -ps*0.6);
         ctx.closePath(); ctx.fillStyle = 'rgba(200,40,30,0.6)'; ctx.fill();
-        // Single eye (top, forward-facing)
+        // Eye (single, side-facing)
         ctx.fillStyle = '#ff0';
-        ctx.beginPath(); ctx.arc(ps*0.8, -ps*0.15, 3.5, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(ps*0.8, -ps*0.2, 3, 0, Math.PI*2); ctx.fill();
         ctx.fillStyle = '#000';
-        ctx.beginPath(); ctx.arc(ps*0.9, -ps*0.15, 1.8, 0, Math.PI*2); ctx.fill();
-        // Mouth (open jaw)
+        ctx.beginPath(); ctx.arc(ps*0.9, -ps*0.2, 1.5, 0, Math.PI*2); ctx.fill();
+        // Jaw
         ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1.2;
-        ctx.beginPath(); ctx.moveTo(ps*1.4, -ps*0.1); ctx.lineTo(ps*0.9, ps*0.35); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(ps*1.4, ps*0.1); ctx.lineTo(ps*0.9, ps*0.35); ctx.stroke();
-        // Teeth
-        ctx.fillStyle = 'rgba(255,255,255,0.6)';
-        ctx.beginPath(); ctx.moveTo(ps*1.2, 0); ctx.lineTo(ps*1.05, ps*0.15); ctx.lineTo(ps*1.35, ps*0.1); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(ps*1.4, -ps*0.1); ctx.lineTo(ps*0.9, ps*0.3); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(ps*1.4, ps*0.1); ctx.lineTo(ps*0.9, ps*0.3); ctx.stroke();
         ctx.restore();
         ctx.fillStyle = 'rgba(255,80,60,0.7)'; ctx.font = 'bold 10px monospace';
         ctx.fillText('PREDATOR', px-28, py+ps+14);
     }
 
-    // === FISH (detailed zebrafish shape) ===
+    // === FISH (with tail oscillation + FoV cones) ===
     const drawFish = (fx, fy, heading, goal, energy, isFocal) => {
         const goalColors = {FORAGE:'#7ee787', FLEE:'#f85149', EXPLORE:'#58a6ff', SOCIAL:'#3fb9a0'};
         const bodyColor = goalColors[goal] || '#58a6ff';
@@ -534,7 +538,31 @@ function drawArena(d) {
         ctx.translate(fx, fy);
         ctx.rotate(heading);
 
-        // Heartbeat glow (for focal fish)
+        // FoV sight cones (left + right eye, 100° each, 200° total)
+        if (isFocal) {
+            const fovLen = 50;
+            const fovHalf = Math.PI * 100 / 180;  // 100° per eye
+            // Left eye FoV (upper)
+            ctx.beginPath(); ctx.moveTo(0, 0);
+            ctx.arc(0, 0, fovLen, -fovHalf, 0);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(88,166,255,0.04)';
+            ctx.fill();
+            // Right eye FoV (lower)
+            ctx.beginPath(); ctx.moveTo(0, 0);
+            ctx.arc(0, 0, fovLen, 0, fovHalf);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(88,166,255,0.04)';
+            ctx.fill();
+            // FoV edges
+            ctx.strokeStyle = 'rgba(88,166,255,0.1)'; ctx.lineWidth = 0.5;
+            ctx.beginPath(); ctx.moveTo(0,0);
+            ctx.lineTo(fovLen*Math.cos(-fovHalf), fovLen*Math.sin(-fovHalf)); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0,0);
+            ctx.lineTo(fovLen*Math.cos(fovHalf), fovLen*Math.sin(fovHalf)); ctx.stroke();
+        }
+
+        // Heartbeat glow
         if (isFocal) {
             heartPhase += (d.heart_rate || 2) * 0.05;
             const hb = Math.sin(heartPhase);
@@ -545,11 +573,12 @@ function drawArena(d) {
             }
         }
 
-        // Tail fin
+        // Tail fin (animated oscillation)
+        const tailSwing = Math.sin(frameCount * 0.3 + (isFocal?0:fx*0.01)) * bW * 0.6;
         ctx.beginPath();
         ctx.moveTo(-bL*0.8, 0);
-        ctx.lineTo(-bL*1.5, -bW*0.8);
-        ctx.lineTo(-bL*1.5, bW*0.8);
+        ctx.lineTo(-bL*1.5, -bW*0.7 + tailSwing);
+        ctx.lineTo(-bL*1.5, bW*0.7 + tailSwing);
         ctx.closePath();
         ctx.fillStyle = bodyColor; ctx.globalAlpha = 0.5; ctx.fill(); ctx.globalAlpha = 1;
 
@@ -562,17 +591,13 @@ function drawArena(d) {
         ctx.fillStyle = bodyColor; ctx.globalAlpha = 0.3; ctx.fill(); ctx.globalAlpha = 1;
 
         // Body
-        ctx.beginPath();
-        ctx.ellipse(0, 0, bL, bW, 0, 0, Math.PI*2);
-        ctx.fillStyle = bodyColor;
-        ctx.fill();
-        // Stripes (zebrafish!)
-        ctx.strokeStyle = 'rgba(0,0,0,0.2)';
-        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.ellipse(0, 0, bL, bW, 0, 0, Math.PI*2);
+        ctx.fillStyle = bodyColor; ctx.fill();
+        // Stripes
+        ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = 1;
         for (let s = -bL*0.5; s < bL*0.5; s += bL*0.25) {
             ctx.beginPath(); ctx.moveTo(s, -bW*0.8); ctx.lineTo(s+2, bW*0.8); ctx.stroke();
         }
-        // Body outline
         ctx.beginPath(); ctx.ellipse(0, 0, bL, bW, 0, 0, Math.PI*2);
         ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 0.8; ctx.stroke();
 

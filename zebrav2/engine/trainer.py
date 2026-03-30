@@ -169,6 +169,7 @@ class TrainingEngine:
                 'fish_heading': float(getattr(env, 'fish_heading', 0)),
                 'pred_x': float(getattr(env, 'pred_x', -100)),
                 'pred_y': float(getattr(env, 'pred_y', -100)),
+                'pred_heading': float(getattr(env, 'pred_heading', 0)),
                 'foods': food_positions,
                 'rocks': rock_positions,
                 'arena_w': int(getattr(env, 'arena_w', 800)),

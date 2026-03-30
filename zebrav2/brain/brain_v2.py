@@ -334,12 +334,14 @@ class ZebrafishBrainV2(nn.Module):
         energy_ratio = self.energy / 100.0
         # Hunger starts at 75% energy (not 50%) — earlier food seeking
         starvation = max(0.0, (0.75 - energy_ratio) / 0.75)
-        # EFE computation
+        # EFE computation — energy loss feared as much as predator
         U = 1.0 - 0.5 * (self.cms + 0.3)
-        G_forage = 0.2 * U - 0.8 * p_food + 0.15 - 1.5 * starvation
-        G_flee   = 0.1 * self.cms - 0.8 * p_enemy + 0.20 + 0.8 * starvation
-        G_explore = 0.3 * U - 0.3 + 0.20
-        G_social  = 0.25
+        # starvation² makes low energy exponentially more urgent
+        energy_urgency = starvation * starvation * 3.0
+        G_forage = 0.2 * U - 0.8 * p_food + 0.15 - energy_urgency
+        G_flee   = 0.1 * self.cms - 0.8 * p_enemy + 0.20 + starvation * 0.5
+        G_explore = 0.3 * U - 0.3 + 0.20 + starvation * 0.3  # less explore when hungry
+        G_social  = 0.25 + starvation * 0.2
         # 5-HT patrol suppression: when predator far, strongly suppress flee and boost forage
         if pred_state == 'PATROL' and pred_dist > 150:
             G_flee += self.neuromod.get_flee_efe_bias()
@@ -572,7 +574,7 @@ class ZebrafishBrainV2(nn.Module):
         aw = getattr(env, 'arena_w', 800)
         ah = getattr(env, 'arena_h', 600)
         heading = getattr(env, 'fish_heading', 0.0)
-        margin = 100
+        margin = 120  # wider margin for earlier wall avoidance
         wall_urgency = max(0.0,
             max((margin - wx) / margin if wx < margin else 0.0,
                 (wx - (aw - margin)) / margin if wx > aw - margin else 0.0,
@@ -584,7 +586,7 @@ class ZebrafishBrainV2(nn.Module):
             angle_to_center = math.atan2(center_dy, center_dx)
             angle_diff = angle_to_center - heading
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
-            wall_turn = wall_urgency * 0.8 * np.sign(angle_diff)
+            wall_turn = wall_urgency * 1.2 * np.sign(angle_diff)  # stronger wall avoidance
         if min(wx, wy, aw - wx, ah - wy) < 25:
             wall_turn *= 2.0
         wall_turn = max(-1.5, min(1.5, wall_turn))
