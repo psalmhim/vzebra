@@ -255,8 +255,9 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--personality', type=str, default='mixed',
                         choices=['mixed', 'random', 'uniform'])
+    parser.add_argument('--record', action='store_true')
     args = parser.parse_args()
     print(f"Multi-agent v2: {args.n_fish} fish × full v2 brain, {args.steps} steps")
     print(f"Device: {DEVICE}, Personality: {args.personality}")
     run_multi_v2(n_fish=args.n_fish, max_steps=args.steps, seed=args.seed,
-                 personality_mode=args.personality)
+                 personality_mode=args.personality, record=args.record)
