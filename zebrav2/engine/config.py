@@ -100,3 +100,56 @@ class TrainingConfig:
 
     def __repr__(self):
         return f"TrainingConfig({json.dumps(self.data, indent=2)[:200]}...)"
+
+
+# Training repertoires: environment presets for learning survival skills
+REPERTOIRES = {
+    'safe_foraging': {
+        'name': 'Safe Foraging',
+        'description': 'Learn to find food without predator threat',
+        'env': {'n_food': 25, 'max_steps': 300, 'predator_ai': 'none'},
+        'training': {'n_rounds': 5},
+    },
+    'predator_evasion': {
+        'name': 'Predator Evasion',
+        'description': 'Learn to escape from aggressive predator (no food)',
+        'env': {'n_food': 0, 'max_steps': 200, 'predator_ai': 'intelligent'},
+        'training': {'n_rounds': 5},
+    },
+    'foraging_under_threat': {
+        'name': 'Foraging Under Threat',
+        'description': 'Balance foraging and predator avoidance',
+        'env': {'n_food': 15, 'max_steps': 500, 'predator_ai': 'intelligent'},
+        'training': {'n_rounds': 5},
+    },
+    'scarce_resources': {
+        'name': 'Scarce Resources',
+        'description': 'Survive with minimal food — energy management critical',
+        'env': {'n_food': 3, 'max_steps': 400, 'predator_ai': 'simple'},
+        'training': {'n_rounds': 5},
+    },
+    'exploration_challenge': {
+        'name': 'Exploration Challenge',
+        'description': 'Food hidden in corners — must explore to find patches',
+        'env': {'n_food': 10, 'max_steps': 500, 'predator_ai': 'none'},
+        'training': {'n_rounds': 5},
+    },
+    'full_survival': {
+        'name': 'Full Survival',
+        'description': 'Complete challenge — food, predator, obstacles, everything',
+        'env': {'n_food': 20, 'max_steps': 1000, 'predator_ai': 'intelligent'},
+        'training': {'n_rounds': 10, 'save_every': 3},
+    },
+    'curriculum': {
+        'name': 'Curriculum (Auto)',
+        'description': 'Progressive: safe → threat → scarce → full',
+        'env': {'n_food': 20, 'max_steps': 300, 'predator_ai': 'none'},
+        'training': {'n_rounds': 20},
+        'curriculum_stages': [
+            {'rounds': 5, 'env': {'predator_ai': 'none', 'n_food': 25}},
+            {'rounds': 5, 'env': {'predator_ai': 'simple', 'n_food': 15}},
+            {'rounds': 5, 'env': {'predator_ai': 'intelligent', 'n_food': 10}},
+            {'rounds': 5, 'env': {'predator_ai': 'intelligent', 'n_food': 5}},
+        ],
+    },
+}

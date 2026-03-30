@@ -30,7 +30,7 @@ from typing import Optional
 import uvicorn
 
 from zebrav2.engine.trainer import TrainingEngine
-from zebrav2.engine.config import TrainingConfig
+from zebrav2.engine.config import TrainingConfig, REPERTOIRES
 
 app = FastAPI(title="Zebrafish Brain v2 Dashboard")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), 'static')
@@ -126,6 +126,27 @@ async def start_training(req: StartRequest):
 async def stop_training():
     engine.stop()
     return {"status": "stopped"}
+
+
+@app.get("/api/repertoires")
+async def get_repertoires():
+    return {k: {'name': v['name'], 'description': v['description']} for k, v in REPERTOIRES.items()}
+
+
+@app.post("/api/repertoire/{name}")
+async def start_repertoire(name: str):
+    if name not in REPERTOIRES:
+        return {"status": "error", "message": f"Unknown repertoire: {name}"}
+    if engine.running:
+        return {"status": "error", "message": "Training already running"}
+    rep = REPERTOIRES[name]
+    config = TrainingConfig(rep)
+    engine.config = config
+    n_rounds = rep.get('training', {}).get('n_rounds', 5)
+    engine.on_step = on_step_callback
+    engine.on_round_end = on_round_end_callback
+    engine.train_async(n_rounds=n_rounds)
+    return {"status": "started", "repertoire": name, "n_rounds": n_rounds}
 
 
 @app.post("/api/load_checkpoint")
