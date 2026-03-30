@@ -64,9 +64,12 @@ def on_step_callback(step_data):
     global _latest_step
     _latest_step = step_data
     if _main_loop and not _main_loop.is_closed():
-        _main_loop.call_soon_threadsafe(
-            _main_loop.create_task,
-            broadcast({'type': 'step', 'data': step_data}))
+        try:
+            _main_loop.call_soon_threadsafe(
+                _main_loop.create_task,
+                broadcast({'type': 'step', 'data': step_data}))
+        except RuntimeError:
+            pass  # loop closed
 
 
 def on_round_end_callback(metrics):
@@ -87,7 +90,11 @@ async def dashboard():
 
 @app.get("/api/status")
 async def get_status():
-    return engine.get_status()
+    status = engine.get_status()
+    # Merge latest step data from callback
+    if _latest_step:
+        status['current_step'] = _latest_step
+    return status
 
 
 @app.get("/api/checkpoints")

@@ -131,7 +131,11 @@ class TrainingEngine:
                                      float(ry + vr * math.sin(va))])
                 env.rock_formations.append({
                     'cx': rx, 'cy': ry, 'radius': base_r,
+                    'base_r': base_r,
                     'vertices': vertices, 'type': 'polygon',
+                    'aabbs': [{'x': rx, 'y': ry,
+                               'hw': base_r, 'hh': base_r}],
+                    'lobes': [{'cx': rx, 'cy': ry, 'r': base_r}],
                 })
 
         # Add scattered rocks between patches (obstacles)
@@ -156,7 +160,11 @@ class TrainingEngine:
                                  float(ry + vr * math.sin(va))])
             env.rock_formations.append({
                 'cx': rx, 'cy': ry, 'radius': base_r,
+                'base_r': base_r,
                 'vertices': vertices, 'type': 'polygon',
+                'aabbs': [{'x': rx, 'y': ry,
+                           'hw': base_r, 'hh': base_r}],
+                'lobes': [{'cx': rx, 'cy': ry, 'r': base_r}],
             })
 
         # Sparse food outside patches (25%)

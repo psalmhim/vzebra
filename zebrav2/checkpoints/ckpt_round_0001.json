@@ -1,0 +1,25 @@
+{
+  "round": 1,
+  "timestamp": 1774894616.886528,
+  "metrics": {
+    "round": 1,
+    "survived": 500,
+    "food_eaten": 6,
+    "mean_efe": 0.9971581835150719,
+    "energy_final": 56.50691635095377,
+    "caught": false,
+    "geo_coverage": 0.15,
+    "goal_distribution": {
+      "FORAGE": 206,
+      "FLEE": 218,
+      "EXPLORE": 76,
+      "SOCIAL": 0
+    },
+    "fitness": 893.2818763403262,
+    "vae_memory_nodes": 4,
+    "critic_mean_value": 0.06983016431331635,
+    "personality": "Balanced, no personality bias",
+    "elapsed_sec": 390.8678572177887
+  },
+  "path": "/Users/hjpark/Dropbox/projects/vzebra/zebrav2/checkpoints/ckpt_round_0001.pt"
+}
