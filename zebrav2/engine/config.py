@@ -11,7 +11,7 @@ DEFAULT_CONFIG = {
     'env': {
         'arena_w': 800,
         'arena_h': 600,
-        'n_food': 15,
+        'n_food': 20,
         'max_steps': 500,
         'food_respawn': True,
         'food_respawn_min': 5,

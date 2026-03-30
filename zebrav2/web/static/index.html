@@ -330,6 +330,9 @@ function drawRaster() {
     }
 }
 
+// Heartbeat state
+let heartPhase = 0;
+
 function drawArena(d) {
     const c = arenaCanvas;
     const ctx = actx;
@@ -339,127 +342,262 @@ function drawArena(d) {
 
     // Background gradient (water)
     const grad = ctx.createLinearGradient(0, 0, 0, ch);
-    grad.addColorStop(0, '#0a1628');
+    grad.addColorStop(0, '#081020');
+    grad.addColorStop(0.5, '#0a1830');
     grad.addColorStop(1, '#0d2240');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, cw, ch);
 
-    // Grid lines (subtle)
-    ctx.strokeStyle = 'rgba(48,54,61,0.3)';
+    // Grid lines
+    ctx.strokeStyle = 'rgba(48,54,61,0.2)';
     ctx.lineWidth = 0.5;
     for (let x = 0; x < cw; x += cw/10) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,ch); ctx.stroke(); }
     for (let y = 0; y < ch; y += ch/8) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(cw,y); ctx.stroke(); }
 
-    // Rocks
+    // Rocks (3x visual size, rocky texture)
     if (d.rocks) {
         d.rocks.forEach(r => {
-            const rx = r[0] * sx, ry = r[1] * sy, rr = r[2] * sx;
-            ctx.beginPath(); ctx.arc(rx, ry, rr, 0, Math.PI*2);
-            ctx.fillStyle = 'rgba(100,100,80,0.5)';
+            const rx = r[0]*sx, ry = r[1]*sy, rr = Math.max(10, r[2]*sx*1.5);
+            // Shadow
+            ctx.beginPath(); ctx.arc(rx+3, ry+3, rr, 0, Math.PI*2);
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
             ctx.fill();
-            ctx.strokeStyle = 'rgba(140,140,110,0.4)';
-            ctx.lineWidth = 1;
+            // Main rock body
+            ctx.beginPath(); ctx.arc(rx, ry, rr, 0, Math.PI*2);
+            const rg = ctx.createRadialGradient(rx-rr*0.3, ry-rr*0.3, rr*0.1, rx, ry, rr);
+            rg.addColorStop(0, 'rgba(160,150,120,0.7)');
+            rg.addColorStop(0.5, 'rgba(110,100,70,0.6)');
+            rg.addColorStop(1, 'rgba(70,60,40,0.4)');
+            ctx.fillStyle = rg;
+            ctx.fill();
+            // Rock edge
+            ctx.strokeStyle = 'rgba(90,80,55,0.5)';
+            ctx.lineWidth = 1.5;
             ctx.stroke();
+            // Texture dots
+            for (let i = 0; i < 5; i++) {
+                const tx = rx + (Math.random()-0.5)*rr*1.2;
+                const ty = ry + (Math.random()-0.5)*rr*1.2;
+                const dx = tx-rx, dy = ty-ry;
+                if (dx*dx+dy*dy < rr*rr*0.8) {
+                    ctx.fillStyle = 'rgba(80,70,50,0.3)';
+                    ctx.beginPath(); ctx.arc(tx, ty, 2, 0, Math.PI*2); ctx.fill();
+                }
+            }
         });
     }
 
-    // Food
+    // Food (glowing pellets)
     if (d.foods) {
         d.foods.forEach(f => {
-            const fx = f[0] * sx, fy = f[1] * sy;
-            ctx.beginPath(); ctx.arc(fx, fy, 3, 0, Math.PI*2);
-            ctx.fillStyle = '#7ee787';
+            const fx = f[0]*sx, fy = f[1]*sy;
+            // Outer glow
+            ctx.beginPath(); ctx.arc(fx, fy, 8, 0, Math.PI*2);
+            ctx.fillStyle = 'rgba(126,231,135,0.08)';
             ctx.fill();
-            // Glow
-            ctx.beginPath(); ctx.arc(fx, fy, 6, 0, Math.PI*2);
-            ctx.fillStyle = 'rgba(126,231,135,0.15)';
+            // Inner glow
+            ctx.beginPath(); ctx.arc(fx, fy, 4, 0, Math.PI*2);
+            ctx.fillStyle = 'rgba(126,231,135,0.2)';
+            ctx.fill();
+            // Core
+            ctx.beginPath(); ctx.arc(fx, fy, 2.5, 0, Math.PI*2);
+            ctx.fillStyle = '#7ee787';
             ctx.fill();
         });
     }
 
-    // Predator (red triangle with eyes)
+    // === PREDATOR (large, menacing) ===
     if (d.pred_x > 0) {
-        const px = d.pred_x * sx, py = d.pred_y * sy;
-        // Body
-        ctx.beginPath();
-        ctx.arc(px, py, 8, 0, Math.PI*2);
-        ctx.fillStyle = 'rgba(248,81,73,0.8)';
+        const px = d.pred_x*sx, py = d.pred_y*sy;
+        const ps = 16;  // 2x bigger
+        // Danger zone aura
+        ctx.beginPath(); ctx.arc(px, py, ps*3, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(248,50,40,0.04)';
         ctx.fill();
-        // Eyes
-        ctx.fillStyle = '#fff';
-        ctx.beginPath(); ctx.arc(px-3, py-3, 2, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.arc(px+3, py-3, 2, 0, Math.PI*2); ctx.fill();
+        // Body (elongated, shark-like)
+        ctx.save(); ctx.translate(px, py);
+        // Main body
+        ctx.beginPath();
+        ctx.ellipse(0, 0, ps*1.5, ps*0.7, 0, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(200,40,30,0.85)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,80,60,0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // Tail fin
+        ctx.beginPath();
+        ctx.moveTo(-ps*1.3, 0);
+        ctx.lineTo(-ps*2.2, -ps*0.8);
+        ctx.lineTo(-ps*2.2, ps*0.8);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(180,30,20,0.7)';
+        ctx.fill();
+        // Dorsal fin
+        ctx.beginPath();
+        ctx.moveTo(-ps*0.3, -ps*0.6);
+        ctx.lineTo(ps*0.3, -ps*1.2);
+        ctx.lineTo(ps*0.8, -ps*0.6);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(200,40,30,0.6)';
+        ctx.fill();
+        // Eyes (menacing)
+        ctx.fillStyle = '#ff0';
+        ctx.beginPath(); ctx.arc(ps*0.7, -ps*0.2, 3, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(ps*0.7, ps*0.2, 3, 0, Math.PI*2); ctx.fill();
         ctx.fillStyle = '#000';
-        ctx.beginPath(); ctx.arc(px-3, py-3, 1, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.arc(px+3, py-3, 1, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(ps*0.8, -ps*0.2, 1.5, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(ps*0.8, ps*0.2, 1.5, 0, Math.PI*2); ctx.fill();
+        // Mouth line
+        ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(ps*1.2, 0); ctx.lineTo(ps*0.5, ps*0.3); ctx.stroke();
+        ctx.restore();
         // Label
-        ctx.fillStyle = 'rgba(248,81,73,0.6)';
-        ctx.font = '8px monospace';
-        ctx.fillText('PRED', px-12, py+16);
+        ctx.fillStyle = 'rgba(255,80,60,0.7)';
+        ctx.font = 'bold 10px monospace';
+        ctx.fillText('PREDATOR', px-28, py+ps+14);
     }
 
-    // Fish (fish-shaped body with heading direction)
-    if (d.fish_x) {
-        const fx = d.fish_x * sx, fy = d.fish_y * sy;
-        const heading = d.fish_heading || 0;
-        const goalColors = { FORAGE: '#7ee787', FLEE: '#f85149', EXPLORE: '#58a6ff', SOCIAL: '#3fb9a0' };
-        const bodyColor = goalColors[d.goal] || '#58a6ff';
-        const bodyLen = 12, bodyW = 5;
+    // === FISH (detailed zebrafish shape) ===
+    const drawFish = (fx, fy, heading, goal, energy, isFocal) => {
+        const goalColors = {FORAGE:'#7ee787', FLEE:'#f85149', EXPLORE:'#58a6ff', SOCIAL:'#3fb9a0'};
+        const bodyColor = goalColors[goal] || '#58a6ff';
+        const bL = isFocal ? 14 : 10, bW = isFocal ? 6 : 4;
 
         ctx.save();
         ctx.translate(fx, fy);
         ctx.rotate(heading);
 
-        // Tail
-        ctx.beginPath();
-        ctx.moveTo(-bodyLen, 0);
-        ctx.lineTo(-bodyLen-5, -4);
-        ctx.lineTo(-bodyLen-5, 4);
-        ctx.closePath();
-        ctx.fillStyle = bodyColor;
-        ctx.globalAlpha = 0.6;
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
+        // Heartbeat glow (for focal fish)
+        if (isFocal) {
+            heartPhase += (d.heart_rate || 2) * 0.05;
+            const hb = Math.sin(heartPhase);
+            if (hb > 0.8) {
+                ctx.beginPath(); ctx.arc(0, 0, bL+6, 0, Math.PI*2);
+                ctx.fillStyle = `rgba(255,100,100,${(hb-0.8)*0.5})`;
+                ctx.fill();
+            }
+        }
 
-        // Body (ellipse)
+        // Tail fin
         ctx.beginPath();
-        ctx.ellipse(0, 0, bodyLen, bodyW, 0, 0, Math.PI*2);
+        ctx.moveTo(-bL*0.8, 0);
+        ctx.lineTo(-bL*1.5, -bW*0.8);
+        ctx.lineTo(-bL*1.5, bW*0.8);
+        ctx.closePath();
+        ctx.fillStyle = bodyColor; ctx.globalAlpha = 0.5; ctx.fill(); ctx.globalAlpha = 1;
+
+        // Pectoral fins
+        ctx.beginPath();
+        ctx.moveTo(-bL*0.1, bW*0.6);
+        ctx.lineTo(-bL*0.5, bW*1.3);
+        ctx.lineTo(bL*0.2, bW*0.7);
+        ctx.closePath();
+        ctx.fillStyle = bodyColor; ctx.globalAlpha = 0.3; ctx.fill(); ctx.globalAlpha = 1;
+
+        // Body
+        ctx.beginPath();
+        ctx.ellipse(0, 0, bL, bW, 0, 0, Math.PI*2);
         ctx.fillStyle = bodyColor;
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-        ctx.lineWidth = 0.8;
-        ctx.stroke();
+        // Stripes (zebrafish!)
+        ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+        ctx.lineWidth = 1;
+        for (let s = -bL*0.5; s < bL*0.5; s += bL*0.25) {
+            ctx.beginPath(); ctx.moveTo(s, -bW*0.8); ctx.lineTo(s+2, bW*0.8); ctx.stroke();
+        }
+        // Body outline
+        ctx.beginPath(); ctx.ellipse(0, 0, bL, bW, 0, 0, Math.PI*2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 0.8; ctx.stroke();
 
         // Eye
         ctx.fillStyle = '#fff';
-        ctx.beginPath(); ctx.arc(bodyLen*0.5, -bodyW*0.3, 2, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(bL*0.55, -bW*0.25, isFocal?2.5:1.5, 0, Math.PI*2); ctx.fill();
         ctx.fillStyle = '#000';
-        ctx.beginPath(); ctx.arc(bodyLen*0.5+0.5, -bodyW*0.3, 1, 0, Math.PI*2); ctx.fill();
-
-        // Heading line
-        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-        ctx.beginPath(); ctx.moveTo(bodyLen, 0); ctx.lineTo(bodyLen+8, 0); ctx.stroke();
+        ctx.beginPath(); ctx.arc(bL*0.6, -bW*0.25, isFocal?1.2:0.8, 0, Math.PI*2); ctx.fill();
 
         ctx.restore();
 
-        // Goal label
-        ctx.fillStyle = bodyColor;
-        ctx.font = 'bold 9px monospace';
-        ctx.fillText(d.goal, fx-12, fy-12);
-
-        // Energy bar above fish
-        const barW = 20, barH = 3;
-        const ef = Math.max(0, Math.min(1, (d.energy||100)/100));
+        // Energy bar (with gap above fish)
+        const barW = isFocal ? 24 : 16, barH = 3;
+        const ef = Math.max(0, Math.min(1, (energy||100)/100));
+        const barY = fy - bW - 12;  // gap above fish
         ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        ctx.fillRect(fx-barW/2, fy-18, barW, barH);
-        ctx.fillStyle = ef > 0.3 ? '#7ee787' : '#f85149';
-        ctx.fillRect(fx-barW/2, fy-18, barW*ef, barH);
+        ctx.fillRect(fx-barW/2, barY, barW, barH);
+        ctx.fillStyle = ef > 0.3 ? '#7ee787' : ef > 0.15 ? '#f0883e' : '#f85149';
+        ctx.fillRect(fx-barW/2, barY, barW*ef, barH);
+
+        // Goal label (with more gap)
+        if (isFocal) {
+            ctx.fillStyle = bodyColor;
+            ctx.font = 'bold 10px monospace';
+            ctx.fillText(goal, fx-14, barY - 5);
+        }
+    };
+
+    // Draw focal fish
+    if (d.fish_x) {
+        drawFish(d.fish_x*sx, d.fish_y*sy, d.fish_heading||0, d.goal, d.energy, true);
     }
 
-    // Info overlay
-    ctx.fillStyle = 'rgba(200,200,200,0.5)';
+    // Draw conspecific fish (if multi-agent data present)
+    if (d.other_fish) {
+        d.other_fish.forEach(f => {
+            drawFish(f.x*sx, f.y*sy, f.heading||0, f.goal||'EXPLORE', f.energy||50, false);
+        });
+    }
+
+    // === OVERLAY INFO ===
+    // SNN badge
+    ctx.fillStyle = 'rgba(88,166,255,0.8)';
+    ctx.font = 'bold 10px monospace';
+    ctx.fillText('SNN v2 | 35 modules | 7200+ neurons', 6, 14);
+    ctx.fillStyle = 'rgba(126,231,135,0.6)';
     ctx.font = '9px monospace';
-    ctx.fillText(`Step: ${d.step || 0}  Food: ${d.food_total || 0}  E: ${(d.energy||0).toFixed(0)}%`, 4, ch-4);
+    ctx.fillText('Izhikevich | AMPA/NMDA/GABA | E/I 75:25', 6, 26);
+
+    // Bottom info bar
+    const infoY = ch - 6;
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(0, ch-22, cw, 22);
+    ctx.fillStyle = 'rgba(200,200,200,0.7)';
+    ctx.font = '10px monospace';
+    ctx.fillText(`Step ${d.step||0} | Round ${d.round||0} | Food ${d.food_total||0} | ` +
+                 `Energy ${(d.energy||0).toFixed(0)}% | EFE ${(d.free_energy||0).toFixed(3)} | ` +
+                 `HR ${(d.heart_rate||2).toFixed(1)}Hz`, 6, infoY);
+
+    // Heartbeat indicator (top-right)
+    const hrX = cw - 60, hrY = 16;
+    const hbVal = Math.sin(heartPhase);
+    ctx.fillStyle = hbVal > 0.8 ? '#ff4444' : 'rgba(255,70,70,0.3)';
+    ctx.beginPath(); ctx.arc(hrX, hrY, hbVal > 0.8 ? 6 : 4, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,100,100,0.7)';
+    ctx.font = '9px monospace';
+    ctx.fillText(`${(d.heart_rate||2).toFixed(1)} Hz`, hrX+10, hrY+4);
+
+    // Spatial coverage mini-map (bottom-right)
+    const mmW = 60, mmH = 45;
+    const mmX = cw - mmW - 6, mmY = ch - mmH - 26;
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(mmX, mmY, mmW, mmH);
+    ctx.strokeStyle = 'rgba(88,166,255,0.3)';
+    ctx.strokeRect(mmX, mmY, mmW, mmH);
+    // Fish trail dot
+    if (d.fish_x) {
+        ctx.fillStyle = 'rgba(88,166,255,0.6)';
+        ctx.beginPath();
+        ctx.arc(mmX + (d.fish_x/aw)*mmW, mmY + (d.fish_y/ah)*mmH, 2, 0, Math.PI*2);
+        ctx.fill();
+    }
+    if (d.pred_x > 0) {
+        ctx.fillStyle = 'rgba(255,60,50,0.6)';
+        ctx.beginPath();
+        ctx.arc(mmX + (d.pred_x/aw)*mmW, mmY + (d.pred_y/ah)*mmH, 2, 0, Math.PI*2);
+        ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(200,200,200,0.4)';
+    ctx.font = '7px monospace';
+    ctx.fillText('MAP', mmX+2, mmY+8);
 }
 function log(msg) { logBox.textContent += msg + '\n'; logBox.scrollTop = logBox.scrollHeight; }
 
