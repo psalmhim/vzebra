@@ -17,6 +17,7 @@ if PROJECT_ROOT not in sys.path:
 from zebrav1.gym_env.zebrafish_env import ZebrafishPreyPredatorEnv
 from zebrav2.brain.brain_v2 import ZebrafishBrainV2
 from zebrav2.brain.personality import assign_personalities
+from zebrav2.brain.predator_brain import PredatorBrain
 from zebrav2.spec import DEVICE
 
 
@@ -108,6 +109,9 @@ def run_multi_v2(n_fish=5, max_steps=500, seed=42, record=False, personality_mod
 
     print(f"  Personalities: {[f['personality'] for f in all_fish]}")
 
+    # Intelligent predator brain
+    pred_brain = PredatorBrain(arena_w=env.arena_w, arena_h=env.arena_h)
+
     # Fish 0 = env's focal fish
     env.fish_x, env.fish_y, env.fish_heading = all_fish[0]['x'], all_fish[0]['y'], all_fish[0]['heading']
 
@@ -178,26 +182,17 @@ def run_multi_v2(n_fish=5, max_steps=500, seed=42, record=False, personality_mod
             env.fish_x, env.fish_y = all_fish[0]['x'], all_fish[0]['y']
             env.fish_heading = all_fish[0]['heading']
 
-        # Predator AI: chase nearest alive fish
-        nearest_dist = 9999
-        nearest_idx = 0
-        for i, f in enumerate(all_fish):
-            if not f['alive']:
-                continue
-            d = math.sqrt((env.pred_x - f['x'])**2 + (env.pred_y - f['y'])**2)
-            if d < nearest_dist:
-                nearest_dist = d
-                nearest_idx = i
-        # Move predator toward nearest
-        target = all_fish[nearest_idx]
-        dx = target['x'] - env.pred_x
-        dy = target['y'] - env.pred_y
-        d = math.sqrt(dx*dx + dy*dy) + 1e-8
-        pred_speed = 2.7  # 0.9x base
-        env.pred_x += pred_speed * dx / d + np.random.normal(0, 2)
-        env.pred_y += pred_speed * dy / d + np.random.normal(0, 2)
+        # Intelligent predator AI
+        fish_info = [{'x': f['x'], 'y': f['y'], 'energy': f['energy'],
+                       'alive': f['alive'], 'speed': f['speed'],
+                       'heading': f.get('heading', 0)}
+                      for f in all_fish]
+        pdx, pdy, pspeed, pstate = pred_brain.step(env.pred_x, env.pred_y, fish_info)
+        env.pred_x += pdx
+        env.pred_y += pdy
         env.pred_x = max(10, min(env.arena_w - 10, env.pred_x))
         env.pred_y = max(10, min(env.arena_h - 10, env.pred_y))
+        env.pred_state = pstate
 
         # Respawn food
         if len(env.foods) < 5:
@@ -212,7 +207,8 @@ def run_multi_v2(n_fish=5, max_steps=500, seed=42, record=False, personality_mod
             foods_str = '/'.join(str(total_food[i]) for i in range(n_fish))
             goals_str = '/'.join(['F','L','E','S'][brains[i].current_goal] for i in range(n_fish) if all_fish[i]['alive'])
             print(f"  t={t:4d}  alive={n_alive}/{n_fish}  food=[{foods_str}]  "
-                  f"goals=[{goals_str}]  {fps:.2f} steps/s")
+                  f"goals=[{goals_str}]  pred={pstate:6s} stam={pred_brain.stamina:.1f}  "
+                  f"{fps:.2f} steps/s")
 
         if n_alive == 0:
             break
