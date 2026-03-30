@@ -62,40 +62,49 @@ table th { color: #8b949e; }
 
 <!-- ========== TAB 1: PLAYGROUND ========== -->
 <div id="tab-playground" class="tab-page active">
-<div class="playground-grid">
-    <!-- Large Arena -->
-    <div class="card" style="min-height:400px">
-        <h3>Arena</h3>
-        <canvas id="arenaCanvas" class="arena-canvas" width="600" height="400"></canvas>
-    </div>
-    <!-- Monitor Panel -->
-    <div class="monitor-col">
-        <div class="card">
-            <h3>Brain State</h3>
-            <div id="currentState">
-                <div class="metric"><span>Goal</span><span class="val" id="mGoal">-</span></div>
-                <div class="metric"><span>Energy</span><span class="val" id="mEnergy">-</span></div>
-                <div class="metric"><span>Food</span><span class="val" id="mFood">-</span></div>
-                <div class="metric"><span>Free Energy</span><span class="val" id="mEFE">-</span></div>
-                <div class="metric"><span>Step</span><span class="val" id="mStep">-</span></div>
-            </div>
+<div style="display:grid; grid-template-columns:1fr 320px; gap:8px; padding:8px; height:calc(100vh - 90px);">
+    <!-- Left: Arena (maximized) -->
+    <div style="display:flex; flex-direction:column; gap:8px;">
+        <div class="card" style="flex:1; display:flex; flex-direction:column;">
+            <h3>Arena <span id="arenaInfo" style="font-weight:normal;color:#8b949e;font-size:10px"></span></h3>
+            <canvas id="arenaCanvas" class="arena-canvas" style="flex:1;min-height:0;"></canvas>
         </div>
-        <div class="card">
+        <!-- Raster plot below arena -->
+        <div class="card" style="height:180px;">
+            <h3>Spike Raster (15 brain regions, 100 steps)</h3>
+            <canvas id="rasterCanvas" style="width:100%;height:140px;background:#010409;border:1px solid #30363d;border-radius:4px;"></canvas>
+        </div>
+    </div>
+    <!-- Right: Monitor Panel -->
+    <div style="display:flex; flex-direction:column; gap:6px; overflow-y:auto;">
+        <div class="card" style="padding:10px;">
+            <h3>State</h3>
+            <div class="metric"><span>Goal</span><span class="val" id="mGoal">-</span></div>
+            <div class="metric"><span>Energy</span><span class="val" id="mEnergy">-</span></div>
+            <div class="metric"><span>Food</span><span class="val" id="mFood">-</span></div>
+            <div class="metric"><span>Step</span><span class="val" id="mStep">-</span></div>
+            <div class="metric"><span>Free Energy</span><span class="val" id="mEFE">-</span></div>
+        </div>
+        <div class="card" style="padding:10px;">
             <h3>Neuromodulation</h3>
             <div class="neuromod-bar"><div class="fill" id="barDA" style="width:50%;background:#f39c12"></div><div class="label">DA</div></div>
             <div class="neuromod-bar"><div class="fill" id="barNA" style="width:30%;background:#2980b9"></div><div class="label">NA</div></div>
             <div class="neuromod-bar"><div class="fill" id="bar5HT" style="width:50%;background:#8e44ad"></div><div class="label">5-HT</div></div>
             <div class="neuromod-bar"><div class="fill" id="barACh" style="width:50%;background:#27ae60"></div><div class="label">ACh</div></div>
         </div>
-        <div class="card">
-            <h3>Limbic</h3>
+        <div class="card" style="padding:10px;">
+            <h3>Brain Regions (activity)</h3>
+            <div id="regionBars"></div>
+        </div>
+        <div class="card" style="padding:10px;">
+            <h3>Limbic / Cognitive</h3>
             <div class="metric"><span>Amygdala</span><span class="val" id="mAmy">-</span></div>
-            <div class="metric"><span>Critic Value</span><span class="val" id="mCritic">-</span></div>
+            <div class="metric"><span>Critic</span><span class="val" id="mCritic">-</span></div>
             <div class="metric"><span>Novelty</span><span class="val" id="mNovelty">-</span></div>
-            <div class="metric"><span>Heart Rate</span><span class="val" id="mHR">-</span></div>
             <div class="metric"><span>Valence</span><span class="val" id="mValence">-</span></div>
-            <div class="metric"><span>VAE Memory</span><span class="val" id="mVAE">-</span></div>
+            <div class="metric"><span>Heart Rate</span><span class="val" id="mHR">-</span></div>
             <div class="metric"><span>Surprise</span><span class="val" id="mSurprise">-</span></div>
+            <div class="metric"><span>VAE Mem</span><span class="val" id="mVAE">-</span></div>
         </div>
     </div>
 </div>
@@ -241,6 +250,85 @@ let ws = null;
 const logBox = document.getElementById('logBox');
 const arenaCanvas = document.getElementById('arenaCanvas');
 const actx = arenaCanvas.getContext('2d');
+const rasterCanvas = document.getElementById('rasterCanvas');
+const rctx = rasterCanvas.getContext('2d');
+
+// Raster history buffer (15 regions × 100 steps)
+const RASTER_REGIONS = [
+    {name:'SFGS-b', color:'#00cccc', key:'sfgs_b'},
+    {name:'SFGS-d', color:'#00aaaa', key:'sfgs_d'},
+    {name:'SGC',    color:'#cc4444', key:'sgc'},
+    {name:'SO',     color:'#8844cc', key:'so'},
+    {name:'TC',     color:'#cccc00', key:'tc'},
+    {name:'TRN',    color:'#888800', key:'trn'},
+    {name:'Pal-S',  color:'#44cc00', key:'pal_s'},
+    {name:'Pal-D',  color:'#2266ff', key:'pal_d'},
+    {name:'Amy',    color:'#ff4444', key:'amygdala'},
+    {name:'Cereb',  color:'#cc66ff', key:'cerebellum'},
+    {name:'Hab',    color:'#ff6644', key:'habenula'},
+    {name:'D1',     color:'#ffaa00', key:'d1'},
+    {name:'D2',     color:'#00aaff', key:'d2'},
+    {name:'Critic', color:'#44cc44', key:'critic'},
+    {name:'Insula', color:'#ff88cc', key:'insula'},
+];
+const RASTER_LEN = 100;
+const rasterBuf = RASTER_REGIONS.map(() => new Float32Array(RASTER_LEN));
+let rasterPtr = 0;
+
+// Build region bars HTML
+const regionBarsEl = document.getElementById('regionBars');
+RASTER_REGIONS.forEach(r => {
+    regionBarsEl.innerHTML += `<div class="neuromod-bar"><div class="fill" id="reg_${r.key}" style="width:0%;background:${r.color}"></div><div class="label" style="font-size:8px">${r.name}</div></div>`;
+});
+
+function updateRaster(spikes) {
+    if (!spikes) return;
+    RASTER_REGIONS.forEach((r, i) => {
+        const val = spikes[r.key] || 0;
+        rasterBuf[i][rasterPtr] = val;
+        // Update region bar
+        const el = document.getElementById('reg_' + r.key);
+        if (el) el.style.width = Math.min(100, val * 2) + '%';
+    });
+    rasterPtr = (rasterPtr + 1) % RASTER_LEN;
+    drawRaster();
+}
+
+function drawRaster() {
+    const c = rasterCanvas;
+    c.width = c.clientWidth;
+    c.height = c.clientHeight;
+    const ctx = rctx;
+    const cw = c.width, ch = c.height;
+    const nR = RASTER_REGIONS.length;
+    const rowH = ch / nR;
+    const colW = cw / RASTER_LEN;
+
+    ctx.fillStyle = '#010409';
+    ctx.fillRect(0, 0, cw, ch);
+
+    for (let ri = 0; ri < nR; ri++) {
+        for (let ti = 0; ti < RASTER_LEN; ti++) {
+            const idx = (rasterPtr + ti) % RASTER_LEN;
+            const val = rasterBuf[ri][idx];
+            if (val > 0.1) {
+                const intensity = Math.min(1, val / 30);
+                const col = RASTER_REGIONS[ri].color;
+                ctx.globalAlpha = intensity;
+                ctx.fillStyle = col;
+                ctx.fillRect(ti * colW, ri * rowH, Math.max(1, colW), Math.max(1, rowH - 1));
+            }
+        }
+    }
+    ctx.globalAlpha = 1;
+
+    // Labels
+    ctx.font = '8px monospace';
+    for (let ri = 0; ri < nR; ri++) {
+        ctx.fillStyle = RASTER_REGIONS[ri].color;
+        ctx.fillText(RASTER_REGIONS[ri].name, 2, ri * rowH + rowH - 2);
+    }
+}
 
 function drawArena(d) {
     const c = arenaCanvas;
@@ -407,8 +495,14 @@ function updateStep(d) {
     document.getElementById('bar5HT').style.width = ((d['5HT']||0.5)*100) + '%';
     document.getElementById('barACh').style.width = ((d.ACh||0.5)*100) + '%';
 
-    // Arena canvas rendering
+    // Arena canvas rendering (resize to container)
+    arenaCanvas.width = arenaCanvas.clientWidth;
+    arenaCanvas.height = arenaCanvas.clientHeight;
     drawArena(d);
+    // Raster plot
+    updateRaster(d.spikes);
+    // Arena info
+    document.getElementById('arenaInfo').textContent = `Step ${d.step||0} | Food ${d.food_total||0} | ${d.goal||'?'}`;
 
     // Color goal
     const goalEl = document.getElementById('mGoal');

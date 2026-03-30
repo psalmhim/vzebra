@@ -173,6 +173,24 @@ class TrainingEngine:
                 'rocks': rock_positions,
                 'arena_w': int(getattr(env, 'arena_w', 800)),
                 'arena_h': int(getattr(env, 'arena_h', 600)),
+                # Regional spike counts (for raster plots)
+                'spikes': {
+                    'sfgs_b': float(self.brain.tectum.sfgs_b.spike_E.sum()),
+                    'sfgs_d': float(self.brain.tectum.sfgs_d.spike_E.sum()),
+                    'sgc': float(self.brain.tectum.sgc.spike_E.sum()),
+                    'so': float(self.brain.tectum.so.spike_E.sum()),
+                    'tc': float(self.brain.thalamus.TC.rate.sum()),
+                    'trn': float(self.brain.thalamus.TRN.rate.sum()),
+                    'pal_s': float(self.brain.pallium.pal_s.spike_E.sum()),
+                    'pal_d': float(self.brain.pallium.pal_d.spike_E.sum()),
+                    'amygdala': float(self.brain.amygdala.CeA.rate.sum()),
+                    'cerebellum': float(self.brain.cerebellum.gc_rate.sum()),
+                    'habenula': float(self.brain.habenula.lhb_rate.sum()),
+                    'd1': float(self.brain.bg.d1_rate.sum()),
+                    'd2': float(self.brain.bg.d2_rate.sum()),
+                    'critic': float(self.brain.critic.hidden_rate.sum()),
+                    'insula': float(self.brain.insula.hunger_rate.sum() + self.brain.insula.stress_rate.sum()),
+                },
             }
             self.current_step_data = step_data
             if self.on_step:
