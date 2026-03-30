@@ -87,7 +87,7 @@ class SpikingOlfaction(nn.Module):
         else:
             I_food[self.n_food // 2:] *= 1.5
 
-        for _ in range(SUBSTEPS):
+        for _ in range(10):  # reduced substeps
             self.alarm_pop(I_alarm + torch.randn(self.n_alarm, device=self.device) * 0.3)
             self.food_pop(I_food + torch.randn(self.n_food, device=self.device) * 0.3)
 

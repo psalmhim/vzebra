@@ -15,11 +15,13 @@ class Pallium(nn.Module):
         self.device = device
         self.pal_s = EILayer(N_PAL_S, 'RS', device, 'Pallium-S')
         self.pal_d = EILayer(N_PAL_D, 'IB', device, 'Pallium-D')
+        # Slower rate EMA for PAL-D so bursts appear intermittent in visualization
+        self.pal_d.E.tau_rate = 0.005  # slower than default 0.020
         # Pallium E/I balance: E subthreshold, I light tonic, moderate I→E
         self.pal_s.syn_ie.g_bar = 1.5   # reduced from G_IE=4.0 (cortex < tectum)
         self.pal_d.syn_ie.g_bar = 1.5
         self.pal_s.E.i_tonic.fill_(-2.0)  # subthreshold
-        self.pal_d.E.i_tonic.fill_(-2.0)
+        self.pal_d.E.i_tonic.fill_(-5.0)  # well below rheobase → intermittent bursting
         self.pal_s.I.i_tonic.fill_(2.0)   # stronger baseline for real E/I dynamics
         self.pal_d.I.i_tonic.fill_(2.0)
         # Feedforward: thalamus TC → pallium-S
@@ -63,7 +65,8 @@ class Pallium(nn.Module):
         # Prediction error: apical (top-down) - somatic (bottom-up)
         self.apical_s.copy_(fb_drive.clamp(0, 1))
         self.pred_error.copy_((self.apical_s - rate_s).clamp(-1, 1))
-        I_ff_d = _nd(self.W_pals_pald, rate_s, 3.0)
+        I_ff_d = _nd(self.W_pals_pald, rate_s, 4.0)
+        I_ff_d = I_ff_d  # PAL-D receives full drive; intermittency from IB burst dynamics
         rate_d, _, _, _ = self.pal_d(I_ff_d, substeps=SUBSTEPS)
         self.rate_s.copy_(rate_s)
         self.rate_d.copy_(rate_d)

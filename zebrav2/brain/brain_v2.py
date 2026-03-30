@@ -87,6 +87,10 @@ class ZebrafishBrainV2(nn.Module):
         self.vae = VAEWorldModelV2(tectum_dim=_tect_e_total, device=device)
         self._z_prev = None  # for VAE transition training
         self._last_action_ctx = None
+        # World learning state
+        self._novelty_ema = 1.0  # starts high (unknown world)
+        self._surprise_history = []
+        self._exploration_phase = True  # True until world is learned
         # --- Medium/Low priority modules ---
         self.lateral_line_mod = SpikingLateralLine(device=device)
         self.olfaction = SpikingOlfaction(device=device)
@@ -325,6 +329,19 @@ class ZebrafishBrainV2(nn.Module):
         # Olfactory bias: food odor attracts FORAGE, alarm drives FLEE
         G_forage += self.olfaction.get_forage_bias()
         G_flee += self.olfaction.get_flee_bias()
+        # World learning: novelty drives exploration in unfamiliar environments
+        # VAE surprise + place cell visit count → novelty estimate
+        vae_novelty, _ = self.vae.memory.query_epistemic(self._z_prev if self._z_prev is not None else np.zeros(16, dtype=np.float32))
+        place_visits = float(self.place.visit_count.mean()) if hasattr(self.place, 'visit_count') else 0
+        place_novelty = 1.0 / (1.0 + place_visits * 0.1)  # high when few visits
+        novelty = 0.5 * vae_novelty + 0.5 * place_novelty
+        self._novelty_ema = 0.98 * self._novelty_ema + 0.02 * novelty
+        # High novelty → explore more (lower G_explore = more preferred)
+        if self._novelty_ema > 0.5:
+            G_explore -= 0.3 * (self._novelty_ema - 0.5)
+            self._exploration_phase = True
+        else:
+            self._exploration_phase = False
         # Habenula goal avoidance: frustrated goals get penalized (higher G = less preferred)
         # (hab_out is computed later; use previous step's frustration)
         hab_bias = self.habenula.frustration * 0.5
@@ -365,13 +382,16 @@ class ZebrafishBrainV2(nn.Module):
             new_goal = GOAL_FORAGE
 
         # 3. Threat overrides (visual OR lateral line OR amygdala evidence)
-        has_threat_evidence = (enemy_px > 3 or ll_dist < 100
-                               or self.amygdala_alpha > 0.3)
-        if p_enemy > 0.25 and has_threat_evidence and starvation < 0.6:
+        ll_proximity = self.lateral_line_mod.proximity  # 0-1, high = close
+        has_threat_evidence = (enemy_px > 3 or ll_proximity > 0.15
+                               or self.amygdala_alpha > 0.25)
+        if p_enemy > 0.20 and has_threat_evidence and starvation < 0.6:
             new_goal = GOAL_FLEE
-        if pred_dist < 60 and (enemy_px > 1 or ll_dist < 60):
+        # Close proximity flee: lateral line detects predator nearby
+        if ll_proximity > 0.4 or (pred_dist < 60 and enemy_px > 1):
             new_goal = GOAL_FLEE
-        elif pred_dist < 90 and starvation < 0.4 and pred_state == 'HUNT':
+        # Lateral line + amygdala: predator close even if not visible
+        elif ll_proximity > 0.15 and self.amygdala_alpha > 0.2 and starvation < 0.5:
             new_goal = GOAL_FLEE
 
         # Stuck detection: force explore when not finding food
@@ -734,6 +754,8 @@ class ZebrafishBrainV2(nn.Module):
             'vae_memory_nodes': self.vae.memory.n_allocated,
             'hab_switch': hab_out['switch_signal'],
             'hab_helplessness': hab_out['helplessness'],
+            'novelty': self._novelty_ema,
+            'exploration_phase': self._exploration_phase,
         }
 
     def reset(self):
@@ -769,6 +791,9 @@ class ZebrafishBrainV2(nn.Module):
         self.sleep_wake.reset()
         self._z_prev = None
         self._last_action_ctx = None
+        self._novelty_ema = 1.0
+        self._surprise_history = []
+        self._exploration_phase = True
         self.goal_probs = torch.tensor([0.25, 0.25, 0.25, 0.25], device=self.device)
         self.current_goal = GOAL_EXPLORE
         self.goal_persistence = 0

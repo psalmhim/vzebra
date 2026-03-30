@@ -77,7 +77,7 @@ class SpikingLateralLine(nn.Module):
             else:
                 I_ant[self.n_ant // 2:] *= 1.5
 
-        for _ in range(SUBSTEPS):
+        for _ in range(10):  # reduced substeps
             self.anterior(I_ant + torch.randn(self.n_ant, device=self.device) * 0.5)
             self.posterior(I_post + torch.randn(self.n_post, device=self.device) * 0.5)
 

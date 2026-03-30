@@ -52,7 +52,7 @@ class NeuralMonitorV2:
     """Off-screen neural activity renderer for ZebrafishBrainV2."""
 
     WIDTH = 500
-    HEIGHT = 700
+    HEIGHT = 860
     BG = (15, 15, 25)
     LABEL = (200, 200, 200)
     GRID = (40, 40, 55)
@@ -133,23 +133,24 @@ class NeuralMonitorV2:
         # Build raster row from v2 spiking layers
         row = np.zeros(self.RASTER_NEURONS, dtype=np.float32)
 
-        # Tectum SFGS-b E spikes (20 subsampled from ~281)
-        sfgsb_rate = self._t2np(brain.tectum.sfgs_b.get_rate_e())
-        n = len(sfgsb_rate)
+        # Tectum SFGS-b E spikes (20 subsampled) — raw spike counts
+        sfgsb_spikes = self._t2np(brain.tectum.sfgs_b.spike_E)
+        n = len(sfgsb_spikes)
         step_s = max(1, n // 20)
-        row[:20] = sfgsb_rate[::step_s][:20]
+        row[:20] = np.clip(sfgsb_spikes[::step_s][:20] / 5.0, 0, 1)
 
-        # Pallium-S E rates (20 subsampled from ~375)
-        pals_rate = self._t2np(brain.pallium.rate_s)
-        n = len(pals_rate)
+        # Pallium-S E spikes (20 subsampled) — use raw spike counts
+        pals_spikes = self._t2np(brain.pallium.pal_s.spike_E)
+        n = len(pals_spikes)
         step_s = max(1, n // 20)
-        row[20:40] = pals_rate[::step_s][:20]
+        row[20:40] = np.clip(pals_spikes[::step_s][:20] / 5.0, 0, 1)
 
-        # Pallium-D E rates (10 subsampled from ~150)
-        pald_rate = self._t2np(brain.pallium.rate_d)
-        n = len(pald_rate)
+        # Pallium-D E spikes (10 subsampled) — use raw spike counts for intermittency
+        pald_spikes = self._t2np(brain.pallium.pal_d.spike_E)
+        n = len(pald_spikes)
         step_s = max(1, n // 10)
-        row[40:50] = pald_rate[::step_s][:10]
+        # Normalize: >0 means at least 1 spike in this 50ms window
+        row[40:50] = np.clip(pald_spikes[::step_s][:10] / 5.0, 0, 1)
 
         # Amygdala CeA rates (10 subsampled from 20)
         cea_rate = self._t2np(brain.amygdala.CeA.rate)
@@ -416,18 +417,67 @@ class NeuralMonitorV2:
         theta = pc.theta_phase
         self._lbl(f"theta={theta:.2f}rad", 260, y6 + mh + 14, font=self.font_sm)
 
-        # ── Row 7: Step info (y: 670-700) ──
+        # ── Row 7: New SNN Modules (y: 670-800) ──
         y7 = 670
+        self._lbl("NEW SNN MODULES", 6, y7 - 12, font=self.font_md)
+        bw2, bh2 = 100, 11
+
+        # Cerebellum
+        cb_pe = out.get('cerebellum_pe', 0)
+        self._bar(6, y7, bw2, bh2, cb_pe, 1.0, (200, 100, 255), "Cereb PE")
+
+        # Habenula
+        hab_d = out.get('habenula_disappoint', 0)
+        hab_h = out.get('hab_helplessness', 0)
+        self._bar(6, y7 + bh2 + 2, bw2, bh2, hab_d, 1.0, (255, 100, 100), "Hab Disp")
+        self._bar(6, y7 + 2 * (bh2 + 2), bw2, bh2, hab_h, 1.0, (255, 60, 60), "Helpless")
+
+        # RL Critic
+        cr_v = out.get('critic_value', 0)
+        cr_td = out.get('critic_td_error', 0)
+        self._bar(6, y7 + 3 * (bh2 + 2), bw2, bh2, cr_v, 5.0, (50, 200, 50), "Critic V")
+        self._bar(6, y7 + 4 * (bh2 + 2), bw2, bh2, cr_td, 10.0, (50, 200, 100), "TD err")
+
+        # Interoception
+        self._lbl("INTEROCEPTION", 260, y7 - 12, font=self.font_md)
+        val = out.get('insula_valence', 0)
+        hr = out.get('insula_heart_rate', 2)
+        ar = out.get('insula_arousal', 0)
+        self._bar(260, y7, bw2, bh2, val, 1.0, (180, 80, 220), "Valence")
+        self._bar(260, y7 + bh2 + 2, bw2, bh2, hr / 8.0, 1.0, (220, 50, 50), "HR")
+        self._bar(260, y7 + 2 * (bh2 + 2), bw2, bh2, ar, 1.0, (255, 180, 50), "Arousal")
+
+        # Predictive surprise
+        surp = out.get('predictive_surprise', 0)
+        self._bar(260, y7 + 3 * (bh2 + 2), bw2, bh2, min(1, surp * 5), 1.0,
+                  (50, 150, 255), "Surprise")
+
+        # Habit + CPG
+        hab_conf = out.get('habit_confidence', 0)
+        cpg_L = out.get('cpg_motor_L', 0)
+        cpg_R = out.get('cpg_motor_R', 0)
+        self._bar(260, y7 + 4 * (bh2 + 2), bw2, bh2, hab_conf, 1.0,
+                  (0, 200, 200), "Habit")
+
+        # VAE
+        vae_nodes = out.get('vae_memory_nodes', 0)
+        self._lbl(f"VAE mem: {vae_nodes} nodes", 150, y7 + 5 * (bh2 + 2), font=self.font_sm)
+        self._lbl(f"CPG L:{cpg_L:.2f} R:{cpg_R:.2f}", 300, y7 + 5 * (bh2 + 2), font=self.font_sm)
+
+        # ── Row 8: Step info (y: 800-860) ──
+        y8 = 800
         eaten = info.get('total_eaten', 0)
         step = self._frame
         self._lbl(f"Step: {step}  Food: {eaten}  CMS: {brain.cms:.2f}",
-                  6, y7, font=self.font_md)
+                  6, y8, font=self.font_md)
         turn = out.get('turn', 0)
         speed = out.get('speed', 0)
-        self._lbl(f"Turn: {turn:+.3f}  Speed: {speed:.2f}", 6, y7 + 16,
+        self._lbl(f"Turn: {turn:+.3f}  Speed: {speed:.2f}", 6, y8 + 16,
                   font=self.font_md)
-
-        # Predator model confidence
         self._lbl(f"Pred intent: {brain.pred_model.intent:.2f}  "
-                  f"vis: {'Y' if brain.pred_model.visible else 'N'}",
-                  6, y7 + 32, font=self.font_sm)
+                  f"vis: {'Y' if brain.pred_model.visible else 'N'}  "
+                  f"BG gate: {out.get('bg_gate', 0):.2f}",
+                  6, y8 + 32, font=self.font_sm)
+        self._lbl(f"Olfaction food: {brain.olfaction.food_odor_strength:.2f}  "
+                  f"alarm: {brain.olfaction.alarm_level:.2f}",
+                  6, y8 + 44, font=self.font_sm)

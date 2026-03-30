@@ -57,7 +57,7 @@ class SpikingProprioception(nn.Module):
         I[6] = 15.0 if self.collision else 0.0  # collision L
         I[7] = 15.0 if self.collision else 0.0  # collision R
 
-        for _ in range(SUBSTEPS):
+        for _ in range(10):  # reduced substeps
             self.neurons(I + torch.randn(self.n, device=self.device) * 0.3)
         self.rate.copy_(self.neurons.rate)
 

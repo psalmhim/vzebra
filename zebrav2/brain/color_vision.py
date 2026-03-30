@@ -74,7 +74,7 @@ class SpikingColorVision(nn.Module):
         I_g = torch.full((self.n_ch,), float(green_drive) * 10.0, device=self.device)
         I_r = torch.full((self.n_ch,), float(red_drive) * 10.0, device=self.device)
 
-        for _ in range(SUBSTEPS):
+        for _ in range(10):  # reduced substeps (32 neurons)
             self.uv_pop(I_uv + torch.randn(self.n_ch, device=self.device) * 0.3)
             self.blue_pop(I_b + torch.randn(self.n_ch, device=self.device) * 0.3)
             self.green_pop(I_g + torch.randn(self.n_ch, device=self.device) * 0.3)

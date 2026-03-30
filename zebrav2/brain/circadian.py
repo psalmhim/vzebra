@@ -54,8 +54,7 @@ class SpikingCircadian(nn.Module):
         I_day = torch.full((self.n_day,), day_drive, device=self.device)
         I_night = torch.full((self.n_night,), max(0, night_drive), device=self.device)
 
-        for _ in range(SUBSTEPS):
-            # Mutual inhibition
+        for _ in range(10):  # reduced substeps (6 neurons don't need 50ms)
             self.day_pop(I_day - float(self.night_rate.mean()) * 5.0
                          + torch.randn(self.n_day, device=self.device) * 0.3)
             self.night_pop(I_night - float(self.day_rate.mean()) * 5.0

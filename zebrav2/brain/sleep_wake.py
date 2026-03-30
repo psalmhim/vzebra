@@ -58,8 +58,7 @@ class SpikingSleepWake(nn.Module):
         I_wake = torch.full((self.n_wake,), max(0, wake_drive), device=self.device)
         I_sleep = torch.full((self.n_sleep,), max(0, sleep_drive), device=self.device)
 
-        for _ in range(SUBSTEPS):
-            # Flip-flop mutual inhibition
+        for _ in range(10):  # reduced substeps (4 neurons)
             self.wake_pop(I_wake - float(self.sleep_rate.mean()) * 8.0
                           + torch.randn(self.n_wake, device=self.device) * 0.3)
             self.sleep_pop(I_sleep - float(self.wake_rate.mean()) * 8.0

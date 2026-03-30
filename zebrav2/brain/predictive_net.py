@@ -73,7 +73,7 @@ class SpikingPredictiveNet(nn.Module):
         I_enc = self.W_in_enc(x.unsqueeze(0)).squeeze(0).detach()
         I_enc = I_enc * (6.0 / (I_enc.abs().mean() + 1e-8))
 
-        for _ in range(SUBSTEPS):
+        for _ in range(20):  # reduced substeps
             self.enc_hidden(I_enc + torch.randn(self.n_hidden, device=self.device) * 0.3)
 
         self.enc_rate.copy_(self.enc_hidden.rate)
@@ -90,7 +90,7 @@ class SpikingPredictiveNet(nn.Module):
         I_dec = self.W_lat_dec(z.unsqueeze(0)).squeeze(0).detach()
         I_dec = I_dec * (6.0 / (I_dec.abs().mean() + 1e-8))
 
-        for _ in range(SUBSTEPS):
+        for _ in range(20):  # reduced substeps
             self.dec_hidden(I_dec + torch.randn(self.n_hidden, device=self.device) * 0.3)
 
         self.dec_rate.copy_(self.dec_hidden.rate)

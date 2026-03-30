@@ -68,7 +68,7 @@ class SpikingWorkingMemory(nn.Module):
                 I_ext = input_drive
             I_ext = I_ext * gate * 8.0  # scale for Izhikevich
 
-        for _ in range(SUBSTEPS):
+        for _ in range(10):  # reduced substeps
             # Recurrent excitation
             I_rec = self.W_rec @ self.exc.rate * 10.0
             # Inhibition

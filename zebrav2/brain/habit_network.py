@@ -82,7 +82,7 @@ class SpikingHabitNet(nn.Module):
         h_spikes = torch.zeros(self.n_hidden, device=self.device)
         o_spikes = torch.zeros(self.n_output, device=self.device)
 
-        for _ in range(SUBSTEPS):
+        for _ in range(15):  # reduced substeps
             sp_h = self.hidden(I_in + torch.randn(self.n_hidden, device=self.device) * 0.3)
             h_spikes += sp_h
             I_out = self.W_out(self.hidden.rate.unsqueeze(0)).squeeze(0).detach()

@@ -98,7 +98,7 @@ class SpikingCritic(nn.Module):
         h_spikes = torch.zeros(self.n_hidden, device=self.device)
         v_spikes = torch.zeros(self.n_goals, device=self.device)
 
-        for _ in range(SUBSTEPS):
+        for _ in range(20):  # reduced substeps
             sp_h = self.hidden(I_in + torch.randn(self.n_hidden, device=self.device) * 0.3)
             h_spikes += sp_h
 

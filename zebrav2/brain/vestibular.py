@@ -38,7 +38,7 @@ class SpikingVestibular(nn.Module):
         I[3] = max(0, -speed + 0.5) * 5.0 # deceleration
         I[4] = self.tilt * 8.0            # roll right
         I[5] = self.tilt * 8.0            # roll left
-        for _ in range(SUBSTEPS):
+        for _ in range(10):  # reduced substeps
             self.neurons(I + torch.randn(self.n, device=self.device) * 0.3)
         self.rate.copy_(self.neurons.rate)
         return {

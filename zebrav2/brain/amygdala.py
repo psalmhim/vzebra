@@ -77,7 +77,7 @@ class SpikingAmygdalaV2(nn.Module):
         cea_spike_acc = torch.zeros(self.n_cea, device=self.device)
         itc_spike_acc = torch.zeros(self.n_itc, device=self.device)
 
-        for _ in range(SUBSTEPS):
+        for _ in range(20):  # reduced substeps
             # LA: sensory-driven
             la_sp = self.LA(I_la_base + torch.randn(self.n_la, device=self.device) * 1.0)
             la_spike_acc += la_sp

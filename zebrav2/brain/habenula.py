@@ -85,7 +85,7 @@ class SpikingHabenula(nn.Module):
         I_mhb = torch.full((self.n_mhb,), aversion * 15.0, device=self.device)
         lhb_spikes = torch.zeros(self.n_lhb, device=self.device)
         mhb_spikes = torch.zeros(self.n_mhb, device=self.device)
-        for _ in range(SUBSTEPS):
+        for _ in range(20):  # reduced substeps
             sp_l = self.LHb(I_lhb + torch.randn(self.n_lhb, device=self.device) * 0.5)
             sp_m = self.MHb(I_mhb + torch.randn(self.n_mhb, device=self.device) * 0.5)
             lhb_spikes += sp_l

@@ -83,7 +83,7 @@ class SpikingInsularCortex(nn.Module):
         I_f = torch.full((self.n_ch,), fatigue_drive, device=self.device)
         I_s = torch.full((self.n_ch,), stress_drive, device=self.device)
 
-        for _ in range(SUBSTEPS):
+        for _ in range(15):  # reduced substeps
             sp_h = self.hunger_pop(I_h + torch.randn(self.n_ch, device=self.device) * 0.5)
             sp_f = self.fatigue_pop(I_f + torch.randn(self.n_ch, device=self.device) * 0.5)
             sp_s = self.stress_pop(I_s + torch.randn(self.n_ch, device=self.device) * 0.5)
@@ -106,7 +106,7 @@ class SpikingInsularCortex(nn.Module):
         negative = max(0.0, h_mean * 5.0 + s_mean * 6.0 + f_mean * 3.0 + (1.0 - energy / 100.0) * 0.3)
         I_val = torch.tensor([positive * 12.0, positive * 6.0,
                               negative * 12.0, negative * 6.0], device=self.device)
-        for _ in range(SUBSTEPS):
+        for _ in range(15):  # reduced substeps
             self.valence_pop(I_val + torch.randn(4, device=self.device) * 0.3)
         self.valence_rate.copy_(self.valence_pop.rate)
 

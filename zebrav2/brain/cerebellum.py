@@ -93,7 +93,7 @@ class SpikingCerebellum(nn.Module):
         pc_spikes = torch.zeros(self.n_pc, device=self.device)
         dcn_spikes = torch.zeros(self.n_dcn, device=self.device)
 
-        for _ in range(SUBSTEPS):
+        for _ in range(20):  # reduced substeps
             # GC: mossy fiber driven, sparse
             sp_gc = self.GC(I_mf_gc + torch.randn(self.n_gc, device=self.device) * 0.5)
             gc_spikes += sp_gc
