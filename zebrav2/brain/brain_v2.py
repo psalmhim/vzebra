@@ -44,6 +44,7 @@ from zebrav2.brain.sleep_wake import SpikingSleepWake
 from zebrav2.brain.saccade import SpikingSaccade
 from zebrav2.brain.geographic_model import GeographicModel
 from zebrav2.brain.binocular_depth import BinocularDepth
+from zebrav2.brain.shoaling import ShoalingModule
 
 GOAL_FORAGE, GOAL_FLEE, GOAL_EXPLORE, GOAL_SOCIAL = 0, 1, 2, 3
 
@@ -106,6 +107,7 @@ class ZebrafishBrainV2(nn.Module):
         self.saccade = SpikingSaccade(device=device)
         self.geo_model = GeographicModel()
         self.binocular = BinocularDepth()
+        self.shoaling = ShoalingModule()
         # EFE state (adapted from v1)
         self.goal_probs = torch.tensor([0.25, 0.25, 0.25, 0.25], device=device)
         self.current_goal = GOAL_EXPLORE
@@ -344,6 +346,22 @@ class ZebrafishBrainV2(nn.Module):
         # Olfactory bias: food odor attracts FORAGE, alarm drives FLEE
         G_forage += self.olfaction.get_forage_bias()
         G_flee += self.olfaction.get_flee_bias()
+        # Shoaling: social cues from conspecifics
+        colleagues = []
+        if hasattr(env, 'all_fish'):
+            for i, f in enumerate(env.all_fish):
+                if i == 0 or not f.get('alive', True):
+                    continue
+                colleagues.append({'x': f['x'], 'y': f['y'],
+                                   'heading': f['heading'],
+                                   'speed': f.get('speed', 0.5)})
+        fish_px, fish_py = self._last_fish_pos
+        self.shoaling.step(fish_px, fish_py, fish_heading, colleagues)
+        self.shoaling.observe_social_cues(fish_px, fish_py, colleagues)
+        social_bias = self.shoaling.get_efe_bias()
+        G_forage += social_bias['social_forage']
+        G_flee += social_bias['social_flee']
+        G_explore += social_bias['social_explore']
         # Geographic model EFE bias
         geo_bias = self.geo_model.get_efe_bias(self._last_fish_pos[0], self._last_fish_pos[1])
         G_forage += geo_bias['forage_bias']
@@ -599,7 +617,9 @@ class ZebrafishBrainV2(nn.Module):
             brain_turn = 0.4 * explore_turn + 0.2 * retinal_turn + 0.3 * obstacle_turn + 0.3 * scan_turn
             alpha_s = 0.25
         else:  # SOCIAL
-            brain_turn = retinal_turn * 0.5 + 0.3 * obstacle_turn
+            # Shoaling turn bias when in social mode
+            shoal_turn = self.shoaling.turn_bias if self.shoaling.n_neighbours > 0 else 0.0
+            brain_turn = 0.4 * shoal_turn + 0.3 * retinal_turn + 0.3 * obstacle_turn
             alpha_s = 0.30
 
         self._smoother = alpha_s * brain_turn + (1 - alpha_s) * self._smoother
@@ -830,6 +850,7 @@ class ZebrafishBrainV2(nn.Module):
         self.saccade.reset()
         self.geo_model.reset()
         self.binocular.reset()
+        self.shoaling.reset()
         self._z_prev = None
         self._last_action_ctx = None
         self._novelty_ema = 1.0
