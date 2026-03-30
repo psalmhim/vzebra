@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zebrafish Brain v2 Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #c9d1d9; }
+.header { background: #161b22; padding: 12px 20px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-size: 18px; color: #58a6ff; }
+.header .status { padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+.status.running { background: #238636; color: #fff; }
+.status.stopped { background: #6e7681; color: #fff; }
+.grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; padding: 12px; }
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px; }
+.card h3 { color: #58a6ff; font-size: 13px; margin-bottom: 8px; border-bottom: 1px solid #30363d; padding-bottom: 4px; }
+.metric { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
+.metric .val { color: #7ee787; font-weight: bold; }
+.metric .val.warn { color: #f0883e; }
+.metric .val.bad { color: #f85149; }
+canvas { width: 100% !important; height: 180px !important; }
+.controls { display: flex; gap: 8px; padding: 12px; flex-wrap: wrap; }
+.btn { padding: 8px 16px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 12px; }
+.btn:hover { background: #30363d; }
+.btn.primary { background: #238636; border-color: #238636; color: #fff; }
+.btn.danger { background: #da3633; border-color: #da3633; color: #fff; }
+select, input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 4px; font-size: 12px; }
+.config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.config-item { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+.config-item label { color: #8b949e; }
+.log { background: #010409; border: 1px solid #30363d; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 11px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+.arena { position: relative; width: 100%; height: 200px; background: #0a1628; border: 1px solid #30363d; border-radius: 4px; }
+.fish-dot { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: #58a6ff; }
+.pred-dot { position: absolute; width: 10px; height: 10px; border-radius: 50%; background: #f85149; }
+.food-dot { position: absolute; width: 4px; height: 4px; border-radius: 50%; background: #7ee787; }
+table { width: 100%; border-collapse: collapse; font-size: 11px; }
+table th, table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #21262d; }
+table th { color: #8b949e; }
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>Zebrafish Brain v2 Dashboard</h1>
+    <div>
+        <span id="statusBadge" class="status stopped">STOPPED</span>
+        <span style="margin-left:12px;font-size:12px;color:#8b949e" id="roundInfo">Round: 0</span>
+    </div>
+</div>
+
+<div class="controls">
+    <button class="btn primary" onclick="startTraining()">Start Training</button>
+    <button class="btn danger" onclick="stopTraining()">Stop</button>
+    <select id="personality" onchange="updateConfig()">
+        <option value="default">Default</option>
+        <option value="bold">Bold</option>
+        <option value="shy">Shy</option>
+        <option value="explorer">Explorer</option>
+        <option value="social">Social</option>
+        <option value="random">Random</option>
+    </select>
+    <select id="predatorAI" onchange="updateConfig()">
+        <option value="intelligent">Smart Predator</option>
+        <option value="simple">Simple Predator</option>
+        <option value="none">No Predator</option>
+    </select>
+    <input type="number" id="nFood" value="15" min="0" max="50" style="width:60px" onchange="updateConfig()">
+    <label style="font-size:11px;color:#8b949e">food</label>
+    <input type="number" id="nRounds" value="10" min="1" max="100" style="width:60px">
+    <label style="font-size:11px;color:#8b949e">rounds</label>
+    <input type="number" id="maxSteps" value="500" min="50" max="3000" style="width:70px" onchange="updateConfig()">
+    <label style="font-size:11px;color:#8b949e">steps/round</label>
+</div>
+
+<div class="grid">
+    <!-- Arena View -->
+    <div class="card">
+        <h3>Arena (Live)</h3>
+        <div class="arena" id="arena"></div>
+    </div>
+
+    <!-- Current Step -->
+    <div class="card">
+        <h3>Current State</h3>
+        <div id="currentState">
+            <div class="metric"><span>Goal</span><span class="val" id="mGoal">-</span></div>
+            <div class="metric"><span>Energy</span><span class="val" id="mEnergy">-</span></div>
+            <div class="metric"><span>Food Eaten</span><span class="val" id="mFood">-</span></div>
+            <div class="metric"><span>Free Energy</span><span class="val" id="mEFE">-</span></div>
+            <div class="metric"><span>DA</span><span class="val" id="mDA">-</span></div>
+            <div class="metric"><span>NA</span><span class="val" id="mNA">-</span></div>
+            <div class="metric"><span>5-HT</span><span class="val" id="m5HT">-</span></div>
+            <div class="metric"><span>Amygdala</span><span class="val" id="mAmy">-</span></div>
+            <div class="metric"><span>Critic Value</span><span class="val" id="mCritic">-</span></div>
+            <div class="metric"><span>Novelty</span><span class="val" id="mNovelty">-</span></div>
+            <div class="metric"><span>Heart Rate</span><span class="val" id="mHR">-</span></div>
+            <div class="metric"><span>VAE Memory</span><span class="val" id="mVAE">-</span></div>
+        </div>
+    </div>
+
+    <!-- Training Curve -->
+    <div class="card">
+        <h3>Fitness Over Rounds</h3>
+        <canvas id="fitnessChart"></canvas>
+    </div>
+
+    <!-- Survival Chart -->
+    <div class="card">
+        <h3>Survival & Food</h3>
+        <canvas id="survivalChart"></canvas>
+    </div>
+
+    <!-- EFE Chart -->
+    <div class="card">
+        <h3>Expected Free Energy</h3>
+        <canvas id="efeChart"></canvas>
+    </div>
+
+    <!-- Round History Table -->
+    <div class="card">
+        <h3>Round History</h3>
+        <div style="max-height:200px;overflow-y:auto">
+            <table id="historyTable">
+                <thead><tr><th>Rnd</th><th>Surv</th><th>Food</th><th>Fitness</th><th>EFE</th><th>Caught</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Checkpoints -->
+    <div class="card">
+        <h3>Checkpoints</h3>
+        <div id="checkpoints" class="log">No checkpoints yet.</div>
+    </div>
+
+    <!-- Log -->
+    <div class="card">
+        <h3>Event Log</h3>
+        <div id="logBox" class="log"></div>
+    </div>
+
+    <!-- Config -->
+    <div class="card">
+        <h3>Configuration</h3>
+        <div class="config-grid" id="configDisplay"></div>
+    </div>
+</div>
+
+<script>
+// Charts
+const chartOpts = { responsive: true, animation: false, plugins: { legend: { labels: { color: '#c9d1d9', font: { size: 10 } } } },
+    scales: { x: { ticks: { color: '#8b949e', font: { size: 9 } } }, y: { ticks: { color: '#8b949e', font: { size: 9 } } } } };
+
+const fitnessChart = new Chart(document.getElementById('fitnessChart'), {
+    type: 'line', data: { labels: [], datasets: [{ label: 'Fitness', data: [], borderColor: '#58a6ff', tension: 0.3, pointRadius: 3 }] }, options: chartOpts });
+const survivalChart = new Chart(document.getElementById('survivalChart'), {
+    type: 'bar', data: { labels: [], datasets: [
+        { label: 'Survived', data: [], backgroundColor: '#388bfd' },
+        { label: 'Food×50', data: [], backgroundColor: '#7ee787' }
+    ] }, options: chartOpts });
+const efeChart = new Chart(document.getElementById('efeChart'), {
+    type: 'line', data: { labels: [], datasets: [{ label: 'Mean EFE', data: [], borderColor: '#f0883e', tension: 0.3, pointRadius: 3 }] }, options: chartOpts });
+
+let ws = null;
+const logBox = document.getElementById('logBox');
+function log(msg) { logBox.textContent += msg + '\n'; logBox.scrollTop = logBox.scrollHeight; }
+
+// WebSocket
+function connectWS() {
+    ws = new WebSocket(`ws://${location.host}/ws/live`);
+    ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'step') updateStep(msg.data);
+        else if (msg.type === 'round_end') updateRoundEnd(msg.data);
+        else if (msg.type === 'status') updateStatus(msg.data);
+    };
+    ws.onclose = () => setTimeout(connectWS, 2000);
+    ws.onerror = () => {};
+}
+
+function updateStep(d) {
+    document.getElementById('mGoal').textContent = d.goal;
+    document.getElementById('mEnergy').textContent = d.energy?.toFixed(0);
+    document.getElementById('mFood').textContent = d.food_total;
+    document.getElementById('mEFE').textContent = d.free_energy?.toFixed(4);
+    document.getElementById('mDA').textContent = d.DA?.toFixed(2);
+    document.getElementById('mNA').textContent = d.NA?.toFixed(2);
+    document.getElementById('m5HT').textContent = d['5HT']?.toFixed(2);
+    document.getElementById('mAmy').textContent = d.amygdala?.toFixed(2);
+    document.getElementById('mCritic').textContent = d.critic_value?.toFixed(3);
+    document.getElementById('mNovelty').textContent = d.novelty?.toFixed(2);
+    document.getElementById('mHR').textContent = d.heart_rate?.toFixed(1) + ' Hz';
+    document.getElementById('mVAE').textContent = d.vae_nodes + ' nodes';
+
+    // Arena
+    const arena = document.getElementById('arena');
+    const aw = arena.clientWidth, ah = arena.clientHeight;
+    arena.innerHTML = '';
+    if (d.fish_x) {
+        const fx = document.createElement('div'); fx.className = 'fish-dot';
+        fx.style.left = (d.fish_x / 800 * aw - 4) + 'px';
+        fx.style.top = (d.fish_y / 600 * ah - 4) + 'px';
+        arena.appendChild(fx);
+    }
+    if (d.pred_x > 0) {
+        const px = document.createElement('div'); px.className = 'pred-dot';
+        px.style.left = (d.pred_x / 800 * aw - 5) + 'px';
+        px.style.top = (d.pred_y / 600 * ah - 5) + 'px';
+        arena.appendChild(px);
+    }
+
+    // Color goal
+    const goalEl = document.getElementById('mGoal');
+    const goalColors = { FORAGE: '#7ee787', FLEE: '#f85149', EXPLORE: '#58a6ff', SOCIAL: '#3fb9a0' };
+    goalEl.style.color = goalColors[d.goal] || '#c9d1d9';
+
+    // Energy warning
+    const eEl = document.getElementById('mEnergy');
+    eEl.className = 'val' + (d.energy < 30 ? ' bad' : d.energy < 50 ? ' warn' : '');
+}
+
+function updateRoundEnd(m) {
+    // Charts
+    const lbl = 'R' + m.round;
+    fitnessChart.data.labels.push(lbl);
+    fitnessChart.data.datasets[0].data.push(m.fitness);
+    fitnessChart.update();
+    survivalChart.data.labels.push(lbl);
+    survivalChart.data.datasets[0].data.push(m.survived);
+    survivalChart.data.datasets[1].data.push(m.food_eaten * 50);
+    survivalChart.update();
+    efeChart.data.labels.push(lbl);
+    efeChart.data.datasets[0].data.push(m.mean_efe);
+    efeChart.update();
+
+    // Table
+    const tbody = document.querySelector('#historyTable tbody');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${m.round}</td><td>${m.survived}</td><td>${m.food_eaten}</td>` +
+        `<td>${m.fitness?.toFixed(0)}</td><td>${m.mean_efe?.toFixed(4)}</td>` +
+        `<td>${m.caught ? '☠' : '✓'}</td>`;
+    tbody.insertBefore(tr, tbody.firstChild);
+
+    log(`Round ${m.round}: survived=${m.survived}, food=${m.food_eaten}, fitness=${m.fitness?.toFixed(0)}`);
+    document.getElementById('roundInfo').textContent = `Round: ${m.round}`;
+}
+
+function updateStatus(s) {
+    const badge = document.getElementById('statusBadge');
+    badge.textContent = s.running ? 'RUNNING' : 'STOPPED';
+    badge.className = 'status ' + (s.running ? 'running' : 'stopped');
+}
+
+// API calls
+async function startTraining() {
+    const config = getConfig();
+    const n = parseInt(document.getElementById('nRounds').value) || 10;
+    const res = await fetch('/api/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ n_rounds: n, config: config })
+    });
+    const data = await res.json();
+    log(`Training started: ${n} rounds`);
+}
+
+async function stopTraining() {
+    await fetch('/api/stop', { method: 'POST' });
+    log('Training stopped.');
+}
+
+async function updateConfig() {
+    const config = getConfig();
+    await fetch('/api/config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: config })
+    });
+}
+
+function getConfig() {
+    return {
+        env: {
+            n_food: parseInt(document.getElementById('nFood').value) || 15,
+            max_steps: parseInt(document.getElementById('maxSteps').value) || 500,
+            predator_ai: document.getElementById('predatorAI').value,
+        },
+        fish: {
+            personality_mode: document.getElementById('personality').value,
+        },
+    };
+}
+
+// Load initial status
+async function init() {
+    try {
+        const res = await fetch('/api/status');
+        const status = await res.json();
+        if (status.round_history) {
+            status.round_history.forEach(m => updateRoundEnd(m));
+        }
+        // Checkpoints
+        const ckpts = await (await fetch('/api/checkpoints')).json();
+        const ckptBox = document.getElementById('checkpoints');
+        if (ckpts.length > 0) {
+            ckptBox.textContent = ckpts.map(c => `Round ${c.round}: fitness=${c.metrics?.fitness?.toFixed(0)}`).join('\n');
+        }
+    } catch(e) {}
+    connectWS();
+}
+init();
+</script>
+</body>
+</html>
