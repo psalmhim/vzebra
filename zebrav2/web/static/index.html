@@ -424,35 +424,53 @@ function drawArena(d) {
         ctx.beginPath(); ctx.arc(bx-b.r*0.3, by-b.r*0.3, b.r*0.3, 0, Math.PI*2); ctx.fill();
     });
 
-    // Rocks (3x visual size, rocky texture)
+    // Rocks (polygonal shapes with texture)
     if (d.rocks) {
         d.rocks.forEach(r => {
-            const rx = r[0]*sx, ry = r[1]*sy, rr = Math.max(10, r[2]*sx*1.5);
+            const rx = r[0]*sx, ry = r[1]*sy, rr = Math.max(10, r[2]*sx*1.2);
+            const verts = r.length > 3 ? r[3] : null;
+
             // Shadow
-            ctx.beginPath(); ctx.arc(rx+3, ry+3, rr, 0, Math.PI*2);
-            ctx.fillStyle = 'rgba(0,0,0,0.3)';
-            ctx.fill();
-            // Main rock body
-            ctx.beginPath(); ctx.arc(rx, ry, rr, 0, Math.PI*2);
-            const rg = ctx.createRadialGradient(rx-rr*0.3, ry-rr*0.3, rr*0.1, rx, ry, rr);
-            rg.addColorStop(0, 'rgba(160,150,120,0.7)');
-            rg.addColorStop(0.5, 'rgba(110,100,70,0.6)');
-            rg.addColorStop(1, 'rgba(70,60,40,0.4)');
-            ctx.fillStyle = rg;
-            ctx.fill();
-            // Rock edge
-            ctx.strokeStyle = 'rgba(90,80,55,0.5)';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-            // Texture dots
-            for (let i = 0; i < 5; i++) {
-                const tx = rx + (Math.random()-0.5)*rr*1.2;
-                const ty = ry + (Math.random()-0.5)*rr*1.2;
-                const dx = tx-rx, dy = ty-ry;
-                if (dx*dx+dy*dy < rr*rr*0.8) {
-                    ctx.fillStyle = 'rgba(80,70,50,0.3)';
-                    ctx.beginPath(); ctx.arc(tx, ty, 2, 0, Math.PI*2); ctx.fill();
-                }
+            ctx.save();
+            ctx.translate(2, 2);
+            if (verts && verts.length >= 3) {
+                ctx.beginPath();
+                ctx.moveTo(verts[0][0]*sx, verts[0][1]*sy);
+                for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i][0]*sx, verts[i][1]*sy);
+                ctx.closePath();
+            } else {
+                ctx.beginPath(); ctx.arc(rx, ry, rr, 0, Math.PI*2);
+            }
+            ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fill();
+            ctx.restore();
+
+            // Rock body (polygon or circle)
+            if (verts && verts.length >= 3) {
+                ctx.beginPath();
+                ctx.moveTo(verts[0][0]*sx, verts[0][1]*sy);
+                for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i][0]*sx, verts[i][1]*sy);
+                ctx.closePath();
+            } else {
+                ctx.beginPath(); ctx.arc(rx, ry, rr, 0, Math.PI*2);
+            }
+            // Gradient fill
+            const rg = ctx.createRadialGradient(rx-rr*0.2, ry-rr*0.2, rr*0.1, rx, ry, rr*1.2);
+            rg.addColorStop(0, 'rgba(170,155,120,0.75)');
+            rg.addColorStop(0.4, 'rgba(130,115,80,0.65)');
+            rg.addColorStop(0.8, 'rgba(90,80,55,0.55)');
+            rg.addColorStop(1, 'rgba(60,50,35,0.4)');
+            ctx.fillStyle = rg; ctx.fill();
+            // Edge
+            ctx.strokeStyle = 'rgba(100,90,60,0.6)'; ctx.lineWidth = 1.5; ctx.stroke();
+            // Texture: cracks and spots
+            for (let i = 0; i < 4; i++) {
+                const tx = rx + (Math.random()-0.5)*rr*1.0;
+                const ty = ry + (Math.random()-0.5)*rr*1.0;
+                ctx.strokeStyle = 'rgba(60,50,35,0.2)'; ctx.lineWidth = 0.5;
+                ctx.beginPath();
+                ctx.moveTo(tx, ty);
+                ctx.lineTo(tx + (Math.random()-0.5)*10, ty + (Math.random()-0.5)*10);
+                ctx.stroke();
             }
         });
     }

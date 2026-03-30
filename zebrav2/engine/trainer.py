@@ -78,32 +78,90 @@ class TrainingEngine:
         return env
 
     def _spawn_food_patches(self, env, n_total=20, seed=None):
-        """Spawn food in clusters: 2-4 dense patches + sparse scatter."""
+        """Spawn 3 food-dense areas surrounded by rocks + sparse scatter."""
         rng = np.random.RandomState(seed)
         aw = getattr(env, 'arena_w', 800)
         ah = getattr(env, 'arena_h', 600)
         env.foods = []
 
-        # 2-4 food patches (60% of food in patches)
-        n_patches = rng.randint(2, 5)
-        food_in_patches = int(n_total * 0.6)
-        food_per_patch = max(2, food_in_patches // n_patches)
-        patch_radius = 50  # cluster radius
+        # Clear existing rocks and create new ones
+        env.rock_formations = []
 
-        for p in range(n_patches):
-            # Patch center: avoid edges and predator spawn area
-            cx = rng.uniform(100, aw - 100)
-            cy = rng.uniform(100, ah - 100)
+        # 3 fixed food-dense areas in different regions
+        patch_centers = [
+            (aw * 0.2, ah * 0.25),   # top-left
+            (aw * 0.75, ah * 0.3),   # top-right
+            (aw * 0.4, ah * 0.75),   # bottom-center
+        ]
+
+        food_per_patch = max(3, n_total // 4)  # ~75% in patches
+
+        for pi, (pcx, pcy) in enumerate(patch_centers):
+            # Jitter patch center
+            pcx += rng.uniform(-30, 30)
+            pcy += rng.uniform(-30, 30)
+            pcx = float(np.clip(pcx, 80, aw - 80))
+            pcy = float(np.clip(pcy, 80, ah - 80))
+
+            # Spawn food cluster inside the patch
             for _ in range(food_per_patch):
-                fx = cx + rng.normal(0, patch_radius * 0.5)
-                fy = cy + rng.normal(0, patch_radius * 0.5)
+                fx = pcx + rng.normal(0, 25)
+                fy = pcy + rng.normal(0, 25)
                 fx = float(np.clip(fx, 30, aw - 30))
                 fy = float(np.clip(fy, 30, ah - 30))
                 env.foods.append([fx, fy, 'small'])
 
-        # Scattered food (40% random)
-        n_scatter = n_total - food_per_patch * n_patches
-        for _ in range(max(0, n_scatter)):
+            # Surround each patch with 4-6 rocks (polygonal shapes via multiple lobes)
+            n_rocks = rng.randint(4, 7)
+            for ri in range(n_rocks):
+                angle = 2 * math.pi * ri / n_rocks + rng.uniform(-0.3, 0.3)
+                dist = 55 + rng.uniform(0, 25)
+                rx = pcx + dist * math.cos(angle)
+                ry = pcy + dist * math.sin(angle)
+                rx = float(np.clip(rx, 40, aw - 40))
+                ry = float(np.clip(ry, 40, ah - 40))
+                base_r = float(rng.uniform(15, 35))
+                # Generate polygon vertices (irregular shape)
+                n_verts = rng.randint(5, 9)
+                vertices = []
+                for vi in range(n_verts):
+                    va = 2 * math.pi * vi / n_verts + rng.uniform(-0.3, 0.3)
+                    vr = base_r * (0.6 + rng.uniform(0, 0.8))
+                    vertices.append([float(rx + vr * math.cos(va)),
+                                     float(ry + vr * math.sin(va))])
+                env.rock_formations.append({
+                    'cx': rx, 'cy': ry, 'radius': base_r,
+                    'vertices': vertices, 'type': 'polygon',
+                })
+
+        # Add scattered rocks between patches (obstacles)
+        for _ in range(rng.randint(5, 10)):
+            rx = float(rng.uniform(60, aw - 60))
+            ry = float(rng.uniform(60, ah - 60))
+            # Avoid being too close to patches
+            too_close = False
+            for pcx, pcy in patch_centers:
+                if math.sqrt((rx-pcx)**2 + (ry-pcy)**2) < 80:
+                    too_close = True
+                    break
+            if too_close:
+                continue
+            base_r = float(rng.uniform(20, 45))
+            n_verts = rng.randint(4, 8)
+            vertices = []
+            for vi in range(n_verts):
+                va = 2 * math.pi * vi / n_verts + rng.uniform(-0.4, 0.4)
+                vr = base_r * (0.5 + rng.uniform(0, 0.9))
+                vertices.append([float(rx + vr * math.cos(va)),
+                                 float(ry + vr * math.sin(va))])
+            env.rock_formations.append({
+                'cx': rx, 'cy': ry, 'radius': base_r,
+                'vertices': vertices, 'type': 'polygon',
+            })
+
+        # Sparse food outside patches (25%)
+        n_scatter = max(0, n_total - food_per_patch * 3)
+        for _ in range(n_scatter):
             fx = float(rng.uniform(50, aw - 50))
             fy = float(rng.uniform(50, ah - 50))
             env.foods.append([fx, fy, 'small'])
@@ -172,11 +230,14 @@ class TrainingEngine:
             food_positions = []
             for food in getattr(env, 'foods', []):
                 food_positions.append([float(food[0]), float(food[1])])
-            # Collect rock positions
+            # Collect rock positions (with polygon vertices if available)
             rock_positions = []
             for rock in getattr(env, 'rock_formations', []):
-                rock_positions.append([float(rock.get('cx', 0)), float(rock.get('cy', 0)),
-                                       float(rock.get('radius', 30))])
+                r = [float(rock.get('cx', 0)), float(rock.get('cy', 0)),
+                     float(rock.get('radius', 30))]
+                if 'vertices' in rock:
+                    r.append(rock['vertices'])  # polygon vertices
+                rock_positions.append(r)
 
             step_data = {
                 'round': round_num,
