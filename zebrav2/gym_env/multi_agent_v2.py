@@ -16,6 +16,7 @@ if PROJECT_ROOT not in sys.path:
 
 from zebrav1.gym_env.zebrafish_env import ZebrafishPreyPredatorEnv
 from zebrav2.brain.brain_v2 import ZebrafishBrainV2
+from zebrav2.brain.personality import assign_personalities
 from zebrav2.spec import DEVICE
 
 
@@ -80,10 +81,14 @@ def inject_sensory_for_fish(env, fish_idx, all_fish):
     env.fish_heading = fh
 
 
-def run_multi_v2(n_fish=5, max_steps=500, seed=42, record=False):
+def run_multi_v2(n_fish=5, max_steps=500, seed=42, record=False, personality_mode='mixed'):
     env = ZebrafishPreyPredatorEnv(render_mode='rgb_array' if record else None,
                                     n_food=20, max_steps=max_steps)
     obs, info = env.reset(seed=seed)
+
+    # Assign personalities
+    personalities = assign_personalities(n_fish, mode=personality_mode)
+    types = ['bold', 'shy', 'explorer', 'social', 'default']
 
     # Initialize all fish
     all_fish = []
@@ -93,11 +98,15 @@ def run_multi_v2(n_fish=5, max_steps=500, seed=42, record=False):
         x = np.random.uniform(150, 650)
         y = np.random.uniform(150, 450)
         h = np.random.uniform(-math.pi, math.pi)
+        ptype = types[i % len(types)] if personality_mode == 'mixed' else 'default'
         all_fish.append({'x': x, 'y': y, 'heading': h, 'speed': 0.5,
-                         'alive': True, 'food_eaten': 0, 'energy': 100.0})
-        brain = ZebrafishBrainV2(device=DEVICE)
+                         'alive': True, 'food_eaten': 0, 'energy': 100.0,
+                         'personality': ptype})
+        brain = ZebrafishBrainV2(device=DEVICE, personality=personalities[i])
         brain.reset()
         brains.append(brain)
+
+    print(f"  Personalities: {[f['personality'] for f in all_fish]}")
 
     # Fish 0 = env's focal fish
     env.fish_x, env.fish_y, env.fish_heading = all_fish[0]['x'], all_fish[0]['y'], all_fish[0]['heading']
@@ -213,7 +222,8 @@ def run_multi_v2(n_fish=5, max_steps=500, seed=42, record=False):
     print(f"  Fish alive: {sum(1 for f in all_fish if f['alive'])}/{n_fish}")
     for i in range(n_fish):
         status = 'ALIVE' if all_fish[i]['alive'] else 'DEAD'
-        print(f"  Fish {i}: {status}, food={total_food[i]}, energy={all_fish[i]['energy']:.0f}")
+        ptype = all_fish[i].get('personality', 'default')
+        print(f"  Fish {i} ({ptype:8s}): {status}, food={total_food[i]}, energy={all_fish[i]['energy']:.0f}")
 
     env.close()
     for b in brains:
@@ -227,7 +237,10 @@ if __name__ == '__main__':
     parser.add_argument('--n-fish', type=int, default=5)
     parser.add_argument('--steps', type=int, default=300)
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--personality', type=str, default='mixed',
+                        choices=['mixed', 'random', 'uniform'])
     args = parser.parse_args()
     print(f"Multi-agent v2: {args.n_fish} fish × full v2 brain, {args.steps} steps")
-    print(f"Device: {DEVICE}")
-    run_multi_v2(n_fish=args.n_fish, max_steps=args.steps, seed=args.seed)
+    print(f"Device: {DEVICE}, Personality: {args.personality}")
+    run_multi_v2(n_fish=args.n_fish, max_steps=args.steps, seed=args.seed,
+                 personality_mode=args.personality)

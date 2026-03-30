@@ -46,13 +46,16 @@ from zebrav2.brain.geographic_model import GeographicModel
 from zebrav2.brain.binocular_depth import BinocularDepth
 from zebrav2.brain.shoaling import ShoalingModule
 from zebrav2.brain.prey_capture import PreyCaptureKinematics
+from zebrav2.brain.personality import get_personality
 
 GOAL_FORAGE, GOAL_FLEE, GOAL_EXPLORE, GOAL_SOCIAL = 0, 1, 2, 3
 
 class ZebrafishBrainV2(nn.Module):
-    def __init__(self, device=DEVICE):
+    def __init__(self, device=DEVICE, personality=None):
         super().__init__()
         self.device = device
+        # Personality profile (default if not specified)
+        self.personality = personality if personality is not None else get_personality('default')
         # --- Core modules ---
         self.retina    = RetinaV2(device)
         self.tectum    = Tectum(device)
@@ -135,6 +138,26 @@ class ZebrafishBrainV2(nn.Module):
         self._step_count = 0
         self._last_fish_pos = (400.0, 300.0)
         self._last_speed = 1.0
+        # Apply personality to neuromod baselines and thresholds
+        self._apply_personality()
+
+    def _apply_personality(self):
+        """Set neuromodulator baselines and thresholds from personality profile."""
+        p = self.personality
+        self.neuromod.DA.fill_(p['DA_baseline'])
+        self.neuromod.HT5.fill_(p['HT5_baseline'])
+        self.neuromod.NA.fill_(p['NA_baseline'])
+        self.neuromod.ACh.fill_(p['ACh_baseline'])
+        # Amygdala gain: scales fear sensitivity
+        self.amygdala.retinal_gain = 0.08 * p['amy_gain']
+        # Habenula frustration threshold
+        self.habenula.threshold = p['habenula_threshold']
+        # CPG noise
+        self.cpg.noise = p['cpg_noise']
+        # Store flee threshold for use in step()
+        self._flee_threshold = p.get('flee_threshold', 0.25)
+        self._explore_bias = p.get('explore_bias', 0.0)
+        self._social_bias = p.get('social_bias', 0.0)
 
     def step(self, obs, env=None) -> dict:
         """
@@ -348,6 +371,9 @@ class ZebrafishBrainV2(nn.Module):
         # Olfactory bias: food odor attracts FORAGE, alarm drives FLEE
         G_forage += self.olfaction.get_forage_bias()
         G_flee += self.olfaction.get_flee_bias()
+        # Personality bias on EFE
+        G_explore += self._explore_bias
+        G_social += self._social_bias
         # Shoaling: social cues from conspecifics
         colleagues = []
         if hasattr(env, 'all_fish'):
@@ -425,7 +451,7 @@ class ZebrafishBrainV2(nn.Module):
         ll_proximity = self.lateral_line_mod.proximity  # 0-1, high = close
         has_threat_evidence = (enemy_px > 3 or ll_proximity > 0.15
                                or self.amygdala_alpha > 0.25)
-        if p_enemy > 0.20 and has_threat_evidence and starvation < 0.6:
+        if p_enemy > self._flee_threshold and has_threat_evidence and starvation < 0.6:
             new_goal = GOAL_FLEE
         # Close proximity flee: lateral line detects predator nearby
         if ll_proximity > 0.4 or (pred_dist < 60 and enemy_px > 1):
