@@ -45,6 +45,7 @@ from zebrav2.brain.saccade import SpikingSaccade
 from zebrav2.brain.geographic_model import GeographicModel
 from zebrav2.brain.binocular_depth import BinocularDepth
 from zebrav2.brain.shoaling import ShoalingModule
+from zebrav2.brain.prey_capture import PreyCaptureKinematics
 
 GOAL_FORAGE, GOAL_FLEE, GOAL_EXPLORE, GOAL_SOCIAL = 0, 1, 2, 3
 
@@ -108,6 +109,7 @@ class ZebrafishBrainV2(nn.Module):
         self.geo_model = GeographicModel()
         self.binocular = BinocularDepth()
         self.shoaling = ShoalingModule()
+        self.prey_capture = PreyCaptureKinematics()
         # EFE state (adapted from v1)
         self.goal_probs = torch.tensor([0.25, 0.25, 0.25, 0.25], device=device)
         self.current_goal = GOAL_EXPLORE
@@ -646,6 +648,19 @@ class ZebrafishBrainV2(nn.Module):
         speed *= self.allostasis.get_speed_cap()
         # Binocular depth: slow down for precise food approach
         speed *= self.binocular.get_approach_gain()
+
+        # Prey capture kinematics: J-turn → approach → strike
+        food_lateral = 0.0
+        if food_px > 0:
+            food_L_px = float((L[400:] > 0.7).float().sum())
+            food_R_px = float((R[400:] > 0.7).float().sum())
+            food_lateral = (food_R_px - food_L_px) / (food_L_px + food_R_px + 1e-8)
+        food_dist_est = bino_out.get('food_distance', 999) if bino_out['food_confidence'] > 0.1 else (200.0 / (food_px + 1e-8))
+        capture_result = self.prey_capture.update(
+            self.current_goal, food_px, food_dist_est, food_lateral, rock_total)
+        if capture_result is not None:
+            turn, speed = capture_result
+
         self._last_speed = speed
 
         # === 5b. SPINAL CPG (rhythmic motor output) ===
@@ -851,6 +866,7 @@ class ZebrafishBrainV2(nn.Module):
         self.geo_model.reset()
         self.binocular.reset()
         self.shoaling.reset()
+        self.prey_capture.reset()
         self._z_prev = None
         self._last_action_ctx = None
         self._novelty_ema = 1.0
