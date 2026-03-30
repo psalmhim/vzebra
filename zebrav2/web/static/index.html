@@ -347,7 +347,7 @@ let frameCount = 0;
 
 // Bubbles system
 const bubbles = [];
-for (let i = 0; i < 25; i++) {
+for (let i = 0; i < 12; i++) {
     bubbles.push({
         x: Math.random(), y: Math.random(),
         r: 1 + Math.random() * 3,
@@ -359,7 +359,7 @@ for (let i = 0; i < 25; i++) {
 
 // Water particles (plankton drift)
 const particles = [];
-for (let i = 0; i < 40; i++) {
+for (let i = 0; i < 15; i++) {
     particles.push({
         x: Math.random(), y: Math.random(),
         vx: (Math.random() - 0.5) * 0.0005,
@@ -483,55 +483,44 @@ function drawArena(d) {
         });
     }
 
-    // === PREDATOR (large, menacing) ===
+    // === PREDATOR (faces movement direction, single top eye) ===
     if (d.pred_x > 0) {
         const px = d.pred_x*sx, py = d.pred_y*sy;
-        const ps = 16;  // 2x bigger
-        // Danger zone aura
+        const ps = 16;
+        // Compute heading toward fish (predator faces its target)
+        let predH = 0;
+        if (d.fish_x) predH = Math.atan2((d.fish_y-d.pred_y)*sy, (d.fish_x-d.pred_x)*sx);
+        // Danger zone
         ctx.beginPath(); ctx.arc(px, py, ps*3, 0, Math.PI*2);
-        ctx.fillStyle = 'rgba(248,50,40,0.04)';
-        ctx.fill();
-        // Body (elongated, shark-like)
-        ctx.save(); ctx.translate(px, py);
+        ctx.fillStyle = 'rgba(248,50,40,0.04)'; ctx.fill();
+
+        ctx.save(); ctx.translate(px, py); ctx.rotate(predH);
         // Main body
+        ctx.beginPath(); ctx.ellipse(0, 0, ps*1.5, ps*0.7, 0, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(200,40,30,0.85)'; ctx.fill();
+        ctx.strokeStyle = 'rgba(255,80,60,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
+        // Tail fin (behind body)
         ctx.beginPath();
-        ctx.ellipse(0, 0, ps*1.5, ps*0.7, 0, 0, Math.PI*2);
-        ctx.fillStyle = 'rgba(200,40,30,0.85)';
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255,80,60,0.5)';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-        // Tail fin
+        ctx.moveTo(-ps*1.3, 0); ctx.lineTo(-ps*2.2, -ps*0.8); ctx.lineTo(-ps*2.2, ps*0.8);
+        ctx.closePath(); ctx.fillStyle = 'rgba(180,30,20,0.7)'; ctx.fill();
+        // Dorsal fin (top)
         ctx.beginPath();
-        ctx.moveTo(-ps*1.3, 0);
-        ctx.lineTo(-ps*2.2, -ps*0.8);
-        ctx.lineTo(-ps*2.2, ps*0.8);
-        ctx.closePath();
-        ctx.fillStyle = 'rgba(180,30,20,0.7)';
-        ctx.fill();
-        // Dorsal fin
-        ctx.beginPath();
-        ctx.moveTo(-ps*0.3, -ps*0.6);
-        ctx.lineTo(ps*0.3, -ps*1.2);
-        ctx.lineTo(ps*0.8, -ps*0.6);
-        ctx.closePath();
-        ctx.fillStyle = 'rgba(200,40,30,0.6)';
-        ctx.fill();
-        // Eyes (menacing)
+        ctx.moveTo(-ps*0.3, -ps*0.6); ctx.lineTo(ps*0.3, -ps*1.2); ctx.lineTo(ps*0.8, -ps*0.6);
+        ctx.closePath(); ctx.fillStyle = 'rgba(200,40,30,0.6)'; ctx.fill();
+        // Single eye (top, forward-facing)
         ctx.fillStyle = '#ff0';
-        ctx.beginPath(); ctx.arc(ps*0.7, -ps*0.2, 3, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.arc(ps*0.7, ps*0.2, 3, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(ps*0.8, -ps*0.15, 3.5, 0, Math.PI*2); ctx.fill();
         ctx.fillStyle = '#000';
-        ctx.beginPath(); ctx.arc(ps*0.8, -ps*0.2, 1.5, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.arc(ps*0.8, ps*0.2, 1.5, 0, Math.PI*2); ctx.fill();
-        // Mouth line
-        ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-        ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(ps*1.2, 0); ctx.lineTo(ps*0.5, ps*0.3); ctx.stroke();
+        ctx.beginPath(); ctx.arc(ps*0.9, -ps*0.15, 1.8, 0, Math.PI*2); ctx.fill();
+        // Mouth (open jaw)
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(ps*1.4, -ps*0.1); ctx.lineTo(ps*0.9, ps*0.35); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(ps*1.4, ps*0.1); ctx.lineTo(ps*0.9, ps*0.35); ctx.stroke();
+        // Teeth
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.beginPath(); ctx.moveTo(ps*1.2, 0); ctx.lineTo(ps*1.05, ps*0.15); ctx.lineTo(ps*1.35, ps*0.1); ctx.fill();
         ctx.restore();
-        // Label
-        ctx.fillStyle = 'rgba(255,80,60,0.7)';
-        ctx.font = 'bold 10px monospace';
+        ctx.fillStyle = 'rgba(255,80,60,0.7)'; ctx.font = 'bold 10px monospace';
         ctx.fillText('PREDATOR', px-28, py+ps+14);
     }
 
@@ -595,20 +584,32 @@ function drawArena(d) {
 
         ctx.restore();
 
-        // Energy bar (with gap above fish)
-        const barW = isFocal ? 24 : 16, barH = 3;
+        // Energy bar (outlined box = 100%, fill shows current)
+        const barW = isFocal ? 30 : 18, barH = isFocal ? 5 : 3;
         const ef = Math.max(0, Math.min(1, (energy||100)/100));
-        const barY = fy - bW - 12;  // gap above fish
-        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        const barY = fy - bW - 16;
+        // Background box (100% reference)
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
         ctx.fillRect(fx-barW/2, barY, barW, barH);
-        ctx.fillStyle = ef > 0.3 ? '#7ee787' : ef > 0.15 ? '#f0883e' : '#f85149';
+        // Fill (current energy)
+        ctx.fillStyle = ef > 0.5 ? '#7ee787' : ef > 0.25 ? '#f0883e' : '#f85149';
         ctx.fillRect(fx-barW/2, barY, barW*ef, barH);
+        // Outline (shows full 100% extent)
+        ctx.strokeStyle = 'rgba(200,200,200,0.5)';
+        ctx.lineWidth = 0.8;
+        ctx.strokeRect(fx-barW/2, barY, barW, barH);
+        // Energy % text
+        if (isFocal) {
+            ctx.fillStyle = 'rgba(200,200,200,0.7)';
+            ctx.font = '8px monospace';
+            ctx.fillText(Math.round(energy||0)+'%', fx+barW/2+3, barY+barH);
+        }
 
-        // Goal label (with more gap)
+        // Goal label (above energy bar)
         if (isFocal) {
             ctx.fillStyle = bodyColor;
             ctx.font = 'bold 10px monospace';
-            ctx.fillText(goal, fx-14, barY - 5);
+            ctx.fillText(goal, fx-14, barY - 6);
         }
     };
 
@@ -617,11 +618,22 @@ function drawArena(d) {
         drawFish(d.fish_x*sx, d.fish_y*sy, d.fish_heading||0, d.goal, d.energy, true);
     }
 
-    // Draw conspecific fish (if multi-agent data present)
-    if (d.other_fish) {
+    // Draw conspecific fish
+    if (d.other_fish && d.other_fish.length > 0) {
         d.other_fish.forEach(f => {
             drawFish(f.x*sx, f.y*sy, f.heading||0, f.goal||'EXPLORE', f.energy||50, false);
         });
+    } else if (d.fish_x) {
+        // Simulated conspecifics (visual only — swim near focal fish)
+        for (let ci = 0; ci < 3; ci++) {
+            const phase = frameCount * 0.02 + ci * 2.1;
+            const cx = d.fish_x + Math.sin(phase + ci) * 80 + Math.cos(phase*0.7)*30;
+            const cy = d.fish_y + Math.cos(phase + ci*1.3) * 60 + Math.sin(phase*0.5)*20;
+            const ch2 = (d.fish_heading||0) + Math.sin(phase*0.5) * 0.5;
+            if (cx > 20 && cx < aw-20 && cy > 20 && cy < ah-20) {
+                drawFish(cx*sx, cy*sy, ch2, 'SOCIAL', 70, false);
+            }
+        }
     }
 
     // === OVERLAY INFO ===

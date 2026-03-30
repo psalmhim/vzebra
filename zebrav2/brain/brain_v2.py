@@ -332,7 +332,8 @@ class ZebrafishBrainV2(nn.Module):
         tect_threat = float(tect_out['sfgs_b'].mean()) * 5.0  # scale sparse rate to [0,1]
         p_enemy = min(1.0, enemy_px / 15.0 + 0.3 * self.amygdala_alpha + 0.2 * tect_threat)
         energy_ratio = self.energy / 100.0
-        starvation = max(0.0, (0.5 - energy_ratio) / 0.5)
+        # Hunger starts at 75% energy (not 50%) — earlier food seeking
+        starvation = max(0.0, (0.75 - energy_ratio) / 0.75)
         # EFE computation
         U = 1.0 - 0.5 * (self.cms + 0.3)
         G_forage = 0.2 * U - 0.8 * p_food + 0.15 - 1.5 * starvation
@@ -451,7 +452,9 @@ class ZebrafishBrainV2(nn.Module):
         ll_proximity = self.lateral_line_mod.proximity  # 0-1, high = close
         has_threat_evidence = (enemy_px > 3 or ll_proximity > 0.15
                                or self.amygdala_alpha > 0.25)
-        if p_enemy > self._flee_threshold and has_threat_evidence and starvation < 0.6:
+        # Adjust flee threshold by hunger: hungry fish takes more risk
+        effective_flee_threshold = self._flee_threshold + starvation * 0.15
+        if p_enemy > effective_flee_threshold and has_threat_evidence and starvation < 0.6:
             new_goal = GOAL_FLEE
         # Close proximity flee: lateral line detects predator nearby
         if ll_proximity > 0.4 or (pred_dist < 60 and enemy_px > 1):
