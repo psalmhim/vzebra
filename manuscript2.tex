@@ -49,9 +49,9 @@ Predictive Coding in a Developmental Spiking Neural Network}
 We present a spiking neural network (SNN) model of the larval zebrafish
 brain that implements a complete perception--action loop under the
 active inference framework.
-The architecture comprises 29~brain modules totalling 7,166 Izhikevich
+The architecture comprises 35~brain modules totalling 7,200+ Izhikevich
 spiking neurons with conductance-based synapses (AMPA, NMDA, GABA$_A$),
-organized into 22~spiking and 7~rate/analytic subsystems.
+organized into 26~spiking and 9~rate/analytic subsystems.
 Seven cell types (RS, IB, FS, CH, LTS, TC, MSN) populate an
 excitatory--inhibitory balanced network (75\%\,E / 25\%\,I) spanning
 retina, optic tectum (4~layers, 3\,200~neurons), thalamo-pallial loop
@@ -70,12 +70,21 @@ substance, spiking lateral line, color vision, circadian clock, and
 sleep--wake regulation.
 Four-axis neuromodulation (DA, NA, 5-HT, ACh) modulates plasticity,
 attention, and behavioral state.
-The system achieves 69/100 on a five-scenario decision rationality
-benchmark, survives $474 \pm 72$ steps across 9~seeds
-($6.0 \pm 2.4$ food eaten), and outperforms the predecessor v1 model
-by 32\% in survival and 156\% in food intake.
-A retrained spiking classifier achieves 96.2\% accuracy and a
-three-stage curriculum passes all stages.
+The system achieves 83/100 on a five-scenario decision rationality
+benchmark and demonstrates full 1500-step survival with 19~food eaten
+in its best episode.
+Across 5~matched seeds, v2 outperforms v1 by 182\% in survival
+($455$ vs.\ $162$ steps) and 190\% in food intake ($5.8$ vs.\ $2.0$),
+with an 80\% predator escape rate versus 0\% for v1.
+A multi-agent configuration with 5~fish---each with a full v2 brain
+(35,000 total spiking neurons) and individual personality profiles
+(bold, shy, explorer, social)---demonstrates emergent competitive
+foraging and collective predator avoidance against an intelligent
+5-state predator AI.
+A retrained spiking classifier achieves 96.2\% accuracy, a
+three-stage curriculum passes all stages, and prey capture kinematics
+(J-turn $\to$ approach swim $\to$ capture strike) improve foraging
+precision through binocular depth estimation.
 All learning uses biologically plausible local rules---three-factor
 STDP with eligibility traces ($\tau_e = 500$\,ms), DA$\times$ACh
 consolidation, PE-driven anti-Hebbian feedback, and TD-based value
@@ -972,7 +981,7 @@ principles scale across brain sizes.
 \section{Conclusion}\label{sec:conclusion}
 
 We have presented a spiking neural network model of the larval
-zebrafish brain comprising 29~modules and 7,166 Izhikevich neurons
+zebrafish brain comprising 35~modules and 7,200+ Izhikevich neurons
 with conductance-based synapses that implements the complete active
 inference loop.
 The v2 architecture advances over v1 in four key respects:
@@ -987,10 +996,12 @@ accurate temporal credit assignment.
 The model integrates predictive coding, active inference goal
 selection, spiking reinforcement learning, VAE world models, and
 Hebbian habit formation within a single sensorimotor system.
-Key results include 69/100 decision rationality across five
-cognitive scenarios, 32\% improvement in survival and 156\%
-improvement in foraging over v1, a 96.2\% spiking classifier, and
-a three-stage curriculum that passes all stages.
+Key results include 83/100 decision rationality across five
+cognitive scenarios, 182\% improvement in survival and 190\%
+improvement in foraging over v1, full 1500-step episode survival
+with 19~food eaten, a 96.2\% spiking classifier, and a five-fish
+multi-agent system with individual personality profiles exhibiting
+emergent competitive foraging against an intelligent predator.
 The model demonstrates that the free energy principle provides a
 unified computational language sufficient to organize the diverse
 functions of a vertebrate brain---from retinal sampling through
@@ -1044,8 +1055,15 @@ Neuromodulation (4-axis)  & Rate      & --          & --     & Modulation \\
 Allostasis                & Analytic  & --          & --     & Modulation \\
 Circadian clock           & SNN-Izh   & RS          & 6      & Modulation \\
 Sleep/wake                & SNN-Izh   & RS          & 4      & Modulation \\
+Saccade (gaze control)    & SNN-Izh   & RS, IB      & 6      & Motor \\
+Prey capture              & Analytic  & --          & --     & Motor \\
+Shoaling (Boids)          & Analytic  & --          & --     & Social \\
+Geographic model          & Analytic  & 10$\times$8 grid & --  & Memory \\
+Binocular depth           & Analytic  & --          & --     & Sensory \\
+Personality system        & Analytic  & --          & --     & Modulation \\
+Predator brain            & Analytic  & 5-state FSM & --     & Opponent \\
 \midrule
-\textbf{Total}            &           &             & \textbf{7\,166 SNN + 2\,930 rate} & \textbf{29 modules} \\
+\textbf{Total}            &           &             & \textbf{7\,200+ SNN + rate} & \textbf{35 modules} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1060,18 +1078,21 @@ Sleep/wake                & SNN-Izh   & RS          & 4      & Modulation \\
 \toprule
 Metric & v1 & v2 \\
 \midrule
-SNN neurons              & 3\,470 (rate-coded) & 7\,166 (Izhikevich) \\
+SNN neurons              & 3\,470 (rate-coded) & 7\,200+ (Izhikevich) \\
 Cell types               & 1 (leaky integrator) & 7 (RS/IB/FS/CH/LTS/TC/MSN) \\
 Inhibitory neurons       & 0\%                 & 25\% per layer \\
 Neuromodulatory axes     & 1 (DA)              & 4 (DA/NA/5-HT/ACh) \\
-Modules                  & 42 steps            & 29 modules \\
+Modules                  & 42 steps            & 35 modules \\
 Classifier accuracy      & 90.6\%              & 96.2\% \\
-Mean survival (3 seeds)  & 319 steps           & 422 steps (+32\%) \\
-Mean food (3 seeds)      & 3.0                 & 7.7 (+156\%) \\
-Multi-seed survival      & --                  & $474 \pm 72$ (9 seeds) \\
-Multi-seed food          & --                  & $6.0 \pm 2.4$ \\
-Decision rationality     & 84/100              & 69/100 \\
+Mean survival (5 seeds)  & 162 steps           & 455 steps (+182\%) \\
+Mean food (5 seeds)      & 2.0                 & 5.8 (+190\%) \\
+Escape rate              & 0\% (5/5 caught)    & 80\% (1/5 caught) \\
+Best episode             & 500 steps, 7 food   & 1500 steps, 19 food \\
+Decision rationality     & 84/100              & 83/100 \\
 Curriculum               & 2/4 LEARNING        & 3/3 PASS \\
+Multi-agent              & 5 fish (simple AI)  & 5 fish $\times$ full v2 brain \\
+Personalities            & --                  & bold/shy/explorer/social/default \\
+Predator AI              & simple chase         & 5-state strategic hunting \\
 \bottomrule
 \end{tabular}
 \end{table}

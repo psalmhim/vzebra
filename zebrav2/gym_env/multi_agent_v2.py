@@ -84,7 +84,7 @@ def inject_sensory_for_fish(env, fish_idx, all_fish):
 
 def run_multi_v2(n_fish=5, max_steps=500, seed=42, record=False, personality_mode='mixed'):
     env = ZebrafishPreyPredatorEnv(render_mode='rgb_array' if record else None,
-                                    n_food=20, max_steps=max_steps)
+                                    n_food=20, max_steps=max_steps, side_panels=record)
     obs, info = env.reset(seed=seed)
 
     # Assign personalities
@@ -117,6 +117,8 @@ def run_multi_v2(n_fish=5, max_steps=500, seed=42, record=False, personality_mod
 
     frames = [] if record else None
     total_food = [0] * n_fish
+    import torch
+    torch_device = DEVICE
     t0 = time.time()
 
     for t in range(max_steps):
@@ -194,6 +196,16 @@ def run_multi_v2(n_fish=5, max_steps=500, seed=42, record=False, personality_mod
         env.pred_y = max(10, min(env.arena_h - 10, env.pred_y))
         env.pred_state = pstate
 
+        # Record frame
+        if record and hasattr(env, 'render'):
+            # Sync focal fish position for rendering
+            if all_fish[0]['alive']:
+                env.fish_x, env.fish_y = all_fish[0]['x'], all_fish[0]['y']
+                env.fish_heading = all_fish[0]['heading']
+            frame = env.render()
+            if frame is not None:
+                frames.append(frame)
+
         # Respawn food
         if len(env.foods) < 5:
             for _ in range(3):
@@ -222,6 +234,14 @@ def run_multi_v2(n_fish=5, max_steps=500, seed=42, record=False, personality_mod
         print(f"  Fish {i} ({ptype:8s}): {status}, food={total_food[i]}, energy={all_fish[i]['energy']:.0f}")
 
     env.close()
+
+    if record and frames and len(frames) > 5:
+        import imageio
+        outpath = os.path.join(PROJECT_ROOT, 'plots', 'zebrafish_v2_multi.mp4')
+        print(f"\n  Saving {len(frames)} frames to {outpath}...")
+        imageio.mimwrite(outpath, frames, fps=20, quality=7)
+        print(f"  Video saved: {outpath}")
+
     for b in brains:
         del b
     return all_fish, total_food
