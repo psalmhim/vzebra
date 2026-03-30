@@ -31,10 +31,17 @@ select, input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; 
 .config-item { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
 .config-item label { color: #8b949e; }
 .log { background: #010409; border: 1px solid #30363d; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 11px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
-.arena { position: relative; width: 100%; height: 200px; background: #0a1628; border: 1px solid #30363d; border-radius: 4px; }
-.fish-dot { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: #58a6ff; }
-.pred-dot { position: absolute; width: 10px; height: 10px; border-radius: 50%; background: #f85149; }
-.food-dot { position: absolute; width: 4px; height: 4px; border-radius: 50%; background: #7ee787; }
+.arena-wrap { position: relative; width: 100%; }
+.arena-canvas { width: 100%; background: #0a1628; border: 1px solid #30363d; border-radius: 4px; }
+.tab-btn { padding: 6px 14px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #8b949e; cursor: pointer; font-size: 12px; }
+.tab-btn.active { background: #238636; color: #fff; border-color: #238636; }
+.tab-page { display: none; }
+.tab-page.active { display: block; }
+.playground-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; padding: 12px; }
+.monitor-col { display: flex; flex-direction: column; gap: 8px; }
+.neuromod-bar { height: 12px; border-radius: 3px; position: relative; background: #21262d; margin-bottom: 4px; }
+.neuromod-bar .fill { height: 100%; border-radius: 3px; transition: width 0.2s; }
+.neuromod-bar .label { position: absolute; left: 4px; top: -1px; font-size: 9px; color: #fff; }
 table { width: 100%; border-collapse: collapse; font-size: 11px; }
 table th, table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #21262d; }
 table th { color: #8b949e; }
@@ -43,13 +50,59 @@ table th { color: #8b949e; }
 <body>
 
 <div class="header">
-    <h1>Zebrafish Brain v2 Dashboard</h1>
-    <div>
-        <span id="statusBadge" class="status stopped">STOPPED</span>
-        <span style="margin-left:12px;font-size:12px;color:#8b949e" id="roundInfo">Round: 0</span>
+    <h1>Zebrafish Brain v2</h1>
+    <div style="display:flex;gap:8px;align-items:center">
+        <button class="tab-btn active" onclick="switchTab('playground')">Playground</button>
+        <button class="tab-btn" onclick="switchTab('training')">Training</button>
+        <button class="tab-btn" onclick="switchTab('analysis')">Analysis</button>
+        <span id="statusBadge" class="status stopped" style="margin-left:12px">STOPPED</span>
+        <span style="font-size:12px;color:#8b949e" id="roundInfo">Round: 0</span>
     </div>
 </div>
 
+<!-- ========== TAB 1: PLAYGROUND ========== -->
+<div id="tab-playground" class="tab-page active">
+<div class="playground-grid">
+    <!-- Large Arena -->
+    <div class="card" style="min-height:400px">
+        <h3>Arena</h3>
+        <canvas id="arenaCanvas" class="arena-canvas" width="600" height="400"></canvas>
+    </div>
+    <!-- Monitor Panel -->
+    <div class="monitor-col">
+        <div class="card">
+            <h3>Brain State</h3>
+            <div id="currentState">
+                <div class="metric"><span>Goal</span><span class="val" id="mGoal">-</span></div>
+                <div class="metric"><span>Energy</span><span class="val" id="mEnergy">-</span></div>
+                <div class="metric"><span>Food</span><span class="val" id="mFood">-</span></div>
+                <div class="metric"><span>Free Energy</span><span class="val" id="mEFE">-</span></div>
+                <div class="metric"><span>Step</span><span class="val" id="mStep">-</span></div>
+            </div>
+        </div>
+        <div class="card">
+            <h3>Neuromodulation</h3>
+            <div class="neuromod-bar"><div class="fill" id="barDA" style="width:50%;background:#f39c12"></div><div class="label">DA</div></div>
+            <div class="neuromod-bar"><div class="fill" id="barNA" style="width:30%;background:#2980b9"></div><div class="label">NA</div></div>
+            <div class="neuromod-bar"><div class="fill" id="bar5HT" style="width:50%;background:#8e44ad"></div><div class="label">5-HT</div></div>
+            <div class="neuromod-bar"><div class="fill" id="barACh" style="width:50%;background:#27ae60"></div><div class="label">ACh</div></div>
+        </div>
+        <div class="card">
+            <h3>Limbic</h3>
+            <div class="metric"><span>Amygdala</span><span class="val" id="mAmy">-</span></div>
+            <div class="metric"><span>Critic Value</span><span class="val" id="mCritic">-</span></div>
+            <div class="metric"><span>Novelty</span><span class="val" id="mNovelty">-</span></div>
+            <div class="metric"><span>Heart Rate</span><span class="val" id="mHR">-</span></div>
+            <div class="metric"><span>Valence</span><span class="val" id="mValence">-</span></div>
+            <div class="metric"><span>VAE Memory</span><span class="val" id="mVAE">-</span></div>
+            <div class="metric"><span>Surprise</span><span class="val" id="mSurprise">-</span></div>
+        </div>
+    </div>
+</div>
+</div>
+
+<!-- ========== TAB 2: TRAINING ========== -->
+<div id="tab-training" class="tab-page">
 <div class="controls">
     <button class="btn primary" onclick="startTraining()">Start Training</button>
     <button class="btn danger" onclick="stopTraining()">Stop</button>
@@ -75,31 +128,6 @@ table th { color: #8b949e; }
 </div>
 
 <div class="grid">
-    <!-- Arena View -->
-    <div class="card">
-        <h3>Arena (Live)</h3>
-        <div class="arena" id="arena"></div>
-    </div>
-
-    <!-- Current Step -->
-    <div class="card">
-        <h3>Current State</h3>
-        <div id="currentState">
-            <div class="metric"><span>Goal</span><span class="val" id="mGoal">-</span></div>
-            <div class="metric"><span>Energy</span><span class="val" id="mEnergy">-</span></div>
-            <div class="metric"><span>Food Eaten</span><span class="val" id="mFood">-</span></div>
-            <div class="metric"><span>Free Energy</span><span class="val" id="mEFE">-</span></div>
-            <div class="metric"><span>DA</span><span class="val" id="mDA">-</span></div>
-            <div class="metric"><span>NA</span><span class="val" id="mNA">-</span></div>
-            <div class="metric"><span>5-HT</span><span class="val" id="m5HT">-</span></div>
-            <div class="metric"><span>Amygdala</span><span class="val" id="mAmy">-</span></div>
-            <div class="metric"><span>Critic Value</span><span class="val" id="mCritic">-</span></div>
-            <div class="metric"><span>Novelty</span><span class="val" id="mNovelty">-</span></div>
-            <div class="metric"><span>Heart Rate</span><span class="val" id="mHR">-</span></div>
-            <div class="metric"><span>VAE Memory</span><span class="val" id="mVAE">-</span></div>
-        </div>
-    </div>
-
     <!-- Training Curve -->
     <div class="card">
         <h3>Fitness Over Rounds</h3>
@@ -147,6 +175,44 @@ table th { color: #8b949e; }
         <div class="config-grid" id="configDisplay"></div>
     </div>
 </div>
+</div><!-- end tab-training -->
+
+<!-- ========== TAB 3: ANALYSIS ========== -->
+<div id="tab-analysis" class="tab-page">
+<div class="grid">
+    <div class="card"><h3>Architecture Summary</h3>
+        <div style="font-size:11px">
+            <div class="metric"><span>Total Modules</span><span class="val">35</span></div>
+            <div class="metric"><span>SNN Neurons</span><span class="val">7,200+</span></div>
+            <div class="metric"><span>Cell Types</span><span class="val">7 (RS/IB/FS/CH/LTS/TC/MSN)</span></div>
+            <div class="metric"><span>E/I Balance</span><span class="val">75% E / 25% I</span></div>
+            <div class="metric"><span>Neuromod Axes</span><span class="val">4 (DA/NA/5-HT/ACh)</span></div>
+            <div class="metric"><span>Substeps</span><span class="val">50ms Izhikevich</span></div>
+            <div class="metric"><span>Synapse Types</span><span class="val">AMPA/NMDA/GABA_A</span></div>
+            <div class="metric"><span>Connectome Coverage</span><span class="val">100% (23/23)</span></div>
+        </div>
+    </div>
+    <div class="card"><h3>Performance vs v1</h3>
+        <div style="font-size:11px">
+            <div class="metric"><span>Survival</span><span class="val">+182% (455 vs 162)</span></div>
+            <div class="metric"><span>Food Eaten</span><span class="val">+190% (5.8 vs 2.0)</span></div>
+            <div class="metric"><span>Escape Rate</span><span class="val">80% vs 0%</span></div>
+            <div class="metric"><span>Decision Score</span><span class="val">83/100</span></div>
+            <div class="metric"><span>Classifier</span><span class="val">96.2%</span></div>
+            <div class="metric"><span>Best Episode</span><span class="val">1500 steps, 19 food</span></div>
+        </div>
+    </div>
+    <div class="card"><h3>Paradigms Used</h3>
+        <div style="font-size:11px">
+            <div class="metric"><span>SNN</span><span class="val">22 modules (Izhikevich)</span></div>
+            <div class="metric"><span>Active Inference</span><span class="val">EFE + VAE + Predictive Coding</span></div>
+            <div class="metric"><span>Reinforcement Learning</span><span class="val">TD Critic + STDP</span></div>
+            <div class="metric"><span>Bayesian</span><span class="val">Kalman + Assoc Memory</span></div>
+            <div class="metric"><span>Hebbian</span><span class="val">Amygdala LTP + Habit</span></div>
+        </div>
+    </div>
+</div>
+</div><!-- end tab-analysis -->
 
 <script>
 // Charts
@@ -163,8 +229,150 @@ const survivalChart = new Chart(document.getElementById('survivalChart'), {
 const efeChart = new Chart(document.getElementById('efeChart'), {
     type: 'line', data: { labels: [], datasets: [{ label: 'Mean EFE', data: [], borderColor: '#f0883e', tension: 0.3, pointRadius: 3 }] }, options: chartOpts });
 
+// Tab switching
+function switchTab(name) {
+    document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    event.target.classList.add('active');
+}
+
 let ws = null;
 const logBox = document.getElementById('logBox');
+const arenaCanvas = document.getElementById('arenaCanvas');
+const actx = arenaCanvas.getContext('2d');
+
+function drawArena(d) {
+    const c = arenaCanvas;
+    const ctx = actx;
+    const cw = c.width, ch = c.height;
+    const aw = d.arena_w || 800, ah = d.arena_h || 600;
+    const sx = cw / aw, sy = ch / ah;
+
+    // Background gradient (water)
+    const grad = ctx.createLinearGradient(0, 0, 0, ch);
+    grad.addColorStop(0, '#0a1628');
+    grad.addColorStop(1, '#0d2240');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Grid lines (subtle)
+    ctx.strokeStyle = 'rgba(48,54,61,0.3)';
+    ctx.lineWidth = 0.5;
+    for (let x = 0; x < cw; x += cw/10) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,ch); ctx.stroke(); }
+    for (let y = 0; y < ch; y += ch/8) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(cw,y); ctx.stroke(); }
+
+    // Rocks
+    if (d.rocks) {
+        d.rocks.forEach(r => {
+            const rx = r[0] * sx, ry = r[1] * sy, rr = r[2] * sx;
+            ctx.beginPath(); ctx.arc(rx, ry, rr, 0, Math.PI*2);
+            ctx.fillStyle = 'rgba(100,100,80,0.5)';
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(140,140,110,0.4)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        });
+    }
+
+    // Food
+    if (d.foods) {
+        d.foods.forEach(f => {
+            const fx = f[0] * sx, fy = f[1] * sy;
+            ctx.beginPath(); ctx.arc(fx, fy, 3, 0, Math.PI*2);
+            ctx.fillStyle = '#7ee787';
+            ctx.fill();
+            // Glow
+            ctx.beginPath(); ctx.arc(fx, fy, 6, 0, Math.PI*2);
+            ctx.fillStyle = 'rgba(126,231,135,0.15)';
+            ctx.fill();
+        });
+    }
+
+    // Predator (red triangle with eyes)
+    if (d.pred_x > 0) {
+        const px = d.pred_x * sx, py = d.pred_y * sy;
+        // Body
+        ctx.beginPath();
+        ctx.arc(px, py, 8, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(248,81,73,0.8)';
+        ctx.fill();
+        // Eyes
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(px-3, py-3, 2, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(px+3, py-3, 2, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#000';
+        ctx.beginPath(); ctx.arc(px-3, py-3, 1, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(px+3, py-3, 1, 0, Math.PI*2); ctx.fill();
+        // Label
+        ctx.fillStyle = 'rgba(248,81,73,0.6)';
+        ctx.font = '8px monospace';
+        ctx.fillText('PRED', px-12, py+16);
+    }
+
+    // Fish (fish-shaped body with heading direction)
+    if (d.fish_x) {
+        const fx = d.fish_x * sx, fy = d.fish_y * sy;
+        const heading = d.fish_heading || 0;
+        const goalColors = { FORAGE: '#7ee787', FLEE: '#f85149', EXPLORE: '#58a6ff', SOCIAL: '#3fb9a0' };
+        const bodyColor = goalColors[d.goal] || '#58a6ff';
+        const bodyLen = 12, bodyW = 5;
+
+        ctx.save();
+        ctx.translate(fx, fy);
+        ctx.rotate(heading);
+
+        // Tail
+        ctx.beginPath();
+        ctx.moveTo(-bodyLen, 0);
+        ctx.lineTo(-bodyLen-5, -4);
+        ctx.lineTo(-bodyLen-5, 4);
+        ctx.closePath();
+        ctx.fillStyle = bodyColor;
+        ctx.globalAlpha = 0.6;
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+
+        // Body (ellipse)
+        ctx.beginPath();
+        ctx.ellipse(0, 0, bodyLen, bodyW, 0, 0, Math.PI*2);
+        ctx.fillStyle = bodyColor;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+
+        // Eye
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(bodyLen*0.5, -bodyW*0.3, 2, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#000';
+        ctx.beginPath(); ctx.arc(bodyLen*0.5+0.5, -bodyW*0.3, 1, 0, Math.PI*2); ctx.fill();
+
+        // Heading line
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+        ctx.beginPath(); ctx.moveTo(bodyLen, 0); ctx.lineTo(bodyLen+8, 0); ctx.stroke();
+
+        ctx.restore();
+
+        // Goal label
+        ctx.fillStyle = bodyColor;
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText(d.goal, fx-12, fy-12);
+
+        // Energy bar above fish
+        const barW = 20, barH = 3;
+        const ef = Math.max(0, Math.min(1, (d.energy||100)/100));
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(fx-barW/2, fy-18, barW, barH);
+        ctx.fillStyle = ef > 0.3 ? '#7ee787' : '#f85149';
+        ctx.fillRect(fx-barW/2, fy-18, barW*ef, barH);
+    }
+
+    // Info overlay
+    ctx.fillStyle = 'rgba(200,200,200,0.5)';
+    ctx.font = '9px monospace';
+    ctx.fillText(`Step: ${d.step || 0}  Food: ${d.food_total || 0}  E: ${(d.energy||0).toFixed(0)}%`, 4, ch-4);
+}
 function log(msg) { logBox.textContent += msg + '\n'; logBox.scrollTop = logBox.scrollHeight; }
 
 // WebSocket
@@ -182,34 +390,25 @@ function connectWS() {
 
 function updateStep(d) {
     document.getElementById('mGoal').textContent = d.goal;
-    document.getElementById('mEnergy').textContent = d.energy?.toFixed(0);
+    document.getElementById('mEnergy').textContent = (d.energy||0).toFixed(0) + '%';
     document.getElementById('mFood').textContent = d.food_total;
-    document.getElementById('mEFE').textContent = d.free_energy?.toFixed(4);
-    document.getElementById('mDA').textContent = d.DA?.toFixed(2);
-    document.getElementById('mNA').textContent = d.NA?.toFixed(2);
-    document.getElementById('m5HT').textContent = d['5HT']?.toFixed(2);
-    document.getElementById('mAmy').textContent = d.amygdala?.toFixed(2);
-    document.getElementById('mCritic').textContent = d.critic_value?.toFixed(3);
-    document.getElementById('mNovelty').textContent = d.novelty?.toFixed(2);
-    document.getElementById('mHR').textContent = d.heart_rate?.toFixed(1) + ' Hz';
-    document.getElementById('mVAE').textContent = d.vae_nodes + ' nodes';
+    document.getElementById('mEFE').textContent = (d.free_energy||0).toFixed(4);
+    document.getElementById('mStep').textContent = d.step;
+    document.getElementById('mAmy').textContent = (d.amygdala||0).toFixed(2);
+    document.getElementById('mCritic').textContent = (d.critic_value||0).toFixed(3);
+    document.getElementById('mNovelty').textContent = (d.novelty||0).toFixed(2);
+    document.getElementById('mHR').textContent = (d.heart_rate||2).toFixed(1) + ' Hz';
+    document.getElementById('mValence').textContent = (d.valence||0).toFixed(2);
+    document.getElementById('mVAE').textContent = (d.vae_nodes||0) + ' nodes';
+    document.getElementById('mSurprise').textContent = (d.surprise||0).toFixed(3);
+    // Neuromod bars
+    document.getElementById('barDA').style.width = ((d.DA||0.5)*100) + '%';
+    document.getElementById('barNA').style.width = ((d.NA||0.3)*100) + '%';
+    document.getElementById('bar5HT').style.width = ((d['5HT']||0.5)*100) + '%';
+    document.getElementById('barACh').style.width = ((d.ACh||0.5)*100) + '%';
 
-    // Arena
-    const arena = document.getElementById('arena');
-    const aw = arena.clientWidth, ah = arena.clientHeight;
-    arena.innerHTML = '';
-    if (d.fish_x) {
-        const fx = document.createElement('div'); fx.className = 'fish-dot';
-        fx.style.left = (d.fish_x / 800 * aw - 4) + 'px';
-        fx.style.top = (d.fish_y / 600 * ah - 4) + 'px';
-        arena.appendChild(fx);
-    }
-    if (d.pred_x > 0) {
-        const px = document.createElement('div'); px.className = 'pred-dot';
-        px.style.left = (d.pred_x / 800 * aw - 5) + 'px';
-        px.style.top = (d.pred_y / 600 * ah - 5) + 'px';
-        arena.appendChild(px);
-    }
+    // Arena canvas rendering
+    drawArena(d);
 
     // Color goal
     const goalEl = document.getElementById('mGoal');

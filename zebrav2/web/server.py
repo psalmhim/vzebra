@@ -38,6 +38,14 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), 'static')
 # Global engine
 engine = TrainingEngine()
 ws_clients = set()
+_main_loop = None  # store uvicorn's event loop
+_latest_step = {}  # latest step data for polling
+
+
+@app.on_event("startup")
+async def on_startup():
+    global _main_loop
+    _main_loop = asyncio.get_event_loop()
 
 
 # --- WebSocket broadcast ---
@@ -52,24 +60,20 @@ async def broadcast(data):
 
 
 def on_step_callback(step_data):
-    """Called by engine on each step — schedules broadcast."""
-    import asyncio
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(broadcast({'type': 'step', 'data': step_data}))
-    except RuntimeError:
-        pass  # no event loop in training thread
+    """Called by engine on each step from training thread."""
+    global _latest_step
+    _latest_step = step_data
+    if _main_loop and not _main_loop.is_closed():
+        _main_loop.call_soon_threadsafe(
+            _main_loop.create_task,
+            broadcast({'type': 'step', 'data': step_data}))
 
 
 def on_round_end_callback(metrics):
-    import asyncio
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(broadcast({'type': 'round_end', 'data': metrics}))
-    except RuntimeError:
-        pass
+    if _main_loop and not _main_loop.is_closed():
+        _main_loop.call_soon_threadsafe(
+            _main_loop.create_task,
+            broadcast({'type': 'round_end', 'data': metrics}))
 
 
 # --- API Endpoints ---
@@ -143,17 +147,20 @@ async def websocket_live(ws: WebSocket):
     ws_clients.add(ws)
     try:
         while True:
-            # Send status every second if training
-            if engine.running:
+            # Always send latest state for polling fallback
+            if _latest_step:
                 await ws.send_json({
-                    'type': 'status',
-                    'data': {
-                        'running': engine.running,
-                        'round': engine.current_round,
-                        'step': engine.current_step_data,
-                    }
+                    'type': 'step',
+                    'data': _latest_step
                 })
-            await asyncio.sleep(0.5)
+            await ws.send_json({
+                'type': 'status',
+                'data': {
+                    'running': engine.running,
+                    'round': engine.current_round,
+                }
+            })
+            await asyncio.sleep(0.3)
     except WebSocketDisconnect:
         ws_clients.discard(ws)
 

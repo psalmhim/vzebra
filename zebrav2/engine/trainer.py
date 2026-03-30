@@ -134,6 +134,16 @@ class TrainingEngine:
             goals_log.append(self.brain.current_goal)
 
             # Step data for real-time streaming
+            # Collect food positions
+            food_positions = []
+            for food in getattr(env, 'foods', []):
+                food_positions.append([float(food[0]), float(food[1])])
+            # Collect rock positions
+            rock_positions = []
+            for rock in getattr(env, 'rock_formations', []):
+                rock_positions.append([float(rock.get('cx', 0)), float(rock.get('cy', 0)),
+                                       float(rock.get('radius', 30))])
+
             step_data = {
                 'round': round_num,
                 'step': t,
@@ -156,8 +166,13 @@ class TrainingEngine:
                 'vae_nodes': int(out.get('vae_memory_nodes', 0)),
                 'fish_x': float(getattr(env, 'fish_x', 400)),
                 'fish_y': float(getattr(env, 'fish_y', 300)),
+                'fish_heading': float(getattr(env, 'fish_heading', 0)),
                 'pred_x': float(getattr(env, 'pred_x', -100)),
                 'pred_y': float(getattr(env, 'pred_y', -100)),
+                'foods': food_positions,
+                'rocks': rock_positions,
+                'arena_w': int(getattr(env, 'arena_w', 800)),
+                'arena_h': int(getattr(env, 'arena_h', 600)),
             }
             self.current_step_data = step_data
             if self.on_step:
