@@ -649,16 +649,48 @@ function drawArena(d) {
             drawFish(f.x*sx, f.y*sy, f.heading||0, f.goal||'EXPLORE', f.energy||50, false);
         });
     } else if (d.fish_x) {
-        // Simulated conspecifics (visual only — swim near focal fish)
-        for (let ci = 0; ci < 3; ci++) {
-            const phase = frameCount * 0.02 + ci * 2.1;
-            const cx = d.fish_x + Math.sin(phase + ci) * 80 + Math.cos(phase*0.7)*30;
-            const cy = d.fish_y + Math.cos(phase + ci*1.3) * 60 + Math.sin(phase*0.5)*20;
-            const ch2 = (d.fish_heading||0) + Math.sin(phase*0.5) * 0.5;
-            if (cx > 20 && cx < aw-20 && cy > 20 && cy < ah-20) {
-                drawFish(cx*sx, cy*sy, ch2, 'SOCIAL', 70, false);
+        // Simulated conspecifics — swim forward, loosely follow focal fish
+        if (!drawArena._conspec) {
+            drawArena._conspec = [];
+            for (let i = 0; i < 3; i++) {
+                drawArena._conspec.push({
+                    x: d.fish_x + (Math.random()-0.5)*120,
+                    y: d.fish_y + (Math.random()-0.5)*80,
+                    h: d.fish_heading + (Math.random()-0.5)*1.0,
+                    speed: 1.5 + Math.random()*1.0,
+                });
             }
         }
+        drawArena._conspec.forEach((cf, ci) => {
+            // Steer toward focal fish (cohesion) + slight random wander
+            const dx = d.fish_x - cf.x, dy = d.fish_y - cf.y;
+            const dist = Math.sqrt(dx*dx + dy*dy) + 1e-6;
+            const toFocal = Math.atan2(dy, dx);
+            // Separation: push away if too close
+            let steer = 0;
+            if (dist < 30) {
+                steer = cf.h + Math.PI * 0.3;  // turn away
+            } else if (dist > 100) {
+                // Cohesion: steer toward focal
+                let diff = toFocal - cf.h;
+                diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+                steer = cf.h + diff * 0.08;
+            } else {
+                // Alignment: match focal heading + wander
+                let diff = (d.fish_heading||0) - cf.h;
+                diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+                steer = cf.h + diff * 0.05 + (Math.random()-0.5)*0.1;
+            }
+            cf.h = steer;
+            // Move forward along heading
+            cf.x += Math.cos(cf.h) * cf.speed;
+            cf.y += Math.sin(cf.h) * cf.speed;
+            // Wall bounce
+            if (cf.x < 20 || cf.x > aw-20) { cf.h = Math.PI - cf.h; cf.x = Math.max(20, Math.min(aw-20, cf.x)); }
+            if (cf.y < 20 || cf.y > ah-20) { cf.h = -cf.h; cf.y = Math.max(20, Math.min(ah-20, cf.y)); }
+
+            drawFish(cf.x*sx, cf.y*sy, cf.h, 'SOCIAL', 70, false);
+        });
     }
 
     // === OVERLAY INFO ===
