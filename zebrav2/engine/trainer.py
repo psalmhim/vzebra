@@ -73,9 +73,40 @@ class TrainingEngine:
         cfg = self.config
         env = ZebrafishPreyPredatorEnv(
             render_mode=None,
-            n_food=cfg.get('env.n_food', 15),
+            n_food=0,  # we spawn food manually in patches
             max_steps=cfg.get('env.max_steps', 500))
         return env
+
+    def _spawn_food_patches(self, env, n_total=20, seed=None):
+        """Spawn food in clusters: 2-4 dense patches + sparse scatter."""
+        rng = np.random.RandomState(seed)
+        aw = getattr(env, 'arena_w', 800)
+        ah = getattr(env, 'arena_h', 600)
+        env.foods = []
+
+        # 2-4 food patches (60% of food in patches)
+        n_patches = rng.randint(2, 5)
+        food_in_patches = int(n_total * 0.6)
+        food_per_patch = max(2, food_in_patches // n_patches)
+        patch_radius = 50  # cluster radius
+
+        for p in range(n_patches):
+            # Patch center: avoid edges and predator spawn area
+            cx = rng.uniform(100, aw - 100)
+            cy = rng.uniform(100, ah - 100)
+            for _ in range(food_per_patch):
+                fx = cx + rng.normal(0, patch_radius * 0.5)
+                fy = cy + rng.normal(0, patch_radius * 0.5)
+                fx = float(np.clip(fx, 30, aw - 30))
+                fy = float(np.clip(fy, 30, ah - 30))
+                env.foods.append([fx, fy, 'small'])
+
+        # Scattered food (40% random)
+        n_scatter = n_total - food_per_patch * n_patches
+        for _ in range(max(0, n_scatter)):
+            fx = float(rng.uniform(50, aw - 50))
+            fy = float(rng.uniform(50, ah - 50))
+            env.foods.append([fx, fy, 'small'])
 
     def _compute_fitness(self, survived, food_eaten, mean_efe, energy_final,
                           geo_coverage):
@@ -101,6 +132,9 @@ class TrainingEngine:
 
         env = self._create_env()
         obs, info = env.reset(seed=seed)
+        # Spawn food in patches (clustered)
+        n_food = cfg.get('env.n_food', 20)
+        self._spawn_food_patches(env, n_total=n_food, seed=seed)
         self.brain.reset()
         # Don't reset learned weights — keep from previous rounds
         self.brain._apply_personality()
@@ -196,6 +230,17 @@ class TrainingEngine:
             self.current_step_data = step_data
             if self.on_step:
                 self.on_step(step_data)
+
+            # Food respawn: when food runs low, add a new small patch
+            if cfg.get('env.food_respawn', True) and len(getattr(env, 'foods', [])) < cfg.get('env.food_respawn_min', 5):
+                aw = getattr(env, 'arena_w', 800)
+                ah = getattr(env, 'arena_h', 600)
+                cx = float(np.random.uniform(100, aw - 100))
+                cy = float(np.random.uniform(100, ah - 100))
+                for _ in range(np.random.randint(3, 6)):
+                    fx = float(np.clip(cx + np.random.normal(0, 30), 30, aw - 30))
+                    fy = float(np.clip(cy + np.random.normal(0, 30), 30, ah - 30))
+                    env.foods.append([fx, fy, 'small'])
 
             if terminated or truncated:
                 break

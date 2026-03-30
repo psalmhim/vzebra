@@ -334,14 +334,21 @@ class ZebrafishBrainV2(nn.Module):
         energy_ratio = self.energy / 100.0
         # Hunger starts at 75% energy (not 50%) — earlier food seeking
         starvation = max(0.0, (0.75 - energy_ratio) / 0.75)
-        # EFE computation — energy loss feared as much as predator
+        # EFE computation — energy trajectory prediction
         U = 1.0 - 0.5 * (self.cms + 0.3)
-        # starvation² makes low energy exponentially more urgent
-        energy_urgency = starvation * starvation * 3.0
+        # Predict future energy: current drain rate × horizon
+        speed_now = getattr(self, '_last_speed', 1.0)
+        energy_drain_per_step = 0.2 * speed_now  # matches env drain
+        predicted_energy_10 = max(0, self.energy - energy_drain_per_step * 10)
+        predicted_energy_30 = max(0, self.energy - energy_drain_per_step * 30)
+        # Future energy crisis: will I die in 30 steps if I don't eat?
+        future_crisis = max(0.0, 1.0 - predicted_energy_30 / 30.0)
+        # Combined urgency: current + predicted
+        energy_urgency = starvation * starvation * 3.0 + future_crisis * 2.0
         G_forage = 0.2 * U - 0.8 * p_food + 0.15 - energy_urgency
         G_flee   = 0.1 * self.cms - 0.8 * p_enemy + 0.20 + starvation * 0.5
-        G_explore = 0.3 * U - 0.3 + 0.20 + starvation * 0.3  # less explore when hungry
-        G_social  = 0.25 + starvation * 0.2
+        G_explore = 0.3 * U - 0.3 + 0.20 + starvation * 0.3 + future_crisis * 0.3
+        G_social  = 0.25 + starvation * 0.2 + future_crisis * 0.2
         # 5-HT patrol suppression: when predator far, strongly suppress flee and boost forage
         if pred_state == 'PATROL' and pred_dist > 150:
             G_flee += self.neuromod.get_flee_efe_bias()
