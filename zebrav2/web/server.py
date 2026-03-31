@@ -175,20 +175,14 @@ async def websocket_live(ws: WebSocket):
     ws_clients.add(ws)
     try:
         while True:
-            # Always send latest state for polling fallback
+            # Always send latest state (even when stopped — keeps arena visible)
             if _latest_step:
-                await ws.send_json({
-                    'type': 'step',
-                    'data': _latest_step
-                })
+                await ws.send_json({'type': 'step', 'data': _latest_step})
             await ws.send_json({
                 'type': 'status',
-                'data': {
-                    'running': engine.running,
-                    'round': engine.current_round,
-                }
+                'data': {'running': engine.running, 'round': engine.current_round}
             })
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.3 if engine.running else 1.0)
     except WebSocketDisconnect:
         ws_clients.discard(ws)
 

@@ -111,11 +111,15 @@ class TrainingEngine:
                 fy = float(np.clip(fy, 30, ah - 30))
                 env.foods.append([fx, fy, 'small'])
 
-            # Surround each patch with 4-6 rocks (polygonal shapes via multiple lobes)
-            n_rocks = rng.randint(4, 7)
+            # Surround each patch with rocks forming a wall with 1-2 gaps
+            n_rocks = 8  # wall segments
+            gap_idx = rng.randint(0, n_rocks)  # one gap for fish to enter
+            gap_idx2 = (gap_idx + n_rocks // 2) % n_rocks  # second gap opposite
             for ri in range(n_rocks):
-                angle = 2 * math.pi * ri / n_rocks + rng.uniform(-0.3, 0.3)
-                dist = 55 + rng.uniform(0, 25)
+                if ri == gap_idx or ri == gap_idx2:
+                    continue  # gap — no rock here
+                angle = 2 * math.pi * ri / n_rocks + rng.uniform(-0.1, 0.1)
+                dist = 60 + rng.uniform(0, 10)
                 rx = pcx + dist * math.cos(angle)
                 ry = pcy + dist * math.sin(angle)
                 rx = float(np.clip(rx, 40, aw - 40))
@@ -229,6 +233,18 @@ class TrainingEngine:
             env._eaten_now = info.get('food_eaten_this_step', 0)
             total_eaten += env._eaten_now
 
+            # Rock collision: push fish out of rocks
+            fx, fy = getattr(env, 'fish_x', 400), getattr(env, 'fish_y', 300)
+            for rock in getattr(env, 'rock_formations', []):
+                rcx, rcy, rr = rock['cx'], rock['cy'], rock['radius']
+                dx, dy = fx - rcx, fy - rcy
+                dist = math.sqrt(dx*dx + dy*dy) + 1e-8
+                if dist < rr + 8:  # fish radius ~8
+                    # Push fish out
+                    push = (rr + 10 - dist)
+                    env.fish_x = fx + push * dx / dist
+                    env.fish_y = fy + push * dy / dist
+
             efe = out.get('free_energy', 0)
             total_efe += efe
             goals_log.append(self.brain.current_goal)
@@ -277,6 +293,11 @@ class TrainingEngine:
                 'rocks': rock_positions,
                 'arena_w': int(getattr(env, 'arena_w', 800)),
                 'arena_h': int(getattr(env, 'arena_h', 600)),
+                # Retinal view (subsampled for dashboard — 40 pixels per eye)
+                'retina_L': [float(x) for x in env.brain_L[:400:10]] if hasattr(env, 'brain_L') else [],
+                'retina_R': [float(x) for x in env.brain_R[:400:10]] if hasattr(env, 'brain_R') else [],
+                'retina_L_type': [float(x) for x in env.brain_L[400::10]] if hasattr(env, 'brain_L') else [],
+                'retina_R_type': [float(x) for x in env.brain_R[400::10]] if hasattr(env, 'brain_R') else [],
                 # Regional spike counts (for raster plots)
                 'spikes': {
                     'sfgs_b': float(self.brain.tectum.sfgs_b.spike_E.sum()),

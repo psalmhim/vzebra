@@ -7,6 +7,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; }
 body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #c9d1d9; }
 .header { background: #161b22; padding: 12px 20px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
 .header h1 { font-size: 18px; color: #58a6ff; }
@@ -62,17 +63,23 @@ table th { color: #8b949e; }
 
 <!-- ========== TAB 1: PLAYGROUND ========== -->
 <div id="tab-playground" class="tab-page active">
-<div style="display:grid; grid-template-columns:1fr 320px; gap:8px; padding:8px; height:calc(100vh - 90px);">
+<div style="display:grid; grid-template-columns:1fr 300px; gap:8px; padding:8px; height:calc(100vh - 90px); max-width:1280px; margin:0 auto;">
     <!-- Left: Arena (maximized) -->
     <div style="display:flex; flex-direction:column; gap:8px;">
         <div class="card" style="flex:1; display:flex; flex-direction:column;">
             <h3>Arena <span id="arenaInfo" style="font-weight:normal;color:#8b949e;font-size:10px"></span></h3>
             <canvas id="arenaCanvas" class="arena-canvas" style="flex:1;min-height:0;"></canvas>
         </div>
-        <!-- Raster plot below arena -->
-        <div class="card" style="height:180px;">
-            <h3>Spike Raster (15 brain regions, 100 steps)</h3>
-            <canvas id="rasterCanvas" style="width:100%;height:140px;background:#010409;border:1px solid #30363d;border-radius:4px;"></canvas>
+        <!-- Retinal view + Raster -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; height:170px;">
+            <div class="card" style="padding:8px;">
+                <h3>Retina (L eye | R eye)</h3>
+                <canvas id="retinaCanvas" style="width:100%;height:110px;background:#010409;border:1px solid #30363d;border-radius:3px;"></canvas>
+            </div>
+            <div class="card" style="padding:8px;">
+                <h3>Spike Raster (15 regions)</h3>
+                <canvas id="rasterCanvas" style="width:100%;height:110px;background:#010409;border:1px solid #30363d;border-radius:3px;"></canvas>
+            </div>
         </div>
     </div>
     <!-- Right: Monitor Panel -->
@@ -263,6 +270,67 @@ const arenaCanvas = document.getElementById('arenaCanvas');
 const actx = arenaCanvas.getContext('2d');
 const rasterCanvas = document.getElementById('rasterCanvas');
 const rctx = rasterCanvas.getContext('2d');
+const retinaCanvas = document.getElementById('retinaCanvas');
+const retctx = retinaCanvas.getContext('2d');
+
+function drawRetina(d) {
+    const c = retinaCanvas;
+    c.width = c.clientWidth; c.height = c.clientHeight;
+    const ctx = retctx;
+    const cw = c.width, ch = c.height;
+    ctx.fillStyle = '#010409'; ctx.fillRect(0, 0, cw, ch);
+
+    const halfW = cw / 2 - 2;
+    const retinaL = d.retina_L || [];
+    const retinaR = d.retina_R || [];
+    const typeL = d.retina_L_type || [];
+    const typeR = d.retina_R_type || [];
+    const n = Math.max(retinaL.length, 1);
+    const barW = halfW / n;
+
+    // Type color map: food=green, enemy=red, rock=brown, nothing=gray
+    const typeColor = (v) => {
+        if (v > 0.7) return '#7ee787';      // food
+        if (Math.abs(v-0.5) < 0.12) return '#f85149';  // enemy
+        if (Math.abs(v-0.75) < 0.12) return '#a08050'; // rock
+        if (Math.abs(v-0.25) < 0.12) return '#3fb9a0'; // conspecific
+        return '#333';
+    };
+
+    // Left eye
+    ctx.fillStyle = 'rgba(88,166,255,0.15)';
+    ctx.fillRect(0, 0, halfW, ch);
+    for (let i = 0; i < retinaL.length; i++) {
+        const intensity = retinaL[i] || 0;
+        const h = intensity * (ch - 16);
+        ctx.fillStyle = typeL[i] ? typeColor(typeL[i]) : `rgba(150,180,255,${intensity})`;
+        ctx.fillRect(i * barW, ch - 14 - h, Math.max(1, barW - 0.5), h);
+    }
+    ctx.fillStyle = '#58a6ff'; ctx.font = '9px monospace';
+    ctx.fillText('LEFT EYE', 4, 10);
+
+    // Divider
+    ctx.fillStyle = '#30363d';
+    ctx.fillRect(halfW, 0, 4, ch);
+
+    // Right eye
+    ctx.fillStyle = 'rgba(255,166,88,0.08)';
+    ctx.fillRect(halfW + 4, 0, halfW, ch);
+    for (let i = 0; i < retinaR.length; i++) {
+        const intensity = retinaR[i] || 0;
+        const h = intensity * (ch - 16);
+        ctx.fillStyle = typeR[i] ? typeColor(typeR[i]) : `rgba(255,180,150,${intensity})`;
+        ctx.fillRect(halfW + 4 + i * barW, ch - 14 - h, Math.max(1, barW - 0.5), h);
+    }
+    ctx.fillStyle = '#f0883e'; ctx.font = '9px monospace';
+    ctx.fillText('RIGHT EYE', halfW + 8, 10);
+
+    // Legend
+    ctx.font = '7px monospace';
+    ctx.fillStyle = '#7ee787'; ctx.fillText('food', cw-80, ch-2);
+    ctx.fillStyle = '#f85149'; ctx.fillText('enemy', cw-55, ch-2);
+    ctx.fillStyle = '#a08050'; ctx.fillText('rock', cw-30, ch-2);
+}
 
 // Raster history buffer (15 regions × 100 steps)
 const RASTER_REGIONS = [
@@ -797,10 +865,15 @@ function updateStep(d) {
     document.getElementById('bar5HT').style.width = ((d['5HT']||0.5)*100) + '%';
     document.getElementById('barACh').style.width = ((d.ACh||0.5)*100) + '%';
 
-    // Arena canvas rendering (resize to container)
-    arenaCanvas.width = arenaCanvas.clientWidth;
-    arenaCanvas.height = arenaCanvas.clientHeight;
+    // Arena canvas rendering (resize to container, handle DPI)
+    const rect = arenaCanvas.getBoundingClientRect();
+    if (rect.width > 10 && rect.height > 10) {
+        arenaCanvas.width = rect.width;
+        arenaCanvas.height = rect.height;
+    }
     drawArena(d);
+    // Retinal view
+    drawRetina(d);
     // Raster plot
     updateRaster(d.spikes);
     // Arena info
