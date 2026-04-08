@@ -984,9 +984,9 @@ class ZebrafishBrainV2(nn.Module):
             self.stdp_pal_d.homeostatic_scale(pal_out['rate_D'])
             # Weight update only during elevated DA (reward signal present)
             if DA_now > 0.55 or self._da_phasic_steps > 0:
-                self.stdp_tect_tc.consolidate(DA_now, ACh_now, eta=4e-4)
-                self.stdp_tc_pal.consolidate(DA_now, ACh_now, eta=4e-4)
-                self.stdp_pal_d.consolidate(DA_now, ACh_now, eta=2e-4)
+                self.stdp_tect_tc.consolidate(DA_now, ACh_now, eta=1e-4)
+                self.stdp_tc_pal.consolidate(DA_now, ACh_now, eta=1e-4)
+                self.stdp_pal_d.consolidate(DA_now, ACh_now, eta=5e-5)
         # Online Hebbian classifier fine-tuning: food confirmation → reinforce food class
         if eaten_now > 0 and self.classifier._last_hidden is not None:
             with torch.no_grad():
