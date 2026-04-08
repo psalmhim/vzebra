@@ -151,9 +151,165 @@ class PredictiveTwoComp(nn.Module):
             fb: feedback from the next higher layer [1, n_fb]
         """
         if self.W_FB is not None:
+            self._last_fb = fb.detach()  # store for PE minimization
             self.v_a = (self.tau_a * self.v_a
                         + (1.0 - self.tau_a) * (fb @ self.W_FB))
             # Clamp apical to prevent runaway
+            self.v_a = torch.clamp(self.v_a, -5.0, 5.0)
+
+
+class IzhikevichTwoComp(nn.Module):
+    """Two-compartment predictive coding with Izhikevich spike generation.
+
+    Combines:
+      - Apical dendrite (V_a): continuous top-down feedback, unchanged from
+        PredictiveTwoComp — dendrites have graded potentials in biology.
+      - Soma: Izhikevich (v, u) dynamics for realistic spike generation.
+        v' = 0.04v² + 5v + 140 - u + I    (Izhikevich 2003)
+        u' = a(bv - u)
+        if v ≥ 30: v ← c, u ← u + d       (spike + reset)
+
+    Prediction error PE = V_a - norm(v_s), as in PredictiveTwoComp but
+    normalised to comparable scale (soma in mV, apical in small units).
+
+    Firing-type presets (a, b, c, d):
+      rs  (0.02, 0.20, -65, 8)  — regular spiking       (PT_L, PC_per)
+      fs  (0.10, 0.20, -65, 2)  — fast spiking           (OT_F)
+      ch  (0.02, 0.20, -50, 2)  — chattering             (PC_int)
+      ib  (0.02, 0.20, -55, 4)  — intrinsically bursting (DA, mot, eye)
+    """
+
+    V_THRESH = 30.0    # spike threshold (mV)
+    V_REST   = -65.0   # resting potential (mV)
+    V_SCALE  = 8.0     # scale W_FF output → mV input current
+
+    PRESETS = {
+        "rs": (0.02, 0.20, -65.0,  8.0),
+        "fs": (0.10, 0.20, -65.0,  2.0),
+        "ch": (0.02, 0.20, -50.0,  2.0),
+        "ib": (0.02, 0.20, -55.0,  4.0),
+    }
+
+    # Keep TARGET_RMS for compatibility with any code that reads it,
+    # but homeostatic gain control is disabled (Izhikevich self-regulates).
+    TARGET_RMS = 5.0
+
+    def __init__(self, n_in, n_out, n_fb=0, device="cpu",
+                 tau_a=0.65, alpha_att=0.1, izhi_type="rs"):
+        super().__init__()
+        self.n_in = n_in
+        self.n_out = n_out
+        self.device = device
+        self.tau_a = tau_a
+        self.alpha_att = alpha_att
+
+        a, b, c, d = self.PRESETS[izhi_type]
+        self.izhi_a = a
+        self.izhi_b = b
+        self.izhi_c = c
+        self.izhi_d = d
+
+        # Feedforward weight (same as PredictiveTwoComp)
+        self.W_FF = nn.Parameter(
+            0.01 * torch.randn(n_in, n_out, device=device))
+
+        # Tonic bias: subthreshold drive keeps neurons near threshold.
+        # Izhikevich I_crit ≈ 4.0 mV for all presets (b=0.2).
+        # Bias = 3.5 mV keeps neurons ~0.5 mV below critical point.
+        # Neurons only fire when driven by upstream input (no spontaneous noise),
+        # while remaining near threshold for fast response to visual drive.
+        self.bias = nn.Parameter(
+            torch.full((n_out,), 3.5, device=device))
+
+        # Feedback weight
+        if n_fb > 0:
+            self.W_FB = nn.Parameter(
+                0.02 * torch.randn(n_fb, n_out, device=device))
+        else:
+            self.W_FB = None
+
+        # State tensors (not parameters — reset each episode)
+        self._init_state()
+
+    def _init_state(self):
+        """Initialise / reset all membrane state tensors."""
+        dev = self.device
+        self.v_s  = torch.full((1, self.n_out), self.V_REST,  device=dev)
+        self.u    = torch.full((1, self.n_out), self.izhi_b * self.V_REST, device=dev)
+        self.spikes = torch.zeros(1, self.n_out, device=dev)
+        self.v_a  = torch.zeros(1, self.n_out,   device=dev)
+        self.m_att = torch.zeros(1, self.n_out,  device=dev)
+        self.pred_error = torch.zeros(1, self.n_out, device=dev)
+        self.v = self.v_s   # backward-compatible alias
+
+    def reset(self):
+        self._init_state()
+
+    @staticmethod
+    def f_apical(x):
+        """Bounded apical-to-soma coupling: [-0.25, +0.25]."""
+        return 0.5 * (torch.sigmoid(x) - 0.5)
+
+    def step(self, x, att_proj=None):
+        """One timestep: Izhikevich soma + continuous apical.
+
+        Args:
+            x: bottom-up input [1, n_in]
+            att_proj: attention projection [1, n_out] or None
+        Returns:
+            v_s: somatic membrane potential [1, n_out] (mV)
+        """
+        # Attention modulator (slow dynamics, same as PredictiveTwoComp)
+        if att_proj is not None:
+            self.m_att = 0.9 * self.m_att + 0.1 * att_proj
+
+        # Input current: feedforward scaled to mV + tonic bias + apical + attention
+        apical_drive = self.f_apical(self.v_a) * 20.0   # scale to mV
+        I = ((x @ self.W_FF) * self.V_SCALE
+             + self.bias
+             + apical_drive
+             + self.alpha_att * self.m_att * 10.0)
+
+        # Izhikevich dynamics — 2 Euler half-steps for numerical stability
+        v, u = self.v_s, self.u
+        for _ in range(2):
+            dv = 0.04 * v * v + 5.0 * v + 140.0 - u + I
+            du = self.izhi_a * (self.izhi_b * v - u)
+            v = v + 0.5 * dv
+            u = u + 0.5 * du
+
+        # Spike detection and reset
+        fired = (v >= self.V_THRESH)
+        self.spikes = fired.float()
+        v = torch.where(fired, torch.full_like(v, self.izhi_c), v)
+        u = torch.where(fired, u + self.izhi_d, u)
+
+        # Clamp for numerical stability
+        v = torch.clamp(v, -100.0, 35.0)
+        u = torch.clamp(u, -100.0, 100.0)
+
+        self.v_s = v
+        self.u   = u
+
+        # Normalise soma to [0, 1]: 0 at rest (-65 mV), 1 at spike threshold (30 mV).
+        # This keeps inter-layer inputs bounded regardless of mV scale,
+        # preventing noise amplification through random W_FF chains.
+        v_norm = torch.clamp(
+            (self.v_s - self.V_REST) / (self.V_THRESH - self.V_REST),
+            0.0, 1.0)
+
+        # Prediction error: apical (small units) - normalised soma (0..1)
+        self.pred_error = self.v_a - v_norm
+
+        self.v = v_norm   # backward-compatible alias → always bounded
+        return v_norm     # return normalised for inter-layer communication
+
+    def update_apical(self, fb):
+        """Update apical dendrite with 1-step delayed top-down feedback."""
+        if self.W_FB is not None:
+            self._last_fb = fb.detach()
+            self.v_a = (self.tau_a * self.v_a
+                        + (1.0 - self.tau_a) * (fb @ self.W_FB))
             self.v_a = torch.clamp(self.v_a, -5.0, 5.0)
 
 
@@ -248,24 +404,41 @@ class ZebrafishSNN(nn.Module):
         self.OT_L = TwoComp(self.RET, self.OTL, device)
         self.OT_R = TwoComp(self.RET, self.OTR, device)
 
-        # --- Trainable layers (PredictiveTwoComp with feedback + attention) ---
-        self.OT_F = PredictiveTwoComp(
-            self.OTL + self.OTR, self.OTF, n_fb=self.PT, device=device)
-        self.PT_L = PredictiveTwoComp(
-            self.OTF, self.PT, n_fb=self.PC_PER, device=device)
-        self.PC_per = PredictiveTwoComp(
-            self.PT, self.PC_PER, n_fb=self.PC_INT, device=device)
-        self.PC_int = PredictiveTwoComp(
-            self.PC_PER, self.PC_INT, n_fb=50, device=device)
+        # --- Trainable layers (IzhikevichTwoComp: real spikes + PC) ---
+        # Layer-specific firing types match biological zebrafish circuits:
+        #   OT_F: fast-spiking interneurons (tectal GABAergic)
+        #   PT_L: regular spiking pretectal projection neurons
+        #   PC_per: chattering cortical-like PC neurons
+        #   PC_int: intrinsically bursting intent layer
+        #   mot/eye/DA: intrinsically bursting output heads
+        self.OT_F = IzhikevichTwoComp(
+            self.OTL + self.OTR, self.OTF, n_fb=self.PT,
+            device=device, izhi_type="fs")
+        self.PT_L = IzhikevichTwoComp(
+            self.OTF, self.PT, n_fb=self.PC_PER,
+            device=device, izhi_type="rs")
+        self.PC_per = IzhikevichTwoComp(
+            self.PT, self.PC_PER, n_fb=self.PC_INT,
+            device=device, izhi_type="ch")
+        self.PC_int = IzhikevichTwoComp(
+            self.PC_PER, self.PC_INT, n_fb=50,
+            device=device, izhi_type="ch")
 
         # precision units
         self.prec_OT = PrecisionUnit(self.OTF, device)
         self.prec_PC = PrecisionUnit(self.PC_PER, device)
 
         # output heads (no higher layer → n_fb=0)
-        self.mot = PredictiveTwoComp(self.PC_INT, 200, n_fb=0, device=device)
-        self.eye = PredictiveTwoComp(self.PC_INT, 100, n_fb=0, device=device)
-        self.DA = PredictiveTwoComp(self.PC_INT, 50, n_fb=0, device=device)
+        # Bias=0: output heads should only fire when driven by PC_int,
+        # not spontaneously — spontaneous motor noise creates turn bias artifacts.
+        self.mot = IzhikevichTwoComp(
+            self.PC_INT, 200, n_fb=0, device=device, izhi_type="ib")
+        self.eye = IzhikevichTwoComp(
+            self.PC_INT, 100, n_fb=0, device=device, izhi_type="ib")
+        self.DA = IzhikevichTwoComp(
+            self.PC_INT, 50,  n_fb=0, device=device, izhi_type="ib")
+        # Output heads: same subthreshold bias (3.5) — only fire when PC_int drives them
+        # (no spontaneous activity → no random motor turn bias)
 
         # Reticulospinal shortcut: crossed OT_L/R → motor (trainable)
         # Left tectum → right motor, right tectum → left motor
@@ -411,12 +584,19 @@ class ZebrafishSNN(nn.Module):
             "intent": intent,
             "pi_OT": pi_OT.mean().item(),
             "pi_PC": pi_PC.mean().item(),
-            # New predictive coding outputs
+            # Prediction error outputs
             "pe_OTF": pe_OTF,
             "pe_PT": pe_PT,
             "pe_PC_per": pe_PC_per,
             "pe_PC_int": pe_PC_int,
             "att_signals": att.detach(),
+            # Izhikevich spike events (binary, for raster)
+            "spikes_OTF":    self.OT_F.spikes,
+            "spikes_PT":     self.PT_L.spikes,
+            "spikes_PC_per": self.PC_per.spikes,
+            "spikes_PC_int": self.PC_int.spikes,
+            "spikes_mot":    self.mot.spikes,
+            "spikes_DA":     self.DA.spikes,
         }
 
     def get_saveable_state(self):
@@ -458,10 +638,45 @@ class ZebrafishSNN(nn.Module):
                         remapped[k] = v
                 else:
                     remapped[k] = v
-            self.load_state_dict(remapped, strict=False)
+            state = remapped
             print("[SNN] Migrated old checkpoint → PredictiveTwoComp")
-        else:
-            self.load_state_dict(state, strict=False)
+
+        # Shape-safe loading: skip keys where saved shape differs from current
+        # (handles classifier head size changes across architecture versions)
+        current = self.state_dict()
+        filtered = {k: v for k, v in state.items()
+                    if k in current and v.shape == current[k].shape}
+        skipped = [k for k in state if k in current
+                   and state[k].shape != current[k].shape]
+        if skipped:
+            print(f"[SNN] Skipped {len(skipped)} shape-mismatched keys: "
+                  f"{skipped[:3]}{'...' if len(skipped) > 3 else ''}")
+        self.load_state_dict(filtered, strict=False)
+
+    def minimize_pe(self, lr=0.0005):
+        """Layer-wise PE minimization: nudge W_FB to reduce |V_a - V_s|².
+
+        Gradient: ΔW_FB = -lr * (1-tau_a) * fb^T @ (V_a - V_s)
+        This brings V_a closer to V_s on the next step.
+        Applied every timestep with a very small lr to avoid disrupting
+        existing behavior while gradually reviving deep layers.
+
+        Phase 2 SNN: extends reticulospinal STDP to all feedback weights.
+        """
+        with torch.no_grad():
+            for layer in [self.OT_F, self.PT_L, self.PC_per, self.PC_int]:
+                if layer.W_FB is None:
+                    continue
+                if not hasattr(layer, '_last_fb'):
+                    continue
+                pe = layer.pred_error          # [1, n_out] = V_a - V_s
+                fb = layer._last_fb            # [1, n_fb]
+                if pe.abs().mean() < 1e-6:
+                    continue
+                # dW = -lr * (1-tau_a) * fb^T @ pe  → shape [n_fb, n_out]
+                dW = lr * (1.0 - layer.tau_a) * fb.T @ pe
+                layer.W_FB.data -= dW
+                layer.W_FB.data.clamp_(-2.0, 2.0)
 
     def compute_free_energy(self):
         """Compute variational free energy F as precision-weighted hierarchical PE.

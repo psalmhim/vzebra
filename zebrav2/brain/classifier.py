@@ -34,6 +34,7 @@ class ClassifierV2(nn.Module):
 
         self.register_buffer('v_hidden', torch.zeros(1, n_hidden, device=device))
         self.register_buffer('v_out', torch.zeros(1, n_classes, device=device))
+        self._last_hidden = None  # cached for Hebbian fine-tuning
 
         self.to(device)
 
@@ -60,6 +61,7 @@ class ClassifierV2(nn.Module):
             self.v_out = self.v_out * (1 - o_spikes)
             spike_counts += o_spikes
 
+        self._last_hidden = h_spikes.detach()  # cache for Hebbian update
         logits = spike_counts / self.n_integration
         analog = self.W_out(torch.relu(self.W_in(x)))
         logits = logits + 0.5 * analog

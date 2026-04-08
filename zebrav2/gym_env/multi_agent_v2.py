@@ -169,7 +169,9 @@ def run_multi_v2(n_fish=5, max_steps=500, seed=42, record=False, personality_mod
             fish['food_eaten'] = total_food[i]
 
             # Energy decay
-            fish['energy'] -= 0.2 * speed
+            actual_speed = min(2.0, speed)
+            speed_cost = 0.03 * actual_speed * (0.5 + 0.5 * actual_speed)
+            fish['energy'] -= (0.05 + speed_cost)
             if fish['energy'] <= 0:
                 fish['alive'] = False
 
@@ -178,6 +180,7 @@ def run_multi_v2(n_fish=5, max_steps=500, seed=42, record=False, personality_mod
             pred_dy = getattr(env, 'pred_y', -999) - fish['y']
             if math.sqrt(pred_dx**2 + pred_dy**2) < 20:
                 fish['alive'] = False
+                pred_brain.on_catch()
 
         # Update env focal fish to fish[0] for predator AI
         if all_fish[0]['alive']:

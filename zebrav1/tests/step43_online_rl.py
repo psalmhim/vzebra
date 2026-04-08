@@ -19,6 +19,19 @@ from zebrav1.gym_env.zebrafish_env import ZebrafishPreyPredatorEnv
 from zebrav1.gym_env.brain_agent import BrainAgent
 
 
+def measure_snn_activity(agent):
+    """Measure RMS activity of deep SNN layers."""
+    import torch
+    results = {}
+    for name, layer in [("OT_F", agent.model.OT_F),
+                         ("PT_L", agent.model.PT_L),
+                         ("PC_per", agent.model.PC_per),
+                         ("PC_int", agent.model.PC_int)]:
+        rms = layer.v_s.pow(2).mean().sqrt().item()
+        results[name] = rms
+    return results
+
+
 def run_online_rl(n_episodes=20, max_steps=500, save_interval=5):
     print("=" * 60)
     print("Step 43: Online Reinforcement Learning")
@@ -39,6 +52,13 @@ def run_online_rl(n_episodes=20, max_steps=500, save_interval=5):
 
     episode_stats = []
 
+    # Measure SNN activity before training
+    activity_before = measure_snn_activity(agent)
+    print("\nSNN layer RMS before training:")
+    for k, v in activity_before.items():
+        print(f"  {k}: {v:.4f}")
+    print()
+
     for ep in range(n_episodes):
         obs, info = env.reset(seed=ep * 13 + 7)
         agent.reset()
@@ -55,6 +75,7 @@ def run_online_rl(n_episodes=20, max_steps=500, save_interval=5):
                 step_reward -= 50.0  # death penalty
 
             agent.update_post_step(info, reward=step_reward, done=term, env=env)
+            agent.learn_phase2(reward=step_reward, done=term)
             total_reward += step_reward
 
             if term or trunc:
@@ -103,6 +124,16 @@ def run_online_rl(n_episodes=20, max_steps=500, save_interval=5):
 
     improved = s_eaten > f_eaten or s_steps > f_steps
     print(f"\n  Learning: {'YES' if improved else 'NO'}")
+
+    # Measure SNN activity after training
+    activity_after = measure_snn_activity(agent)
+    print("\nSNN layer RMS after training:")
+    for k, v in activity_after.items():
+        before = activity_before[k]
+        change = "+" if v > before else ""
+        print(f"  {k}: {before:.4f} → {v:.4f}  ({change}{(v-before):.4f})")
+    pc_int_revived = activity_after.get("PC_int", 0) > 0.01
+    print(f"\n  PC_int revived (>0.01): {'YES' if pc_int_revived else 'NO'}")
 
     # Final save
     agent.save_checkpoint(ckpt_path)

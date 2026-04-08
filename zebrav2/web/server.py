@@ -34,6 +34,7 @@ from zebrav2.engine.config import TrainingConfig, REPERTOIRES
 
 app = FastAPI(title="Zebrafish Brain v2 Dashboard")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), 'static')
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Global engine
 engine = TrainingEngine()
@@ -102,6 +103,34 @@ async def get_checkpoints():
     return engine.checkpoint_mgr.list_checkpoints()
 
 
+@app.get("/api/replays")
+async def list_replays():
+    return [{'round': r['round'], 'n_steps': len(r['steps']),
+             'metrics': r.get('metrics', {})} for r in engine.saved_replays]
+
+
+@app.get("/api/replay/{round_num}")
+async def get_replay(round_num: int):
+    for r in engine.saved_replays:
+        if r['round'] == round_num:
+            return r
+    return {"status": "error", "message": "Replay not found"}
+
+
+class AblationRequest(BaseModel):
+    region: str
+    enabled: bool
+
+
+@app.post("/api/ablate")
+async def ablate_region(req: AblationRequest):
+    if engine.brain is None:
+        return {"status": "error", "message": "No brain loaded — start training first"}
+    engine.brain.set_region_enabled(req.region, req.enabled)
+    return {"status": "ok", "region": req.region, "enabled": req.enabled,
+            "ablated": list(engine.brain._ablated)}
+
+
 class ConfigUpdate(BaseModel):
     config: dict
 
@@ -127,6 +156,19 @@ async def start_training(req: StartRequest):
     engine.on_round_end = on_round_end_callback
     engine.train_async(n_rounds=req.n_rounds)
     return {"status": "started", "n_rounds": req.n_rounds}
+
+
+@app.post("/api/start-multi")
+async def start_multi(req: StartRequest):
+    if engine.running:
+        return {"status": "error", "message": "Training already running"}
+    if req.config:
+        engine.config = TrainingConfig(req.config)
+    engine.on_step = on_step_callback
+    engine.on_round_end = on_round_end_callback
+    n_rounds = req.n_rounds or 10
+    engine.train_async_multi(n_rounds=n_rounds, n_fish=5)
+    return {"status": "started", "mode": "multi-agent", "n_rounds": n_rounds, "n_fish": 5}
 
 
 @app.post("/api/stop")

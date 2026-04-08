@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Zebrafish Brain v2 Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.145.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.145.0/examples/js/controls/OrbitControls.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 100%; height: 100%; overflow: hidden; }
@@ -21,7 +23,7 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; colo
 .metric .val { color: #7ee787; font-weight: bold; }
 .metric .val.warn { color: #f0883e; }
 .metric .val.bad { color: #f85149; }
-canvas { width: 100% !important; height: 180px !important; }
+canvas.arena-canvas, canvas#retinaCanvas, canvas#rasterCanvas { width: 100% !important; height: 180px !important; }
 .controls { display: flex; gap: 8px; padding: 12px; flex-wrap: wrap; }
 .btn { padding: 8px 16px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 12px; }
 .btn:hover { background: #30363d; }
@@ -46,6 +48,19 @@ select, input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; 
 table { width: 100%; border-collapse: collapse; font-size: 11px; }
 table th, table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #21262d; }
 table th { color: #8b949e; }
+.curr-stage { background:#21262d; border:1px solid #30363d; border-radius:6px; padding:8px; text-align:center; cursor:pointer; flex:1; transition: border-color 0.2s; }
+.curr-stage:hover { border-color:#58a6ff; }
+.curr-dot { width:12px; height:12px; border-radius:50%; margin:0 auto 4px; }
+.curr-dot.pending { background:#6e7681; }
+.curr-dot.running { background:#f0883e; animation: pulse 1s infinite; }
+.curr-dot.pass { background:#7ee787; }
+.curr-dot.fail { background:#f85149; }
+.curr-name { font-size:10px; font-weight:bold; color:#c9d1d9; }
+.curr-detail { font-size:9px; color:#8b949e; }
+.curr-criteria { font-size:8px; color:#6e7681; margin-top:2px; }
+.curr-result { font-size:10px; color:#7ee787; margin-top:4px; font-weight:bold; }
+.curr-arrow { color:#30363d; font-size:18px; line-height:80px; }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
 </style>
 </head>
 <body>
@@ -56,29 +71,52 @@ table th { color: #8b949e; }
         <button class="tab-btn active" onclick="switchTab('playground')">Playground</button>
         <button class="tab-btn" onclick="switchTab('training')">Training</button>
         <button class="tab-btn" onclick="switchTab('analysis')">Analysis</button>
+        <button class="tab-btn" onclick="switchTab('atlas')">Atlas</button>
         <span id="statusBadge" class="status stopped" style="margin-left:12px">STOPPED</span>
         <span style="font-size:12px;color:#8b949e" id="roundInfo">Round: 0</span>
     </div>
 </div>
 
-<!-- ========== TAB 1: PLAYGROUND ========== -->
+<!-- ========== TAB 1: PLAYGROUND (Arena + Brain 3D split) ========== -->
 <div id="tab-playground" class="tab-page active">
-<div style="display:grid; grid-template-columns:1fr 300px; gap:8px; padding:8px; height:calc(100vh - 90px); max-width:1280px; margin:0 auto;">
-    <!-- Left: Arena (maximized) -->
-    <div style="display:flex; flex-direction:column; gap:8px;">
-        <div class="card" style="flex:1; display:flex; flex-direction:column;">
-            <h3>Arena <span id="arenaInfo" style="font-weight:normal;color:#8b949e;font-size:10px"></span></h3>
-            <canvas id="arenaCanvas" class="arena-canvas" style="flex:1;min-height:0;"></canvas>
-        </div>
-        <!-- Retinal view + Raster -->
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; height:170px;">
-            <div class="card" style="padding:8px;">
-                <h3>Retina (L eye | R eye)</h3>
-                <canvas id="retinaCanvas" style="width:100%;height:110px;background:#010409;border:1px solid #30363d;border-radius:3px;"></canvas>
+<div style="display:grid; grid-template-columns:1fr 300px; gap:6px; padding:6px; height:calc(100vh - 48px);">
+    <!-- Left: Arena + Brain 3D + Retina/Raster (scrollable) -->
+    <div style="display:flex; flex-direction:column; gap:6px; overflow-y:auto;">
+        <!-- Top row: Arena left, Brain 3D right (fills remaining space) -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; flex:1; min-height:300px;">
+            <!-- Arena -->
+            <div class="card" style="display:flex; flex-direction:column; min-height:0;">
+                <h3>Arena <span id="arenaInfo" style="font-weight:normal;color:#8b949e;font-size:10px"></span>
+                    <span style="float:right;display:flex;gap:6px;align-items:center;">
+                        <label style="font-size:9px;font-weight:normal;color:#8b949e;cursor:pointer;">
+                            <input type="checkbox" id="showPredHeatmap" checked onchange="window._hidePredHeatmap=!this.checked" style="margin-right:2px;">Pred. memory
+                        </label>
+                        <button class="btn" onclick="exportFigure()" style="font-size:9px;padding:2px 8px">Export</button>
+                    </span></h3>
+                <canvas id="arenaCanvas" class="arena-canvas" style="flex:1;min-height:0;"></canvas>
             </div>
-            <div class="card" style="padding:8px;">
-                <h3>Spike Raster (15 regions)</h3>
-                <canvas id="rasterCanvas" style="width:100%;height:110px;background:#010409;border:1px solid #30363d;border-radius:3px;"></canvas>
+            <!-- Brain 3D -->
+            <div class="card" style="display:flex; flex-direction:column; min-height:0; padding:0; overflow:hidden;">
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px 4px;">
+                    <h3 style="margin:0">Brain 3D <span style="font-weight:normal;color:#8b949e;font-size:9px" id="brain3dInfo">Loading...</span></h3>
+                    <div style="display:flex;gap:6px;align-items:center;font-size:9px;color:#8b949e;">
+                        <label><input type="checkbox" id="brain3dSpikes" checked style="margin-right:2px;">Spikes</label>
+                        <label><input type="checkbox" id="brain3dShowAllConn" style="margin-right:2px;">Connections</label>
+                    </div>
+                </div>
+                <div id="brain3dContainer" style="flex:1;position:relative;overflow:hidden;background:#050510;min-height:0;">
+                    <canvas id="brain3dCanvas" style="width:100%;height:100%;display:block;"></canvas>
+                    <div id="brain3dHover" style="position:absolute;display:none;background:rgba(0,0,0,0.85);border:1px solid #30363d;border-radius:4px;padding:4px 8px;color:#c9d1d9;font-size:11px;pointer-events:none;z-index:10;"></div>
+                </div>
+            </div>
+        </div>
+        <!-- Bottom row: Retinal + Raster (compact) -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; height:45px; flex-shrink:0;">
+            <div class="card" style="padding:3px 6px;">
+                <canvas id="retinaCanvas" style="width:100%;height:35px;background:#010409;border:1px solid #30363d;border-radius:3px;"></canvas>
+            </div>
+            <div class="card" style="padding:3px 6px;">
+                <canvas id="rasterCanvas" style="width:100%;height:35px;background:#010409;border:1px solid #30363d;border-radius:3px;"></canvas>
             </div>
         </div>
     </div>
@@ -113,6 +151,14 @@ table th { color: #8b949e; }
             <div class="metric"><span>Surprise</span><span class="val" id="mSurprise">-</span></div>
             <div class="metric"><span>VAE Mem</span><span class="val" id="mVAE">-</span></div>
         </div>
+        <div class="card" style="padding:10px;">
+            <h3>Fish Population</h3>
+            <div id="fishPopulation" style="font-size:10px;"></div>
+        </div>
+        <div class="card" style="padding:10px;">
+            <h3>Brain Surgery</h3>
+            <div style="font-size:10px;" id="ablationControls"></div>
+        </div>
     </div>
 </div>
 </div>
@@ -133,6 +179,7 @@ table th { color: #8b949e; }
         <option value="curriculum">Curriculum (Auto)</option>
     </select>
     <button class="btn" onclick="startRepertoire()" style="background:#1f6feb;border-color:#1f6feb;color:#fff">Run Repertoire</button>
+    <button class="btn" onclick="startMultiAgent()" style="background:#8e44ad;border-color:#8e44ad;color:#fff">Multi-Agent (5 fish)</button>
     <select id="personality" onchange="updateConfig()">
         <option value="default">Default</option>
         <option value="bold">Bold</option>
@@ -154,7 +201,87 @@ table th { color: #8b949e; }
     <label style="font-size:11px;color:#8b949e">steps/round</label>
 </div>
 
+<div class="card" style="grid-column: span 3;">
+    <h3>Live Parameters</h3>
+    <div class="config-grid" style="grid-template-columns: 1fr 1fr 1fr;">
+        <div class="config-item">
+            <label>Learning Rate</label>
+            <input type="range" id="pLR" min="0.1" max="3.0" step="0.1" value="1.0" style="width:80px" oninput="this.nextElementSibling.textContent=this.value;updateConfig()">
+            <span style="color:#7ee787;width:30px">1.0</span>
+        </div>
+        <div class="config-item">
+            <label>Predator Speed</label>
+            <input type="range" id="pPredSpeed" min="0.5" max="3.0" step="0.1" value="1.0" style="width:80px" oninput="this.nextElementSibling.textContent=this.value;updateConfig()">
+            <span style="color:#7ee787;width:30px">1.0</span>
+        </div>
+        <div class="config-item">
+            <label>Energy Drain</label>
+            <input type="range" id="pEnergyDrain" min="0.05" max="0.5" step="0.05" value="0.2" style="width:80px" oninput="this.nextElementSibling.textContent=this.value;updateConfig()">
+            <span style="color:#7ee787;width:30px">0.2</span>
+        </div>
+        <div class="config-item">
+            <label>Food Respawn Min</label>
+            <input type="range" id="pFoodMin" min="1" max="20" step="1" value="5" style="width:80px" oninput="this.nextElementSibling.textContent=this.value;updateConfig()">
+            <span style="color:#7ee787;width:30px">5</span>
+        </div>
+        <div class="config-item">
+            <label>Exploration Weight</label>
+            <input type="range" id="pExplore" min="0" max="20" step="1" value="5" style="width:80px" oninput="this.nextElementSibling.textContent=this.value;updateConfig()">
+            <span style="color:#7ee787;width:30px">5</span>
+        </div>
+        <div class="config-item">
+            <label>Rocks</label>
+            <select id="pRocks" onchange="updateConfig()">
+                <option value="true" selected>Enabled</option>
+                <option value="false">Disabled</option>
+            </select>
+        </div>
+    </div>
+</div>
+
 <div class="grid">
+    <!-- Training Curriculum -->
+    <div class="card" style="grid-column: span 2;">
+        <h3>Training Curriculum</h3>
+        <div id="curriculumStages" style="display:flex;gap:8px;margin-top:8px;">
+            <div class="curr-stage" id="cs0" onclick="runCurriculumStage(0)">
+                <div class="curr-dot pending"></div>
+                <div class="curr-name">FORAGE EASY</div>
+                <div class="curr-detail">No pred, 25 food</div>
+                <div class="curr-criteria">eat≥5, survive≥350</div>
+                <div class="curr-result" id="cr0">—</div>
+            </div>
+            <div class="curr-arrow">→</div>
+            <div class="curr-stage" id="cs1" onclick="runCurriculumStage(1)">
+                <div class="curr-dot pending"></div>
+                <div class="curr-name">FORAGE HARD</div>
+                <div class="curr-detail">Rocks, 20 food</div>
+                <div class="curr-criteria">eat≥4, survive≥450</div>
+                <div class="curr-result" id="cr1">—</div>
+            </div>
+            <div class="curr-arrow">→</div>
+            <div class="curr-stage" id="cs2" onclick="runCurriculumStage(2)">
+                <div class="curr-dot pending"></div>
+                <div class="curr-name">SURVIVE EASY</div>
+                <div class="curr-detail">Slow predator</div>
+                <div class="curr-criteria">eat≥3, survive≥500</div>
+                <div class="curr-result" id="cr2">—</div>
+            </div>
+            <div class="curr-arrow">→</div>
+            <div class="curr-stage" id="cs3" onclick="runCurriculumStage(3)">
+                <div class="curr-dot pending"></div>
+                <div class="curr-name">SURVIVE HARD</div>
+                <div class="curr-detail">Full predator AI</div>
+                <div class="curr-criteria">eat≥3, survive≥500</div>
+                <div class="curr-result" id="cr3">—</div>
+            </div>
+        </div>
+        <div style="margin-top:8px;display:flex;gap:8px;">
+            <button class="btn primary" onclick="runFullCurriculum()" style="font-size:11px">Run Full Curriculum</button>
+            <span id="curriculumStatus" style="font-size:11px;color:#8b949e;line-height:28px">Click a stage or run all</span>
+        </div>
+    </div>
+
     <!-- Training Curve -->
     <div class="card">
         <h3>Fitness Over Rounds</h3>
@@ -194,6 +321,18 @@ table th { color: #8b949e; }
     <div class="card">
         <h3>Event Log</h3>
         <div id="logBox" class="log"></div>
+    </div>
+
+    <!-- Replay -->
+    <div class="card">
+        <h3>Replay</h3>
+        <div id="replayList" style="font-size:11px;max-height:80px;overflow-y:auto;margin-bottom:6px;">No replays yet</div>
+        <div style="display:flex;gap:6px;align-items:center;">
+            <button class="btn" onclick="loadReplayList()" style="font-size:11px">Refresh</button>
+            <input type="range" id="replaySlider" min="0" max="100" value="0" style="flex:1" oninput="scrubReplay(this.value)" disabled>
+            <button class="btn" onclick="playReplay()" id="replayPlayBtn" style="font-size:11px" disabled>&#9654;</button>
+            <span id="replayFrame" style="font-size:10px;color:#8b949e;width:60px">0/0</span>
+        </div>
     </div>
 
     <!-- Config -->
@@ -241,6 +380,113 @@ table th { color: #8b949e; }
 </div>
 </div><!-- end tab-analysis -->
 
+<!-- ========== TAB 4: ATLAS ========== -->
+<div id="tab-atlas" class="tab-page">
+<div style="display:grid;grid-template-columns:1fr 175px 215px;gap:6px;padding:6px;height:calc(100vh - 48px);">
+
+    <!-- 3D canvas -->
+    <div id="atlasContainer" style="position:relative;background:#0a0e1a;border-radius:8px;overflow:hidden;">
+        <canvas id="atlasCanvas" style="width:100%;height:100%;display:block;"></canvas>
+        <div id="atlasInfo" style="position:absolute;top:8px;left:50%;transform:translateX(-50%);
+            background:rgba(0,0,0,0.6);padding:3px 10px;border-radius:4px;
+            font-size:11px;color:#8b949e;pointer-events:none;">Loading…</div>
+        <div style="position:absolute;bottom:12px;left:12px;font-size:10px;color:#555;line-height:1.6;">
+            <span style="color:#e06c75">X</span> L/R &nbsp;
+            <span style="color:#98c379">Y</span> V/D &nbsp;
+            <span style="color:#61afef">Z</span> A/P
+        </div>
+        <button onclick="atlasResetCamera()"
+            style="position:absolute;bottom:10px;right:10px;padding:3px 9px;
+                   font-size:11px;background:#21262d;border:1px solid #30363d;
+                   color:#c9d1d9;border-radius:4px;cursor:pointer;">Reset</button>
+    </div>
+
+    <!-- Volume slices column -->
+    <div style="display:flex;flex-direction:column;gap:5px;overflow-y:auto;">
+
+        <!-- Coronal: X–Z, sweep Y -->
+        <div class="card" style="padding:6px 8px;">
+            <div style="font-size:10px;color:#8b949e;margin-bottom:3px;">Coronal (X–Z)</div>
+            <canvas id="sliceCoronal" width="158" height="80"
+                    style="display:block;width:158px;height:80px;background:#0d1117;border-radius:3px;image-rendering:pixelated;"></canvas>
+            <input type="range" id="sliceCoronalY" value="0" style="width:100%;margin-top:3px;accent-color:#98c379;"
+                   oninput="renderSlice('coronal')">
+            <div id="sliceCoronalLabel" style="font-size:9px;color:#555;text-align:center;margin-top:1px;">Y = 0 µm</div>
+        </div>
+
+        <!-- Sagittal: Z–Y, sweep X -->
+        <div class="card" style="padding:6px 8px;">
+            <div style="font-size:10px;color:#8b949e;margin-bottom:3px;">Sagittal (Z–Y)</div>
+            <canvas id="sliceSagittal" width="158" height="80"
+                    style="display:block;width:158px;height:80px;background:#0d1117;border-radius:3px;image-rendering:pixelated;"></canvas>
+            <input type="range" id="sliceSagittalX" value="0" style="width:100%;margin-top:3px;accent-color:#e06c75;"
+                   oninput="renderSlice('sagittal')">
+            <div id="sliceSagittalLabel" style="font-size:9px;color:#555;text-align:center;margin-top:1px;">X = 0 µm</div>
+        </div>
+
+        <!-- Horizontal: X–Y, sweep Z -->
+        <div class="card" style="padding:6px 8px;">
+            <div style="font-size:10px;color:#8b949e;margin-bottom:3px;">Horizontal (X–Y)</div>
+            <canvas id="sliceHorizontal" width="158" height="80"
+                    style="display:block;width:158px;height:80px;background:#0d1117;border-radius:3px;image-rendering:pixelated;"></canvas>
+            <input type="range" id="sliceHorizontalZ" value="0" style="width:100%;margin-top:3px;accent-color:#61afef;"
+                   oninput="renderSlice('horizontal')">
+            <div id="sliceHorizontalLabel" style="font-size:9px;color:#555;text-align:center;margin-top:1px;">Z = 0 µm</div>
+        </div>
+
+        <!-- Slab thickness -->
+        <div class="card" style="padding:6px 8px;">
+            <div style="font-size:10px;color:#8b949e;margin-bottom:3px;">Slab thickness</div>
+            <input type="range" min="2" max="80" step="2" value="20" id="sliceThickness"
+                   style="width:100%;accent-color:#f0883e;"
+                   oninput="atlasSetSliceThickness(this.value);document.getElementById('sliceThickLabel').textContent=this.value+' µm'">
+            <div id="sliceThickLabel" style="font-size:9px;color:#555;text-align:center;margin-top:1px;">20 µm</div>
+        </div>
+
+    </div>
+
+    <!-- Sidebar -->
+    <div style="display:flex;flex-direction:column;gap:6px;overflow-y:auto;">
+
+        <!-- Layer toggles -->
+        <div class="card" style="padding:8px 10px;">
+            <h3 style="margin-bottom:6px;">Display</h3>
+            <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;margin-bottom:4px;">
+                <input type="checkbox" checked onchange="atlasToggleNeurons(this.checked)"> Atlas cells
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;margin-bottom:4px;">
+                <input type="checkbox" checked onchange="atlasToggleSurface(this.checked)"> Brain surface
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;margin-bottom:8px;">
+                <input type="checkbox" onchange="atlasToggleModelNeurons(this.checked)"> Model neurons
+            </label>
+            <div style="font-size:11px;color:#8b949e;margin-bottom:3px;">Cell opacity</div>
+            <input type="range" min="0.05" max="1" step="0.05" value="0.85"
+                   oninput="atlasSetOpacity(this.value)"
+                   style="width:100%;accent-color:#58a6ff;">
+        </div>
+
+        <!-- Region list -->
+        <div class="card" style="padding:8px 10px;flex:1;display:flex;flex-direction:column;min-height:0;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                <h3>Regions</h3>
+                <div style="display:flex;gap:4px;">
+                    <button onclick="atlasToggleAll(true)"
+                        style="padding:2px 7px;font-size:10px;background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:3px;cursor:pointer;">All</button>
+                    <button onclick="atlasToggleAll(false)"
+                        style="padding:2px 7px;font-size:10px;background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:3px;cursor:pointer;">None</button>
+                </div>
+            </div>
+            <input type="text" placeholder="Filter…" oninput="atlasFilterRegions(this.value)"
+                   style="width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;
+                          color:#c9d1d9;padding:3px 6px;font-size:11px;border-radius:4px;margin-bottom:6px;">
+            <div id="atlasRegionList" style="overflow-y:auto;flex:1;font-size:11px;"></div>
+        </div>
+
+    </div>
+</div>
+</div><!-- end tab-atlas -->
+
 <script>
 // Charts
 const chartOpts = { responsive: true, animation: false, plugins: { legend: { labels: { color: '#c9d1d9', font: { size: 10 } } } },
@@ -262,6 +508,7 @@ function switchTab(name) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById('tab-' + name).classList.add('active');
     event.target.classList.add('active');
+    if (name === 'atlas') setTimeout(initAtlas3D, 100);
 }
 
 let ws = null;
@@ -543,6 +790,28 @@ function drawArena(d) {
         });
     }
 
+    // Predator spatial memory heatmap (toggleable)
+    if (d.pred_heatmap && d.pred_heatmap.length > 0 && !window._hidePredHeatmap) {
+        let anyVisible = false;
+        for (const cell of d.pred_heatmap) {
+            const hx = cell[0]*sx, hy = cell[1]*sy;
+            const val = cell[2];
+            if (val < 0.02) continue;
+            anyVisible = true;
+            const radius = 12 + val * 30;
+            const alpha = Math.min(0.2, val * 0.35);
+            ctx.beginPath();
+            ctx.arc(hx, hy, radius, 0, Math.PI*2);
+            ctx.fillStyle = `rgba(60, 120, 255, ${alpha})`;
+            ctx.fill();
+        }
+        if (anyVisible) {
+            ctx.fillStyle = 'rgba(60,120,255,0.5)';
+            ctx.font = '8px monospace';
+            ctx.fillText('Predator spatial memory (prey density)', 6, ch-26);
+        }
+    }
+
     // Food (animated — bobbing, pulsing, drifting)
     if (d.foods) {
         d.foods.forEach((f, fi) => {
@@ -612,6 +881,19 @@ function drawArena(d) {
         ctx.restore();
         ctx.fillStyle = 'rgba(255,80,60,0.7)'; ctx.font = 'bold 10px monospace';
         ctx.fillText('PREDATOR', px-28, py+ps+14);
+
+        // Predator energy bar (below label)
+        const predE = Math.max(0, Math.min(1, (d.pred_energy||80)/100));
+        const peBarW = 40, peBarH = 4, peBarY = py+ps+18;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(px-peBarW/2, peBarY, peBarW, peBarH);
+        ctx.fillStyle = predE > 0.4 ? '#f0883e' : '#f85149';
+        ctx.fillRect(px-peBarW/2, peBarY, peBarW*predE, peBarH);
+        ctx.strokeStyle = 'rgba(255,100,80,0.4)'; ctx.lineWidth = 0.5;
+        ctx.strokeRect(px-peBarW/2, peBarY, peBarW, peBarH);
+        // State label
+        ctx.fillStyle = 'rgba(255,150,120,0.6)'; ctx.font = '8px monospace';
+        ctx.fillText((d.pred_state||'') + ' ' + Math.round((d.pred_energy||0)) + '%', px-24, peBarY+12);
     }
 
     // === FISH (with tail oscillation + FoV cones) ===
@@ -887,6 +1169,52 @@ function updateStep(d) {
     // Energy warning
     const eEl = document.getElementById('mEnergy');
     eEl.className = 'val' + (d.energy < 30 ? ' bad' : d.energy < 50 ? ' warn' : '');
+
+    // Fish population panel
+    const popEl = document.getElementById('fishPopulation');
+    if (popEl) {
+        const goalColors = { FORAGE: '#7ee787', FLEE: '#f85149', EXPLORE: '#58a6ff', SOCIAL: '#3fb9a0' };
+        let html = '';
+        // Focal fish
+        const fGoalColor = goalColors[d.goal] || '#c9d1d9';
+        const fEnergy = Math.round(d.energy || 0);
+        const fEnergyColor = fEnergy > 50 ? '#7ee787' : fEnergy > 25 ? '#f0883e' : '#f85149';
+        html += `<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #21262d;">`;
+        html += `<span style="color:${fGoalColor};">&#9679; Focal</span>`;
+        html += `<span style="color:${fGoalColor};font-size:9px;">${d.goal||'?'}</span>`;
+        html += `<span style="color:${fEnergyColor};">${fEnergy}%</span>`;
+        html += `</div>`;
+        // Conspecific fish (from server or simulated)
+        if (d.other_fish && d.other_fish.length > 0) {
+            d.other_fish.forEach((f, i) => {
+                const g = f.goal || 'SOCIAL';
+                const gc = goalColors[g] || '#8b949e';
+                const e = Math.round(f.energy || 50);
+                const ec = e > 50 ? '#7ee787' : e > 25 ? '#f0883e' : '#f85149';
+                html += `<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #21262d;">`;
+                html += `<span style="color:${gc};">&#9675; Fish ${i+1}</span>`;
+                html += `<span style="color:${gc};font-size:9px;">${g}</span>`;
+                html += `<span style="color:${ec};">${e}%</span>`;
+                html += `</div>`;
+            });
+        } else if (drawArena._conspec) {
+            // Show client-side simulated conspecifics
+            drawArena._conspec.forEach((cf, i) => {
+                const dist = Math.round(Math.sqrt(
+                    Math.pow((d.fish_x||0) - cf.x, 2) +
+                    Math.pow((d.fish_y||0) - cf.y, 2)));
+                html += `<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #21262d;">`;
+                html += `<span style="color:#3fb9a0;">&#9675; Fish ${i+1}</span>`;
+                html += `<span style="color:#8b949e;font-size:9px;">SOCIAL</span>`;
+                html += `<span style="color:#8b949e;">${dist}px</span>`;
+                html += `</div>`;
+            });
+        }
+        // Summary line
+        const nFish = 1 + (d.other_fish ? d.other_fish.length : (drawArena._conspec ? drawArena._conspec.length : 0));
+        html += `<div style="color:#8b949e;padding-top:3px;font-size:9px;">${nFish} fish total${d.other_fish ? ' (server)' : ' (simulated)'}</div>`;
+        popEl.innerHTML = html;
+    }
 }
 
 function updateRoundEnd(m) {
@@ -913,6 +1241,19 @@ function updateRoundEnd(m) {
 
     log(`Round ${m.round}: survived=${m.survived}, food=${m.food_eaten}, fitness=${m.fitness?.toFixed(0)}`);
     document.getElementById('roundInfo').textContent = `Round: ${m.round}`;
+
+    // Auto-update curriculum stage if running
+    for (let i = 0; i < 4; i++) {
+        const dot = document.querySelector(`#cs${i} .curr-dot`);
+        if (dot && dot.className.includes('running')) {
+            const criteria = CURRICULUM_STAGES[i].criteria;
+            const passed = m.survived >= criteria.min_steps && m.food_eaten >= criteria.min_eaten;
+            dot.className = 'curr-dot ' + (passed ? 'pass' : 'fail');
+            document.getElementById(`cr${i}`).textContent = `${m.food_eaten} food, ${m.survived} steps ${passed ? '✓' : '✗'}`;
+            document.getElementById(`cr${i}`).style.color = passed ? '#7ee787' : '#f85149';
+            break;
+        }
+    }
 }
 
 function updateStatus(s) {
@@ -946,6 +1287,65 @@ async function startRepertoire() {
     log(`Repertoire "${name}" started: ${data.n_rounds} rounds`);
 }
 
+async function startMultiAgent() {
+    const n = parseInt(document.getElementById('nRounds').value) || 10;
+    const res = await fetch('/api/start-multi', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ n_rounds: n })
+    });
+    const data = await res.json();
+    if (data.status === 'error') {
+        log(`Error: ${data.message}`);
+        return;
+    }
+    log(`Multi-agent started: ${n} rounds, 5 fish (bold/shy/explorer/social/default)`);
+    log('  Each fish: 35 modules, 7200+ spiking neurons, unique personality');
+}
+
+const CURRICULUM_STAGES = [
+    { name: 'safe_foraging', criteria: { min_eaten: 5, min_steps: 350 } },
+    { name: 'foraging_under_threat', criteria: { min_eaten: 4, min_steps: 450 } },
+    { name: 'predator_evasion', criteria: { min_eaten: 3, min_steps: 500 } },
+    { name: 'full_survival', criteria: { min_eaten: 3, min_steps: 500 } },
+];
+
+async function runCurriculumStage(idx) {
+    const stage = CURRICULUM_STAGES[idx];
+    document.querySelector(`#cs${idx} .curr-dot`).className = 'curr-dot running';
+    document.getElementById(`cr${idx}`).textContent = 'Running...';
+    document.getElementById('curriculumStatus').textContent = `Running stage ${idx+1}/4...`;
+
+    // Start the corresponding repertoire
+    const res = await fetch('/api/repertoire/' + stage.name, { method: 'POST' });
+    const data = await res.json();
+    log(`Curriculum stage ${idx+1}: ${stage.name}`);
+}
+
+async function runFullCurriculum() {
+    document.getElementById('curriculumStatus').textContent = 'Running full curriculum...';
+    for (let i = 0; i < 4; i++) {
+        await runCurriculumStage(i);
+        // Wait for round to complete (poll)
+        while (true) {
+            await new Promise(r => setTimeout(r, 2000));
+            const status = await (await fetch('/api/status')).json();
+            if (!status.running) break;
+        }
+        // Check results from last round
+        const status = await (await fetch('/api/status')).json();
+        const last = status.round_history?.[status.round_history.length - 1];
+        if (last) {
+            const criteria = CURRICULUM_STAGES[i].criteria;
+            const passed = last.survived >= criteria.min_steps && last.food_eaten >= criteria.min_eaten;
+            document.querySelector(`#cs${i} .curr-dot`).className = 'curr-dot ' + (passed ? 'pass' : 'fail');
+            document.getElementById(`cr${i}`).textContent = `${last.food_eaten} food, ${last.survived} steps ${passed ? '✓' : '✗'}`;
+            document.getElementById(`cr${i}`).style.color = passed ? '#7ee787' : '#f85149';
+        }
+    }
+    document.getElementById('curriculumStatus').textContent = 'Curriculum complete!';
+}
+
 async function updateConfig() {
     const config = getConfig();
     await fetch('/api/config', {
@@ -960,11 +1360,142 @@ function getConfig() {
             n_food: parseInt(document.getElementById('nFood').value) || 15,
             max_steps: parseInt(document.getElementById('maxSteps').value) || 500,
             predator_ai: document.getElementById('predatorAI').value,
+            energy_drain_rate: parseFloat(document.getElementById('pEnergyDrain').value),
+            food_respawn_min: parseInt(document.getElementById('pFoodMin').value),
+            rocks_enabled: document.getElementById('pRocks').value === 'true',
         },
         fish: {
             personality_mode: document.getElementById('personality').value,
         },
+        training: {
+            learning_rate_scale: parseFloat(document.getElementById('pLR').value),
+        },
+        objectives: {
+            exploration_weight: parseFloat(document.getElementById('pExplore').value),
+        },
     };
+}
+
+// --- Figure export ---
+function exportFigure() {
+    const arenaC = document.getElementById('arenaCanvas');
+    const retinaC = document.getElementById('retinaCanvas');
+    const rasterC = document.getElementById('rasterCanvas');
+    const W = 1200, H = 800;
+    const fig = document.createElement('canvas'); fig.width = W; fig.height = H;
+    const ctx = fig.getContext('2d');
+    ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, W, H);
+    // Arena
+    if (arenaC) ctx.drawImage(arenaC, 10, 10, 580, 440);
+    // Retina + Raster
+    if (retinaC) ctx.drawImage(retinaC, 10, 460, 285, 70);
+    if (rasterC) ctx.drawImage(rasterC, 305, 460, 285, 70);
+    // Metrics
+    ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 14px monospace';
+    ctx.fillText('Zebrafish Brain v2', 610, 28);
+    ctx.font = '11px monospace'; ctx.fillStyle = '#c9d1d9';
+    const fields = [
+        ['Goal', 'mGoal'], ['Energy', 'mEnergy'], ['Food', 'mFood'],
+        ['Step', 'mStep'], ['Free Energy', 'mEFE'], ['', ''],
+        ['Amygdala', 'mAmy'], ['Critic', 'mCritic'], ['Novelty', 'mNovelty'],
+        ['Heart Rate', 'mHR'], ['Valence', 'mValence'], ['Surprise', 'mSurprise'],
+    ];
+    let y = 50;
+    for (const [label, id] of fields) {
+        if (!label) { y += 6; continue; }
+        const val = document.getElementById(id)?.textContent || '-';
+        ctx.fillStyle = '#8b949e'; ctx.fillText(label + ':', 610, y);
+        ctx.fillStyle = '#7ee787'; ctx.fillText(val, 740, y);
+        y += 16;
+    }
+    // Neuromod bars
+    y += 8; ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 11px monospace';
+    ctx.fillText('Neuromodulation', 610, y); y += 16;
+    for (const [nm, id, col] of [['DA','barDA','#f39c12'],['NA','barNA','#2980b9'],['5-HT','bar5HT','#8e44ad'],['ACh','barACh','#27ae60']]) {
+        const w = parseFloat(document.getElementById(id)?.style.width || '50');
+        ctx.fillStyle = '#21262d'; ctx.fillRect(670, y-10, 200, 12);
+        ctx.fillStyle = col; ctx.fillRect(670, y-10, w*2, 12);
+        ctx.fillStyle = '#c9d1d9'; ctx.font = '10px monospace'; ctx.fillText(nm, 615, y);
+        y += 16;
+    }
+    // Timestamp
+    ctx.fillStyle = '#6e7681'; ctx.font = '9px monospace';
+    ctx.fillText(new Date().toISOString().slice(0,19) + ' | Atlas: subject 12', 610, H-10);
+    // Download
+    const a = document.createElement('a');
+    a.download = 'zebrafish_v2_' + Date.now() + '.png';
+    a.href = fig.toDataURL('image/png'); a.click();
+    log('Figure exported');
+}
+
+// --- Brain surgery (ablation) ---
+const ABLATABLE = ['tectum','thalamus','pallium','amygdala','cerebellum','habenula','bg','place_cells','critic','insula'];
+(function initAblation() {
+    const el = document.getElementById('ablationControls');
+    if (!el) return;
+    el.innerHTML = ABLATABLE.map(r =>
+        `<label style="display:flex;align-items:center;gap:4px;padding:1px 0;cursor:pointer;">` +
+        `<input type="checkbox" checked onchange="toggleAblation('${r}',this.checked)">` +
+        `<span>${r}</span></label>`).join('');
+})();
+async function toggleAblation(region, enabled) {
+    const res = await fetch('/api/ablate', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({region, enabled})
+    });
+    const d = await res.json();
+    if (d.status === 'ok') log(`${region}: ${enabled ? 'restored' : 'ABLATED'}`);
+    else log(`Ablation error: ${d.message}`);
+}
+
+// --- Replay system ---
+let replayData = null, replayIdx = 0, replayPlaying = false, replayTimer = null;
+
+async function loadReplayList() {
+    const res = await fetch('/api/replays');
+    const replays = await res.json();
+    const el = document.getElementById('replayList');
+    if (!replays.length) { el.textContent = 'No replays yet (complete a round first)'; return; }
+    el.innerHTML = replays.map(r =>
+        `<div style="cursor:pointer;padding:2px 0;border-bottom:1px solid #21262d" onclick="fetchReplay(${r.round})">` +
+        `R${r.round}: ${r.n_steps} steps, food=${r.metrics?.food_eaten||0}, fitness=${(r.metrics?.fitness||0).toFixed(0)}</div>`
+    ).join('');
+}
+
+async function fetchReplay(roundNum) {
+    const res = await fetch('/api/replay/' + roundNum);
+    replayData = await res.json();
+    if (replayData.status === 'error') { log('Replay not found'); return; }
+    const sl = document.getElementById('replaySlider');
+    sl.max = replayData.steps.length - 1; sl.value = 0; sl.disabled = false;
+    document.getElementById('replayPlayBtn').disabled = false;
+    document.getElementById('replayFrame').textContent = `0/${replayData.steps.length}`;
+    log(`Loaded replay: Round ${roundNum}, ${replayData.steps.length} steps`);
+    scrubReplay(0);
+}
+
+function scrubReplay(idx) {
+    if (!replayData) return;
+    replayIdx = parseInt(idx);
+    const step = replayData.steps[replayIdx];
+    if (step) updateStep(step);
+    document.getElementById('replayFrame').textContent = `${replayIdx}/${replayData.steps.length}`;
+}
+
+function playReplay() {
+    if (!replayData) return;
+    if (replayPlaying) {
+        clearInterval(replayTimer); replayPlaying = false;
+        document.getElementById('replayPlayBtn').innerHTML = '&#9654;'; return;
+    }
+    replayPlaying = true;
+    document.getElementById('replayPlayBtn').innerHTML = '&#9646;&#9646;';
+    replayTimer = setInterval(() => {
+        replayIdx++;
+        if (replayIdx >= replayData.steps.length) replayIdx = 0;
+        document.getElementById('replaySlider').value = replayIdx;
+        scrubReplay(replayIdx);
+    }, 50);
 }
 
 // Load initial status
@@ -985,6 +1516,34 @@ async function init() {
     connectWS();
 }
 init();
+
+// ========== BRAIN 3D — Plotly.js scatter3d ==========
+const brain3d = {
+    atlas: null, regionOffsets: {},
+    baseColors: null, spikeDecay: null,
+    container: null, initialized: false,
+    _connTraceIdx: null,
+};
+
+function hexToRGB(hex) {
+    const v = parseInt(hex.replace('#',''), 16);
+    return [(v>>16)&255, (v>>8)&255, v&255];
+}
+
+// Brain 3D loaded from brain3d.js (Plotly.js scatter3d)
+</script>
+<script src="/static/brain3d.js"></script>
+<script src="/static/atlas3d.js"></script>
+<script>
+// Hook spike data into brain3d + atlas slices
+const _origUpdateStep = updateStep;
+updateStep = function(d) {
+    _origUpdateStep(d);
+    if (d.spikes) {
+        updateBrain3DSpikes(d.spikes);
+        updateAtlasSliceActivity(d.spikes);
+    }
+};
 </script>
 </body>
 </html>

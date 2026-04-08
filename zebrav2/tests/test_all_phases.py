@@ -1,6 +1,8 @@
 """Run all phase tests and print summary."""
-import sys
-sys.path.insert(0, '/home/hjpark/Dropbox/claude/vzebra')
+import sys, os
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 def run_all():
     results = {}
@@ -61,6 +63,62 @@ def run_all():
         except Exception as e:
             results[name] = False
             print(f"  FAIL  {name}: {e}")
+
+    # Functional forward-pass tests for key modules
+    import torch as _torch
+    from zebrav2.spec import DEVICE as _DEVICE
+
+    try:
+        from zebrav2.brain.retina import RetinaV2
+        ret = RetinaV2()
+        L = _torch.rand(800, device=_DEVICE)
+        R = _torch.rand(800, device=_DEVICE)
+        out = ret(L, R)
+        ok = ('on_fused' in out or 'on' in out) and out.get('on_fused', out.get('on')).shape[0] > 0
+        results['Retina forward pass'] = ok
+        print(f"  {'PASS' if ok else 'FAIL'}  Retina forward pass: keys={list(out.keys())[:4]}")
+    except Exception as e:
+        results['Retina forward pass'] = False
+        print(f"  FAIL  Retina forward pass: {e}")
+
+    try:
+        from zebrav2.brain.neuromod import NeuromodSystem
+        nm = NeuromodSystem()
+        nm_out = nm.update(reward=1.0, amygdala_alpha=0.5, cms=0.2,
+                           flee_active=False, fatigue=0.2, circadian=0.8, current_goal=0)
+        da_high = nm_out['DA'] > 0.5   # positive reward → DA > 0.5
+        results['Neuromod reward→DA'] = da_high
+        print(f"  {'PASS' if da_high else 'FAIL'}  Neuromod reward→DA: DA={nm_out['DA']:.3f} (expect > 0.5)")
+    except Exception as e:
+        results['Neuromod reward→DA'] = False
+        print(f"  FAIL  Neuromod reward→DA: {e}")
+
+    try:
+        from zebrav2.brain.neuromod import NeuromodSystem
+        nm2 = NeuromodSystem()
+        # Run flee for 30 steps — 5-HT should fall
+        for _ in range(30):
+            nm2.update(reward=0.0, amygdala_alpha=0.9, cms=0.5,
+                       flee_active=True, fatigue=0.3, circadian=0.8, current_goal=1)
+        ht5_low = nm2.HT5.item() < 0.5
+        results['Neuromod flee→5HT falls'] = ht5_low
+        print(f"  {'PASS' if ht5_low else 'FAIL'}  Neuromod flee→5HT falls: 5HT={nm2.HT5.item():.3f} (expect < 0.5)")
+    except Exception as e:
+        results['Neuromod flee→5HT falls'] = False
+        print(f"  FAIL  Neuromod flee→5HT falls: {e}")
+
+    try:
+        from zebrav2.brain.place_cells import ThetaPlaceCells
+        pc = ThetaPlaceCells()
+        out1 = pc(100.0, 200.0, food_eaten=False, predator_near=False)
+        out2 = pc(110.0, 205.0, food_eaten=True, predator_near=False)
+        rate = out2['rate']
+        ok = rate is not None and rate.shape[0] > 0 and rate.max().item() >= 0
+        results['PlaceCells forward pass'] = ok
+        print(f"  {'PASS' if ok else 'FAIL'}  PlaceCells forward pass: max_rate={rate.max():.3f}, food_value={out2['food_value']:.4f}")
+    except Exception as e:
+        results['PlaceCells forward pass'] = False
+        print(f"  FAIL  PlaceCells forward pass: {e}")
 
     # Integration test: brain_v2 step
     try:

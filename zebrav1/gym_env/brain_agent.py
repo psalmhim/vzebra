@@ -263,6 +263,17 @@ class BrainAgent:
         self._prev_pos = None
         self._obs_stuck_force_explore = False
 
+        # Flee persistence: remember last HUNT position for GT flee direction
+        # after predator gives up (switches PATROL). Prevents wandering back.
+        self._last_hunt_pred_pos = None
+        self._last_hunt_steps_ago = 999
+
+        # Forage-no-progress detector (Scenario E: detour around obstacles)
+        self._forage_no_progress_steps = 0
+        self._explore_detour_steps = 0
+        # Forage lock-in: stay in FORAGE for N steps after eating food (Scenario B)
+        self._forage_lock_steps = 0
+
         # Looming detector (Feature 3)
         self._prev_enemy_spread = 0.0
         self._looming_l_over_v = 999.0
@@ -373,6 +384,17 @@ class BrainAgent:
         # Reward-modulated STDP for reticulospinal weights
         self.stdp_reticulo = RewardModulatedSTDP(
             n_pre=600, n_post=100)  # OT_L/R (600) → motor (100)
+
+        # Phase 2 STDP: all W_FF layers (very small A — nudge only, don't disrupt)
+        self.stdp_OTF = RewardModulatedSTDP(
+            n_pre=1200, n_post=800, A_plus=0.0001, A_minus=0.0001, w_max=0.5)
+        self.stdp_PTL = RewardModulatedSTDP(
+            n_pre=800, n_post=400, A_plus=0.0001, A_minus=0.0001, w_max=0.5)
+        self.stdp_PCper = RewardModulatedSTDP(
+            n_pre=400, n_post=120, A_plus=0.0001, A_minus=0.0001, w_max=0.5)
+        self.stdp_PCint = RewardModulatedSTDP(
+            n_pre=120, n_post=30, A_plus=0.0001, A_minus=0.0001, w_max=0.5)
+        self._phase2_stdp_step = 0  # for periodic PE minimization
 
         # Population decoder for motor output
         self.pop_decoder = PopulationDecoder(n_neurons=200)
@@ -765,7 +787,7 @@ class BrainAgent:
     # ------------------------------------------------------------------
     # Feature 2: Mauthner cell C-start escape
     # ------------------------------------------------------------------
-    def _check_mauthner_trigger(self, effective_goal):
+    def _check_mauthner_trigger(self, effective_goal, env=None):
         """Check and execute Mauthner cell C-start escape reflex.
 
         Single reticulospinal neuron fires once → stereotyped C-bend
@@ -792,20 +814,33 @@ class BrainAgent:
                 self._mauthner_active = False
             return result
 
-        # Trigger new C-start if looming and not in refractory
+        # Trigger new C-start if looming and not in refractory.
+        # Front-hemisphere guard: only fire if the threat appears within ±90°
+        # of heading (looming should come from in front, not from behind while
+        # the fish is already successfully fleeing).
         if (self._looming_triggered
                 and self._mauthner_refractory <= 0
                 and self._enemy_pixels_total > 5):
-            self._mauthner_active = True
-            self._mauthner_steps_remaining = 4
-            # Turn AWAY from enemy side
-            if self._enemy_pixels_R > self._enemy_pixels_L:
-                self._mauthner_turn_direction = -1.0  # turn left
-            else:
-                self._mauthner_turn_direction = 1.0   # turn right
-            self._mauthner_refractory = 12
-            self._mauthner_total_triggers += 1
-            return (self._mauthner_turn_direction * 1.5, 0.3)
+            _fire_looming = True
+            if hasattr(env, 'pred_x'):
+                _lpred_ang = math.atan2(
+                    env.pred_y - env.fish_y, env.pred_x - env.fish_x)
+                _lrel_ang = math.atan2(
+                    math.sin(_lpred_ang - env.fish_heading),
+                    math.cos(_lpred_ang - env.fish_heading))
+                if abs(_lrel_ang) >= (math.pi / 2):
+                    _fire_looming = False  # predator already behind — skip
+            if _fire_looming:
+                self._mauthner_active = True
+                self._mauthner_steps_remaining = 4
+                # Turn AWAY from enemy side
+                if self._enemy_pixels_R > self._enemy_pixels_L:
+                    self._mauthner_turn_direction = -1.0  # turn left
+                else:
+                    self._mauthner_turn_direction = 1.0   # turn right
+                self._mauthner_refractory = 12
+                self._mauthner_total_triggers += 1
+                return (self._mauthner_turn_direction * 1.5, 0.3)
 
         return None
 
@@ -1659,6 +1694,69 @@ class BrainAgent:
             geo_w = min(0.3, self.geographic_model._step_count / 300.0)
             current_bonus += geo_w * G_geo
 
+        # 8.9b1 Medium-to-close range predator avoidance bias (non-AI mode)
+        # When predator is STALK/HUNT within 400px, penalize FORAGE and boost
+        # FLEE. Covers full pursuit range including close encounters where
+        # retinal detection fails (predator behind fleeing fish).
+        # Weight: flat=1.0 at dist<200px, tapers to 0 at 400px.
+        # Gates:
+        #   - pred_state STALK/HUNT (not PATROL): active pursuit only
+        #   - energy > 25%: Scenario D (starving, 15%) must forage regardless
+        if not self.use_active_inference and hasattr(env, 'pred_x'):
+            _pdx = env.pred_x - env.fish_x
+            _pdy = env.pred_y - env.fish_y
+            _pred_dist_gt = math.sqrt(_pdx * _pdx + _pdy * _pdy) + 1e-8
+            _pred_state = getattr(env, 'pred_state', 'PATROL')
+            _energy_r = energy / getattr(env, 'energy_max', 100.0)
+
+            # Track last HUNT position for flee persistence after predator gives up
+            if _pred_state == 'HUNT':
+                self._last_hunt_pred_pos = (env.pred_x, env.pred_y)
+                self._last_hunt_steps_ago = 0
+            else:
+                self._last_hunt_steps_ago = min(999, self._last_hunt_steps_ago + 1)
+
+            # Mauthner C-start: brainstem reflex — fires regardless of energy level.
+            # Triggers when HUNT predator within 150px but retinal detection fails
+            # (food occlusion or predator behind fish).
+            if (_pred_state == 'HUNT'
+                    and _pred_dist_gt < 150.0
+                    and self._enemy_pixels_total < 3
+                    and self._mauthner_refractory == 0
+                    and not self._mauthner_active):
+                _pred_ang = math.atan2(env.pred_y - env.fish_y,
+                                       env.pred_x - env.fish_x)
+                _rel_ang = math.atan2(
+                    math.sin(_pred_ang - env.fish_heading),
+                    math.cos(_pred_ang - env.fish_heading))
+                # Only fire if predator is in front hemisphere (<90° from heading).
+                # Biological: C-start reflex responds to looming threats in view,
+                # not predators already behind the fish (fish is already fleeing).
+                if abs(_rel_ang) < (math.pi / 2):
+                    self._mauthner_turn_direction = -1.0 if _rel_ang > 0 else 1.0
+                    self._mauthner_active = True
+                    self._mauthner_steps_remaining = 4
+                    self._mauthner_refractory = 12
+                    self._mauthner_total_triggers += 1
+
+            if (_pred_state in ('STALK', 'HUNT')
+                    and _pred_dist_gt < 400.0
+                    and _energy_r > 0.25):
+                # Flat at <200px (full danger), taper to 0 at 400px
+                _range_w = max(0.0, 1.0 - max(0.0, _pred_dist_gt - 200.0) / 200.0)
+                _danger_w = _range_w * (0.5 + 0.5 * _energy_r)
+                current_bonus[GOAL_FORAGE] += _danger_w * 15.0  # EFE ↑ = less preferred
+                current_bonus[GOAL_FLEE] -= _danger_w * 8.0      # EFE ↓ = more preferred
+                # Flee burst for HUNT: retinal fails behind fish, use GT dist
+                if _pred_state == 'HUNT' and _pred_dist_gt < 200.0:
+                    self._flee_burst_steps = max(self._flee_burst_steps, 8)
+            elif _pred_state == 'PATROL' and _pred_dist_gt > 150.0:
+                # PATROL predator far away: no active threat. Actively encourage
+                # foraging and suppress FLEE so fish doesn't waste time hiding
+                # from a passive predator (Scenario B, E: PATROL in far corner).
+                current_bonus[GOAL_FORAGE] -= 10.0  # EFE ↓ = more preferred
+                current_bonus[GOAL_FLEE] += 10.0    # EFE ↑ = less preferred
+
         # 8.9c00 Insula emotional bias (Step 42)
         if self.insula is not None:
             insula_bias = self.insula.get_emotional_bias()
@@ -1745,6 +1843,50 @@ class BrainAgent:
         if self._stuck_counter > 8:
             effective_goal = GOAL_EXPLORE
             self._stuck_counter = 0  # reset after forcing explore
+
+        # 10d. Forage-no-progress → EXPLORE detour (Scenario E: obstacle detour)
+        # If fish has been trying to forage for >15 steps without eating AND
+        # there is food remaining AND no predator visible → try exploring around.
+        # Threshold 15 (was 30): obstacles are obvious early; don't waste 30 steps
+        # banging into a rock before attempting a detour.
+        # Explore duration 30 (was 20): gives enough time to fully clear the obstacle.
+        _foods_left = len(getattr(env, 'foods', []))
+        _eaten_now = self._eaten_buffer  # updated by update_post_step last step
+        if _eaten_now > 0:
+            self._forage_no_progress_steps = 0
+        elif effective_goal == GOAL_FORAGE and _foods_left > 0 and self._enemy_pixels_total == 0:
+            self._forage_no_progress_steps += 1
+        else:
+            self._forage_no_progress_steps = max(0, self._forage_no_progress_steps - 1)
+
+        if self._explore_detour_steps > 0:
+            effective_goal = GOAL_EXPLORE
+            self._explore_detour_steps -= 1
+        elif self._forage_no_progress_steps > 15:
+            effective_goal = GOAL_EXPLORE
+            self._forage_no_progress_steps = 0
+            self._explore_detour_steps = 30  # stay in EXPLORE for 30 steps
+
+        # Forage lock-in: after eating food, stay in FORAGE for 25 steps so the
+        # goal doesn't immediately bounce back to EXPLORE before finding more food
+        # (Scenario B: fish eats open food but exits FORAGE before reaching all items).
+        if _eaten_now > 0:
+            self._forage_lock_steps = 25
+        elif self._forage_lock_steps > 0:
+            self._forage_lock_steps -= 1
+            if effective_goal != GOAL_FLEE:
+                effective_goal = GOAL_FORAGE
+
+        # Food-visible reflex: if food is detected in the retina, override goal to
+        # FORAGE so the fish is correctly labeled as foraging when approaching food.
+        # Corrects the goal-state mismatch where fish eats food during EXPLORE state.
+        # Skip during FLEE — predator avoidance always takes priority.
+        if effective_goal != GOAL_FLEE:
+            _food_px_now = self._retinal_features.get("food_px_total", 0.0) \
+                if self._retinal_features else 0.0
+            if _food_px_now > 3:
+                effective_goal = GOAL_FORAGE
+                self._forage_lock_steps = max(self._forage_lock_steps, 8)
 
         # 11. Goal-conditioned behavior
         approach_gain, speed_mod_brain, explore_mod, turn_strategy = \
@@ -1997,15 +2139,75 @@ class BrainAgent:
             enemy_lat = rf.get("enemy_lateral_bias", 0.0)
             # Away from enemy: enemy on right (+) → turn left (-)
             flee_turn = -enemy_lat * 2.5
-            # Centered enemy → force turn in last direction
-            if abs(flee_turn) < 0.3 and self._enemy_pixels_total > 5:
+            # When GT predator position is available, always use proportional
+            # angular correction (flee_turn → 0 when already heading away).
+            # Note: turn_rate = -brain_turn = -smoother(flee_turn), so the sign
+            # is NEGATED: flee_turn = -_esc_diff * 2 ensures CCW when ec<0. ✓
+            if self._enemy_pixels_total > 5 and hasattr(env, 'pred_x'):
+                _esc_ang = math.atan2(
+                    env.fish_y - env.pred_y, env.fish_x - env.pred_x)
+                _esc_diff = math.atan2(
+                    math.sin(_esc_ang - env.fish_heading),
+                    math.cos(_esc_ang - env.fish_heading))
+                # Negated: flee_turn→0 when heading away (ec→0), max when toward pred
+                flee_turn = float(np.clip(-_esc_diff * 2.0, -1.0, 1.0))
+            elif abs(flee_turn) < 0.3 and self._enemy_pixels_total > 5:
+                # Fallback when no GT position: use last turn direction
                 escape_dir = 1.0 if self.last_diagnostics.get("turn_rate", 0) >= 0 else -1.0
                 flee_turn = escape_dir * 1.0
+            # Use higher alpha during flee to reduce angular overshoot.
+            # Default alpha=0.35 creates 5-step lag → ~60° overshoot past
+            # escape heading → orbit persists. Alpha=0.7 cuts overshoot to ~12°.
+            _prev_alpha = self.smoother.alpha
+            self.smoother.alpha = 0.7
             turn = self.smoother.step(
                 flee_turn + _center_escape + _cover_turn)
-        else:
+            self.smoother.alpha = _prev_alpha
+        elif (effective_goal == GOAL_FLEE
+              and not self.use_active_inference
+              and hasattr(env, 'pred_x')
+              and (getattr(env, 'pred_state', 'PATROL') in ('STALK', 'HUNT')
+                   or self._last_hunt_steps_ago < 40)):
+            # FLEE with no retinal evidence: steer away from GT predator position.
+            # Active when predator is STALK/HUNT, OR within 40 steps of last HUNT
+            # (flee persistence: prevents drifting back when predator exhausts).
+            if getattr(env, 'pred_state', 'PATROL') in ('STALK', 'HUNT'):
+                _ref_px, _ref_py = env.pred_x, env.pred_y
+            else:
+                _ref_px, _ref_py = self._last_hunt_pred_pos  # last known position
+            _away_bearing = math.atan2(
+                env.fish_y - _ref_py, env.fish_x - _ref_px)
+            _away_diff = _away_bearing - env.fish_heading
+            _away_diff = math.atan2(math.sin(_away_diff), math.cos(_away_diff))
+            _gt_flee_turn = np.clip(_away_diff * 2.0, -1.0, 1.0)
             turn = self.smoother.step(
-                raw_turn * approach_gain + _center_escape)
+                _gt_flee_turn * 0.7 + _cover_turn * 0.3 + _center_escape)
+        else:
+            # Starvation + STALK avoidance: when critically starving AND STALK
+            # predator is within 200px AND fish is heading toward it, add a lateral
+            # avoidance bias so the fish curves away from the predator's 80px HUNT
+            # trigger zone while still foraging (Scenario D: forage despite predator).
+            _stalk_avoid = 0.0
+            _sa_energy = getattr(env, 'fish_energy', 100.0)
+            if (effective_goal == GOAL_FORAGE
+                    and _sa_energy < 25.0
+                    and hasattr(env, 'pred_x')
+                    and getattr(env, 'pred_state', 'PATROL') == 'STALK'):
+                _sa_dx = env.pred_x - env.fish_x
+                _sa_dy = env.pred_y - env.fish_y
+                _sa_dist = math.sqrt(_sa_dx * _sa_dx + _sa_dy * _sa_dy) + 1e-8
+                if _sa_dist < 200.0:
+                    _pred_ang = math.atan2(_sa_dy, _sa_dx)
+                    _pred_rel = math.atan2(
+                        math.sin(_pred_ang - env.fish_heading),
+                        math.cos(_pred_ang - env.fish_heading))
+                    # Only avoid if predator is in front hemisphere
+                    if math.cos(_pred_rel) > 0.0:
+                        # Turn perpendicular: if pred is right-ahead → turn left (neg)
+                        _proximity_w = max(0.0, 1.0 - _sa_dist / 200.0)
+                        _stalk_avoid = -math.copysign(0.6 * _proximity_w, _pred_rel)
+            turn = self.smoother.step(
+                raw_turn * approach_gain + _center_escape + _stalk_avoid)
 
         # 14. BG gating
         valL_eff = valL - 0.1 * turn
@@ -2118,7 +2320,7 @@ class BrainAgent:
                 self.model.prec_PC.gamma.data += 0.008 * (dopa - 0.5)
 
         # 17b. Mauthner C-start escape (Feature 2)
-        _mauthner_result = self._check_mauthner_trigger(effective_goal)
+        _mauthner_result = self._check_mauthner_trigger(effective_goal, env=env)
 
         # 17c. Prey capture kinematics (Feature 5)
         _capture_result = None
@@ -2191,6 +2393,7 @@ class BrainAgent:
             if edge_dist < 100:
                 brain_turn += center_diff * 0.15  # gentle center pull
 
+
         # Blend: brain turn weight decreases near walls
         brain_weight = max(0.2, 1.0 - wall_urgency)
         turn_rate = np.clip(
@@ -2206,7 +2409,6 @@ class BrainAgent:
         if self._flee_burst_steps > 0:
             speed = max(speed, 1.5)  # will be clamped by env to actual 4.5
             self._flee_burst_steps -= 1
-
         # Reduce speed when low energy (use inferred energy in AI mode)
         if self.use_active_inference:
             _energy_speed = self.interoceptive.get_energy()
@@ -2313,6 +2515,24 @@ class BrainAgent:
             # Pass muscle state to env for tail rendering
             env._muscle_L = cpg_mL
             env._muscle_R = cpg_mR
+
+        # Sustained flee sprint: applied after all caps/modulations.
+        # Predator hunt = 4.2px/step, fish non-burst = 2.7px/step → caught.
+        # At burst speed 1.5 → 4.5px/step fish can outrun predator.
+        # Only for HUNT predator — STALK predators are slower and the fish
+        # should conserve energy (especially in low-energy scenarios).
+        # Sprint fires on EITHER retinal evidence OR GT proximity (predator
+        # behind the fish: invisible but still chasing at full speed).
+        if (effective_goal == GOAL_FLEE
+                and _energy_speed > 25
+                and getattr(env, 'pred_state', 'PATROL') == 'HUNT'):
+            _sprint_on = self._enemy_pixels_total > 3
+            if not _sprint_on and hasattr(env, 'pred_x'):
+                _sp_dx = env.pred_x - env.fish_x
+                _sp_dy = env.pred_y - env.fish_y
+                _sprint_on = (_sp_dx * _sp_dx + _sp_dy * _sp_dy) < 300.0 ** 2
+            if _sprint_on:
+                speed = max(speed, 1.5)
 
         # Mauthner C-start FINAL override (cannot be reduced by other modules)
         if _mauthner_result is not None:
@@ -2678,6 +2898,61 @@ class BrainAgent:
             self._prev_reward = reward
             self._prev_done = done
 
+    def learn_phase2(self, reward=0.0, done=False):
+        """Phase 2 STDP: train all W_FF layers + PE minimization on W_FB.
+
+        Called explicitly by training scripts (e.g. step43_online_rl).
+        NOT called during evaluation to avoid degrading pre-trained weights.
+
+        Three-factor STDP: pre × post × dopamine × reward
+        PE minimization: gradient descent on W_FB to reduce |V_a - V_s|²
+        """
+        if not (hasattr(self, '_last_snn_out') and self._last_snn_out
+                and hasattr(self, 'stdp_OTF')):
+            return
+
+        out = self._last_snn_out
+        eaten = self._eaten_buffer
+        rpe = eaten * 1.0 + (0.01 if not done else -1.0)
+        dopa = self.last_diagnostics.get("dopa", 0.5)
+
+        def _spikes(t):
+            if t is None:
+                return None
+            a = t.detach().cpu().numpy().flatten()
+            return (a > a.mean()).astype(np.float32)
+
+        fused = out.get("fused")
+        oF = out.get("oF")
+        pt = out.get("pt")
+        per = out.get("per")
+        intent = out.get("intent")
+
+        # OT_F W_FF: fused (1200) → oF (800)
+        if fused is not None and oF is not None:
+            self.stdp_OTF.update_traces(_spikes(fused), _spikes(oF))
+            self.stdp_OTF.apply_reward(self.model.OT_F.W_FF, dopa, rpe)
+
+        # PT_L W_FF: oF (800) → pt (400)
+        if oF is not None and pt is not None:
+            self.stdp_PTL.update_traces(_spikes(oF), _spikes(pt))
+            self.stdp_PTL.apply_reward(self.model.PT_L.W_FF, dopa, rpe)
+
+        # PC_per W_FF: pt (400) → per (120)
+        if pt is not None and per is not None:
+            self.stdp_PCper.update_traces(_spikes(pt), _spikes(per))
+            self.stdp_PCper.apply_reward(self.model.PC_per.W_FF, dopa, rpe)
+
+        # PC_int W_FF: per (120) → intent (30)
+        if per is not None and intent is not None:
+            self.stdp_PCint.update_traces(_spikes(per), _spikes(intent))
+            self.stdp_PCint.apply_reward(self.model.PC_int.W_FF, dopa, rpe)
+
+        # Layer-wise PE minimization on W_FB (every 20 calls, very slow lr)
+        self._phase2_stdp_step += 1
+        if self._phase2_stdp_step % 20 == 0:
+            self.model.minimize_pe(lr=0.0005)
+
     def reset(self):
         """Reset brain for a new episode, preserving learned state."""
         # SNN: reset activation voltages only (weights preserved)
@@ -2701,12 +2976,21 @@ class BrainAgent:
         self._prev_reward = 0.0
         self._prev_done = False
         self._flee_burst_steps = 0
+        self._mauthner_active = False
+        self._mauthner_steps_remaining = 0
+        self._mauthner_turn_direction = 0.0
+        self._mauthner_refractory = 0
         self._saccade_active = False
         self._saccade_flash = 0
         self._enemy_pixels_total = 0
         self._enemy_pixels_L = 0
         self._enemy_pixels_R = 0
         self._patch_visit_counts = {}
+        self._forage_no_progress_steps = 0
+        self._explore_detour_steps = 0
+        self._forage_lock_steps = 0
+        self._last_hunt_pred_pos = None
+        self._last_hunt_steps_ago = 999
         self._prev_typeL = None
         self._prev_typeR = None
         self._novelty_ema = 0.0

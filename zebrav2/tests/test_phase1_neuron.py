@@ -1,6 +1,8 @@
 """Phase 1: Izhikevich neuron validation."""
-import sys, torch
-sys.path.insert(0, '/home/hjpark/Dropbox/claude/vzebra')
+import sys, os, torch
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 from zebrav2.brain.neurons import IzhikevichLayer
 from zebrav2.spec import DEVICE
 
@@ -52,12 +54,14 @@ def test_phase1():
     burst_detected = any(sum(ib_spikes[i:i+5]) >= 2 for i in range(len(ib_spikes)-5))
     check("IB neuron produces bursts (>=2 spikes in 5ms window)", burst_detected or sum(ib_spikes) > 0)
 
-    # Vectorized: 1000 neurons
+    # Vectorized: 1000 neurons — run 50ms to ensure neurons reach threshold
     pop = IzhikevichLayer(1000, 'RS', DEVICE)
     I = torch.ones(1000, device=DEVICE) * 8.0
-    sp = pop(I)
-    check("Vectorized 1000-neuron population runs without error", sp.shape == (1000,))
-    check("Some neurons spike (not all silent)", sp.sum().item() >= 0)  # relaxed
+    total_spikes = torch.zeros(1000, device=DEVICE)
+    for _ in range(50):
+        total_spikes += pop(I)
+    check("Vectorized 1000-neuron population runs without error", total_spikes.shape == (1000,))
+    check("Some neurons spike in 50ms at I=8pA (not all silent)", total_spikes.sum().item() >= 1)
 
     print(f"\nResult: {passes}/{passes+fails} passed")
     return fails == 0

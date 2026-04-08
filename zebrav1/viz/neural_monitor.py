@@ -69,7 +69,7 @@ class NeuralMonitor:
 
     RASTER_HISTORY = 100
     RASTER_NEURONS = 80  # 30 PC_int + 20 PT_L + 10 Motor + 10 Eye + 10 DA
-    SPIKE_THRESHOLD = 0.15
+    SPIKE_THRESHOLD = 0.5   # binary spike threshold (Izhikevich fires 0/1)
 
     def __init__(self):
         if not HAS_PYGAME:
@@ -160,41 +160,44 @@ class NeuralMonitor:
         self._snn_out = snn_out
         self._diagnostics = diagnostics or {}
 
-        # PC_int (30 neurons)
-        intent_np = self._tensor_to_np(
-            snn_out.get("intent", np.zeros((1, 30))))
-        intent_1d = intent_np.flatten()[:30]
+        # Izhikevich SNN: use binary spike tensors directly.
+        # spikes_* keys are 0/1 float tensors — no delta needed.
 
-        # PT_L subsampled (20 from 400)
-        pt_np = self._tensor_to_np(
-            snn_out.get("pt", np.zeros((1, 400))))
-        pt_1d = pt_np.flatten()
+        # PC_int spikes (30 neurons)
+        intent_spk = self._tensor_to_np(
+            snn_out.get("spikes_PC_int", np.zeros((1, 30))))
+        intent_1d = intent_spk.flatten()[:30]
+
+        # PT_L spikes subsampled (20 from 400)
+        pt_spk = self._tensor_to_np(
+            snn_out.get("spikes_PT", np.zeros((1, 400))))
+        pt_1d = pt_spk.flatten()
         pt_sub = pt_1d[::20][:20] if len(pt_1d) >= 20 else pt_1d[:20]
 
-        # Motor subsampled (10 from 200)
-        mot_np = self._tensor_to_np(
-            snn_out.get("motor", np.zeros((1, 200))))
-        mot_1d = mot_np.flatten()
+        # Motor spikes subsampled (10 from 200)
+        mot_spk = self._tensor_to_np(
+            snn_out.get("spikes_mot", np.zeros((1, 200))))
+        mot_1d = mot_spk.flatten()
         mot_sub = mot_1d[::20][:10] if len(mot_1d) >= 20 else mot_1d[:10]
 
-        # Eye subsampled (10 from 100)
-        eye_np = self._tensor_to_np(
-            snn_out.get("eye", np.zeros((1, 100))))
-        eye_1d = eye_np.flatten()
-        eye_sub = eye_1d[::10][:10] if len(eye_1d) >= 10 else eye_1d[:10]
+        # Eye spikes subsampled (10 from 100)
+        eye_spk = self._tensor_to_np(
+            snn_out.get("spikes_DA", np.zeros((1, 50))))
+        eye_1d = eye_spk.flatten()
+        eye_sub = eye_1d[::5][:10] if len(eye_1d) >= 5 else eye_1d[:10]
 
-        # DA subsampled (10 from 50)
-        da_np = self._tensor_to_np(
-            snn_out.get("DA", np.zeros((1, 50))))
-        da_1d = da_np.flatten()
-        da_sub = da_1d[::5][:10] if len(da_1d) >= 5 else da_1d[:10]
+        # OT_F spikes subsampled (10 from 800)
+        otf_spk = self._tensor_to_np(
+            snn_out.get("spikes_OTF", np.zeros((1, 800))))
+        otf_1d = otf_spk.flatten()
+        otf_sub = otf_1d[::80][:10] if len(otf_1d) >= 80 else otf_1d[:10]
 
         row = np.zeros(self.RASTER_NEURONS, dtype=np.float32)
-        row[:30] = np.abs(intent_1d)
-        row[30:50] = np.abs(pt_sub)
-        row[50:60] = np.abs(mot_sub)
-        row[60:70] = np.abs(eye_sub)
-        row[70:80] = np.abs(da_sub)
+        row[:30] = intent_1d            # PC_int (intent)
+        row[30:50] = pt_sub             # PT_L (pretectum)
+        row[50:60] = mot_sub            # motor
+        row[60:70] = eye_sub            # DA
+        row[70:80] = otf_sub            # OT_F (tectal)
 
         self._raster_buf[self._raster_ptr] = row
         self._raster_ptr = (self._raster_ptr + 1) % self.RASTER_HISTORY

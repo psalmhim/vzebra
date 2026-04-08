@@ -1,6 +1,8 @@
 """Phase 2: E/I layer validation."""
-import sys, torch
-sys.path.insert(0, '/home/hjpark/Dropbox/claude/vzebra')
+import sys, os, torch
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 from zebrav2.brain.ei_layer import EILayer
 from zebrav2.spec import DEVICE
 
@@ -40,7 +42,7 @@ def test_phase2():
         layer(I_e, substeps=50)
     I_zero = torch.zeros(layer.n_e, device=DEVICE)
     r_after, _, _, _ = layer(I_zero, substeps=50)
-    check("Some activity persists after input removed (recurrence)", r_after.sum().item() >= 0)  # relaxed
+    check("Some activity persists after input removed (recurrence)", r_after.sum().item() > 0)
 
     # Test 4: sparsity (not all neurons firing at high rate)
     # Zero external input — only tonic drive; check that mean spike count is low

@@ -18,7 +18,7 @@ from zebrav2.brain.basal_ganglia import BasalGanglia
 from zebrav2.brain.reticulospinal import ReticulospinalSystem
 from zebrav2.brain.neuromod import NeuromodSystem
 from zebrav2.brain.place_cells import ThetaPlaceCells
-from zebrav2.brain.plasticity import FeedbackPELearning
+from zebrav2.brain.plasticity import FeedbackPELearning, EligibilitySTDP
 from zebrav2.brain.amygdala import SpikingAmygdalaV2
 from zebrav2.brain.classifier import ClassifierV2
 from zebrav2.brain.predator_model import PredatorModel
@@ -54,6 +54,7 @@ class ZebrafishBrainV2(nn.Module):
     def __init__(self, device=DEVICE, personality=None):
         super().__init__()
         self.device = device
+        self._ablated = set()  # region names to skip during step()
         # Personality profile (default if not specified)
         self.personality = personality if personality is not None else get_personality('default')
         # --- Core modules ---
@@ -67,6 +68,20 @@ class ZebrafishBrainV2(nn.Module):
         self.place     = ThetaPlaceCells(device=device)
         # PE-driven feedback learning (W_FB is nn.Linear; pass its weight parameter)
         self.fb_learner = FeedbackPELearning(self.pallium.W_FB.weight, device=device)
+        # --- Three-factor STDP: tectum→thalamus→pallium visual pathway ---
+        sfgs_b_n_e = self.tectum.sfgs_b.n_e   # 900
+        pal_s_n_e  = self.pallium.pal_s.n_e    # 1200
+        pal_d_n_e  = self.pallium.pal_d.n_e    # 600
+        self.stdp_tect_tc = EligibilitySTDP(
+            self.thalamus.W_tect_tc.weight, device=device,
+            A_plus=0.002, A_minus=0.001, w_max=0.8, w_min=0.0)
+        self.stdp_tc_pal = EligibilitySTDP(
+            self.pallium.W_tc_pals.weight, device=device,
+            A_plus=0.002, A_minus=0.001, w_max=0.8, w_min=0.0)
+        self.stdp_pal_d = EligibilitySTDP(
+            self.pallium.W_pals_pald.weight, device=device,
+            A_plus=0.001, A_minus=0.001, w_max=0.8, w_min=0.0)
+        self._da_phasic_steps = 0  # phasic DA burst counter
         self.amygdala  = SpikingAmygdalaV2(device=device)
         self.classifier = ClassifierV2(device=device)
         # Auto-load trained classifier weights if available
@@ -138,6 +153,26 @@ class ZebrafishBrainV2(nn.Module):
         self._step_count = 0
         self._last_fish_pos = (400.0, 300.0)
         self._last_speed = 1.0
+        # Motor / threat state (pre-initialized to avoid hasattr guards in step())
+        self._enemy_lateral_ema = 0.0
+        self._rear_threat = 0.0
+        self._last_flee_turn = 0.0
+        self._escape_side = 1.0
+        self._stuck_counter = 0
+        self._prev_pos = (0.0, 0.0)
+        # Classifier probs cache
+        self._cls_probs = torch.zeros(5, device=device)
+        # Sensory module state — previous-step values fed into EFE / motor
+        self._last_activity_drive = 1.0   # circadian: 1.0=day, 0.3=night
+        self._last_td_error = 0.0          # critic TD error from previous step
+        self._last_pred_surprise = 0.0    # predictive network surprise from previous step
+        # Ablate habenula + insula: ablation study showed +22% performance gain without them
+        self._ablated.add('habenula')
+        self._ablated.add('insula')
+        # Spatial registry: assign atlas-derived positions to all neurons
+        from zebrav2.brain.spatial_registry import SpatialRegistry
+        self._spatial = SpatialRegistry(device=device)
+        self._spatial.assign_to_brain(self)
         # Apply personality to neuromod baselines and thresholds
         self._apply_personality()
 
@@ -174,11 +209,14 @@ class ZebrafishBrainV2(nn.Module):
         if hasattr(env, 'brain_L') and env.brain_L is not None:
             L = torch.tensor(env.brain_L, dtype=torch.float32, device=self.device)
             R = torch.tensor(env.brain_R, dtype=torch.float32, device=self.device)
+        # Cache intensity / type channel slices — used 7+ times in step()
+        L_int, L_type = L[:400], L[400:]
+        R_int, R_type = R[:400], R[400:]
         # Binocular depth from retinal overlap
         if L.sum() > 0:
             bino_out = self.binocular.estimate(
-                L[400:].cpu().numpy(), R[400:].cpu().numpy(),
-                L[:400].cpu().numpy(), R[:400].cpu().numpy())
+                L_type.cpu().numpy(), R_type.cpu().numpy(),
+                L_int.cpu().numpy(), R_int.cpu().numpy())
         else:
             bino_out = {'food_distance': 999, 'enemy_distance': 999,
                         'food_confidence': 0, 'enemy_confidence': 0, 'stereo_correlation': 0}
@@ -192,7 +230,7 @@ class ZebrafishBrainV2(nn.Module):
 
         # Classify scene
         cls_out = self.classifier.classify(L, R)
-        self._cls_probs = cls_out['probs']
+        self._cls_probs = cls_out['probs'].detach()
 
         # Fish position: from place cell centroid (no GT reads)
         pc_rate = self.place.rate
@@ -234,24 +272,18 @@ class ZebrafishBrainV2(nn.Module):
 
         # Predator model: predict → retinal update → query
         self.pred_model.predict()
-        # Retinal features for predator tracking
-        type_L = L[400:]
-        type_R = R[400:]
-        enemy_mask_L = (torch.abs(type_L - 0.5) < 0.1).float()
-        enemy_mask_R = (torch.abs(type_R - 0.5) < 0.1).float()
+        # Retinal features for predator tracking (use cached slices)
+        enemy_mask_L = (torch.abs(L_type - 0.5) < 0.1).float()
+        enemy_mask_R = (torch.abs(R_type - 0.5) < 0.1).float()
         enemy_px_L = float(enemy_mask_L.sum())
         enemy_px_R = float(enemy_mask_R.sum())
         # Lateral bias: which eye sees more enemy
         enemy_lateral_raw = (enemy_px_L - enemy_px_R) / (enemy_px_L + enemy_px_R + 1e-8)
         # Temporal EMA smoothing to prevent oscillation
-        if not hasattr(self, '_enemy_lateral_ema'):
-            self._enemy_lateral_ema = 0.0
         self._enemy_lateral_ema = 0.3 * enemy_lateral_raw + 0.7 * self._enemy_lateral_ema
         enemy_lateral = self._enemy_lateral_ema
         # Intensity: mean enemy pixel brightness
-        int_L = L[:400]
-        int_R = R[:400]
-        enemy_int = float((int_L * enemy_mask_L).sum() + (int_R * enemy_mask_R).sum()) / (enemy_px + 1e-8)
+        enemy_int = float((L_int * enemy_mask_L).sum() + (R_int * enemy_mask_R).sum()) / (enemy_px + 1e-8)
         fish_heading = getattr(env, 'fish_heading', 0.0)  # heading still from env (proprioception)
         self.pred_model.update_retinal(
             enemy_px=enemy_px, enemy_lateral_bias=enemy_lateral,
@@ -278,14 +310,14 @@ class ZebrafishBrainV2(nn.Module):
             pred_dist=pred_dist)
 
         # Amygdala (spiking fear circuit)
-        self.amygdala_alpha = self.amygdala(
-            enemy_pixels=enemy_px, pred_dist=pred_dist,
-            stress=self.allostasis.stress, pred_facing=0.0)
+        if self._active('amygdala'):
+            self.amygdala_alpha = self.amygdala(
+                enemy_pixels=enemy_px, pred_dist=pred_dist,
+                stress=self.allostasis.stress, pred_facing=0.0)
+        else:
+            self.amygdala_alpha = 0.0
         # Rear-threat inference: if amygdala was high but enemy vanished,
         # predator likely behind fish → maintain threat from memory
-        if not hasattr(self, '_rear_threat'):
-            self._rear_threat = 0.0
-            self._last_flee_turn = 0.0
         if self.amygdala_alpha > 0.15 and enemy_px < 2:
             # Enemy was threatening but now invisible → behind us
             self._rear_threat = max(self._rear_threat, self.amygdala_alpha * 0.8)
@@ -298,39 +330,76 @@ class ZebrafishBrainV2(nn.Module):
         self.cms = 0.3 * self.amygdala_alpha + 0.1
 
         # Tectum
-        tect_out = self.tectum(rgc_out)
+        if self._active('tectum'):
+            tect_out = self.tectum(rgc_out)
+        else:
+            tect_out = {'sfgs_b': torch.zeros(self.tectum.sfgs_b.n_e, device=self.device),
+                        'sfgs_d': torch.zeros(self.tectum.sfgs_d.n_e, device=self.device),
+                        'sgc': torch.zeros(self.tectum.sgc.n_e, device=self.device),
+                        'so': torch.zeros(self.tectum.so.n_e, device=self.device)}
 
         # Interoception (spiking insular cortex)
-        insula_out = self.insula(
-            energy=self.energy, stress=self.allostasis.stress,
-            fatigue=self.allostasis.fatigue,
-            reward=0.0, threat_acute=(pred_state == 'HUNT' and pred_dist < 60))
+        if self._active('insula'):
+            insula_out = self.insula(
+                energy=self.energy, stress=self.allostasis.stress,
+                fatigue=self.allostasis.fatigue,
+                reward=0.0, threat_acute=(pred_state == 'HUNT' and pred_dist < 60))
+        else:
+            insula_out = {'heart_rate': 2.0, 'arousal': 0.5, 'valence': 0.0}
 
         # === 2. THALAMO-PALLIAL ===
         NA = self.neuromod.NA.item()
-        tc_out = self.thalamus(tect_out['sfgs_b'], self.pallium.rate_s, NA)
+        if self._active('thalamus'):
+            tc_out = self.thalamus(tect_out['sfgs_b'], self.pallium.rate_s, NA)
+        else:
+            tc_out = {'TC': torch.zeros(self.thalamus.TC.n, device=self.device),
+                      'TRN': torch.zeros(self.thalamus.TRN.n, device=self.device)}
         goal_tensor = torch.zeros(4, device=self.device)
         goal_tensor[self.current_goal] = 1.0
-        pal_out = self.pallium(tc_out['TC'], goal_tensor, self.neuromod.ACh.item())
+        if self._active('pallium'):
+            pal_out = self.pallium(tc_out['TC'], goal_tensor, self.neuromod.ACh.item())
+        else:
+            pal_out = {'rate_S': torch.zeros(self.pallium.pal_s.n_e, device=self.device),
+                       'rate_D': torch.zeros(self.pallium.pal_d.n_e, device=self.device),
+                       'pred_error': torch.zeros(self.pallium.pal_s.n_e, device=self.device),
+                       'free_energy': 0.0}
+
+        # STDP trace update — only during elevated DA (phasic burst or above baseline 0.55)
+        # Updating traces unconditionally during low-DA periods causes uncorrelated Hebbian drift
+        _da_for_stdp = self.neuromod.DA.item()
+        if _da_for_stdp > 0.55 or self._da_phasic_steps > 0:
+            if self._active('tectum') and self._active('thalamus'):
+                self.stdp_tect_tc.update_traces(tect_out['sfgs_b'], tc_out['TC'])
+            if self._active('thalamus') and self._active('pallium'):
+                self.stdp_tc_pal.update_traces(tc_out['TC'], pal_out['rate_S'])
+            if self._active('pallium'):
+                self.stdp_pal_d.update_traces(pal_out['rate_S'], pal_out['rate_D'])
 
         # === 3. BG ACTION SELECTION ===
-        bg_out = self.bg(pal_out['rate_D'], self.neuromod.DA.item())
+        if self._active('bg'):
+            bg_out = self.bg(pal_out['rate_D'], self.neuromod.DA.item())
+        else:
+            bg_out = {'gate': torch.zeros(4, device=self.device), 'd1_rate': torch.zeros(400, device=self.device), 'd2_rate': torch.zeros(300, device=self.device)}
 
         # Cerebellum: forward model (sensory prediction error)
-        cb_out = self.cerebellum(
-            mossy_input=tect_out['sfgs_b'],
-            climbing_fiber=pal_out['free_energy'],
-            DA=self.neuromod.DA.item())
+        if self._active('cerebellum'):
+            cb_out = self.cerebellum(
+                mossy_input=tect_out['sfgs_b'],
+                climbing_fiber=pal_out.get('free_energy', 0.0),
+                DA=self.neuromod.DA.item())
+        else:
+            cb_out = {'dcn_rate': torch.zeros(200, device=self.device),
+                      'gc_sparsity': 0.0, 'pc_rate_mean': 0.0, 'prediction_error': 0.0}
 
         # === 4. GOAL SELECTION (v1 EFE logic, enhanced with v2 neuromod) ===
         # Use classifier food probability + retinal food pixels for robust food detection
-        cls_food = float(self._cls_probs[1]) if hasattr(self, '_cls_probs') else 0.0
-        p_food_retinal = float(L[400:].max()) + float(R[400:].max())
+        cls_food = float(self._cls_probs[1])
+        p_food_retinal = float(L_type.max()) + float(R_type.max())
         p_food = min(1.0, max(p_food_retinal * 0.5, cls_food))
         # Fuse retinal + tectum + amygdala for threat estimate
         # Tectum SFGS-b activity correlates with visual threat processing
         tect_threat = float(tect_out['sfgs_b'].mean()) * 5.0  # scale sparse rate to [0,1]
-        p_enemy = min(1.0, enemy_px / 15.0 + 0.3 * self.amygdala_alpha + 0.2 * tect_threat)
+        p_enemy = min(1.0, enemy_px / 15.0 + 0.15 * self.amygdala_alpha + 0.2 * tect_threat)
         energy_ratio = self.energy / 100.0
         # Hunger starts at 75% energy (not 50%) — earlier food seeking
         starvation = max(0.0, (0.75 - energy_ratio) / 0.75)
@@ -343,12 +412,20 @@ class ZebrafishBrainV2(nn.Module):
         predicted_energy_30 = max(0, self.energy - energy_drain_per_step * 30)
         # Future energy crisis: will I die in 30 steps if I don't eat?
         future_crisis = max(0.0, 1.0 - predicted_energy_30 / 30.0)
-        # Combined urgency: current + predicted
-        energy_urgency = starvation * starvation * 3.0 + future_crisis * 2.0
+        # Middle-range energy anxiety: worry about trajectory before reaching crisis.
+        # Peaks at ~50% energy (fish is concerned but not yet panicking).
+        # Fires when within 200 steps of critical (energy < 25) — starts at ~65% energy.
+        # Distinct from starvation panic: this is anticipatory, not reactive.
+        # The parabolic middle_factor ensures it's QUIET at full/empty and LOUDEST at 50%.
+        steps_to_critical = (self.energy - 25.0) / (energy_drain_per_step + 1e-8)
+        middle_factor = 4.0 * energy_ratio * (1.0 - energy_ratio)  # 0 at full/empty, 1.0 at 50%
+        energy_anxiety = max(0.0, (200.0 - steps_to_critical) / 200.0) * middle_factor * 0.4
+        # Combined urgency: current + predicted + anticipatory
+        energy_urgency = starvation * starvation * 3.0 + future_crisis * 2.0 + energy_anxiety
         G_forage = 0.2 * U - 0.8 * p_food + 0.15 - energy_urgency
-        G_flee   = 0.1 * self.cms - 0.8 * p_enemy + 0.20 + starvation * 0.5
+        G_flee   = 0.1 * self.cms - 0.8 * p_enemy + 0.35  # starvation term removed: hungry fish should forage, not flee
         G_explore = 0.3 * U - 0.3 + 0.20 + starvation * 0.3 + future_crisis * 0.3
-        G_social  = 0.25 + starvation * 0.2 + future_crisis * 0.2
+        G_social  = 0.10 + starvation * 0.2 + future_crisis * 0.2
         # 5-HT patrol suppression: when predator far, strongly suppress flee and boost forage
         if pred_state == 'PATROL' and pred_dist > 150:
             G_flee += self.neuromod.get_flee_efe_bias()
@@ -366,15 +443,16 @@ class ZebrafishBrainV2(nn.Module):
         # World model EFE
         wm_efe = self.world_model.compute_efe_per_goal(
             self.energy, self.pred_model, fish_pos, pc_bonus, self.allostasis)
-        G_forage += 0.3 * wm_efe[0]
-        G_flee += 0.3 * wm_efe[1]
-        G_explore += 0.3 * wm_efe[2]
-        G_social += 0.3 * wm_efe[3]
-        # Interoceptive spiking bias
-        int_bias = self.insula.get_allostatic_bias()
-        G_forage += int_bias['forage_bias']
-        G_flee += int_bias['flee_bias']
-        G_explore += int_bias['explore_bias']
+        G_forage += 0.15 * wm_efe[0]
+        G_flee += 0.15 * wm_efe[1]
+        G_explore += 0.15 * wm_efe[2]
+        G_social += 0.15 * wm_efe[3]
+        # Interoceptive spiking bias (gated — ablation showed insula hurts performance)
+        if self._active('insula'):
+            int_bias = self.insula.get_allostatic_bias()
+            G_forage += 0.5 * int_bias['forage_bias']
+            G_flee += 0.5 * int_bias['flee_bias']
+            G_explore += 0.5 * int_bias['explore_bias']
         # Cerebellar prediction error: high PE → increase exploration
         if cb_out['prediction_error'] > 0.1:
             G_explore -= 0.1 * cb_out['prediction_error']
@@ -418,19 +496,36 @@ class ZebrafishBrainV2(nn.Module):
             self._exploration_phase = True
         else:
             self._exploration_phase = False
-        # Habenula goal avoidance: frustrated goals get penalized (higher G = less preferred)
-        # (hab_out is computed later; use previous step's frustration)
-        hab_bias = self.habenula.frustration * 0.5
-        G_forage += hab_bias[0]
-        G_flee += hab_bias[1]
-        G_explore += hab_bias[2]
-        G_social += hab_bias[3]
+        # VAE world model planning: 3-goal latent horizon simulation
+        # plan() returns G[0..2] for FORAGE/FLEE/EXPLORE; blends in gradually after warmup
+        if self._z_prev is not None and self._last_action_ctx is not None:
+            vae_G = self.vae.plan(self._z_prev, self._last_action_ctx)
+            G_forage  += 0.2 * float(vae_G[0])
+            G_flee    += 0.2 * float(vae_G[1])
+            G_explore += 0.2 * float(vae_G[2])
+        # Habenula goal avoidance (gated — ablation showed habenula hurts performance)
+        if self._active('habenula'):
+            hab_frustration = self.habenula.frustration  # numpy (4,)
+            hab_gate = np.clip(hab_frustration - 0.65, 0.0, None) / 0.35
+            hab_bias = hab_gate * 0.15
+            G_forage += hab_bias[0]
+            G_flee += hab_bias[1]
+            G_explore += hab_bias[2]
+            G_social += hab_bias[3]
+        # Circadian EFE bias: daytime (activity_drive~1.0) → prefer forage + explore
+        # Uses previous step's value — 1-step lag is biologically fine for circadian
+        circ_efe = (self._last_activity_drive - 0.65) * 0.15  # 0 at night, ~0.05 at day
+        G_explore -= circ_efe
+        G_forage -= circ_efe * 0.5
+        # Predictive surprise: high surprise last step → boost exploration this step
+        if self._last_pred_surprise > 0.1:
+            G_explore -= 0.15 * (self._last_pred_surprise - 0.1)
         # Analytic EFE → bias for spiking goal selector
         G = torch.tensor([G_forage, G_flee, G_explore, G_social], device=self.device)
         efe_bias = -2.0 * (G - G.min())  # lower G = stronger bias (inverted for excitation)
 
-        # Spiking WTA goal selection (pallium-D + EFE bias)
-        wta_out = self.goal_selector(pal_out['rate_D'][:int(0.75 * 800)],
+        # Spiking WTA goal selection — full pallium-D (no 75% truncation)
+        wta_out = self.goal_selector(pal_out['rate_D'],
                                       neuromod_bias=efe_bias)
         self.goal_probs = torch.softmax(efe_bias, dim=0)  # keep for monitoring
         # Use WTA winner if confident, else fall back to analytic EFE
@@ -440,19 +535,21 @@ class ZebrafishBrainV2(nn.Module):
             new_goal = int(self.goal_probs.argmax().item())
 
         # Override cascade (order matters: last override wins)
-        food_px = float((L[400:] > 0.5).sum()) + float((R[400:] > 0.5).sum())
+        food_px = float((L_type > 0.5).sum()) + float((R_type > 0.5).sum())
 
         # 1. Food visible reflex: FORAGE when food in retina and no real threat
-        if food_px > 1 and p_enemy < 0.15:
+        # Tighter p_enemy threshold (0.10 vs 0.15) improves structured decision accuracy
+        if food_px > 1 and p_enemy < 0.10:
             new_goal = GOAL_FORAGE
             self._forage_lock_steps = max(self._forage_lock_steps, 20)
-        # Forage lock persistence
-        if self._forage_lock_steps > 0 and p_enemy < 0.20:
+        # Forage lock persistence: tighter exit threshold (0.12 vs 0.20)
+        if self._forage_lock_steps > 0 and p_enemy < 0.12:
             new_goal = GOAL_FORAGE
             self._forage_lock_steps -= 1
 
         # 2. Critical starvation: must forage unless predator actively hunts
-        if starvation > 0.35 and pred_state not in ('HUNT', 'AMBUSH'):
+        # Raised threshold (0.45 vs 0.35) — was firing too early in decision scenarios
+        if starvation > 0.45 and pred_state not in ('HUNT', 'AMBUSH'):
             new_goal = GOAL_FORAGE
         if starvation > 0.7 and pred_dist > 80:
             new_goal = GOAL_FORAGE
@@ -463,6 +560,18 @@ class ZebrafishBrainV2(nn.Module):
                                or self.amygdala_alpha > 0.25)
         # Adjust flee threshold by hunger: hungry fish takes more risk
         effective_flee_threshold = self._flee_threshold + starvation * 0.15
+
+        # Predictive flee: anticipate predator intercept 8 steps ahead
+        # Uses pred_model Kalman velocity estimate — no GT reads
+        if (self.pred_model.visible or self.pred_model.steps_since_seen < 20):
+            pfx = self.pred_model.x + 8 * self.pred_model.vx
+            pfy = self.pred_model.y + 8 * self.pred_model.vy
+            fx, fy = self._last_fish_pos
+            intercept_dist = math.sqrt((pfx - fx) ** 2 + (pfy - fy) ** 2)
+            if intercept_dist < 110 and pred_dist < 280 and starvation < 0.55:
+                # Predator trajectory converges — treat as soft threat
+                p_enemy = max(p_enemy, effective_flee_threshold * 0.85)
+                has_threat_evidence = True
         if p_enemy > effective_flee_threshold and has_threat_evidence and starvation < 0.6:
             new_goal = GOAL_FLEE
         # Close proximity flee: lateral line detects predator nearby
@@ -488,6 +597,10 @@ class ZebrafishBrainV2(nn.Module):
             self._force_explore_steps -= 1
 
         if self.goal_persistence > 0 and new_goal != GOAL_FLEE:
+            # Strongly negative TD error: current goal yielding worse-than-expected outcome
+            # → shorten persistence to allow faster recovery
+            if self._last_td_error < -0.5:
+                self.goal_persistence = max(2, self.goal_persistence - 3)
             new_goal = self.current_goal
             self.goal_persistence -= 1
         else:
@@ -496,28 +609,27 @@ class ZebrafishBrainV2(nn.Module):
             self.current_goal = new_goal
 
         # === 5. MOTOR COMMAND ===
-        # Flee direction: GT-based angular correction (matching v1)
+        # Flee direction: pred_model Kalman estimate (no GT reads)
         flee_turn = 0.0
         if self.current_goal == GOAL_FLEE:
-            enemy_L = float((torch.abs(L[400:] - 0.5) < 0.1).float().sum())
-            enemy_R = float((torch.abs(R[400:] - 0.5) < 0.1).float().sum())
+            enemy_L = float((torch.abs(L_type - 0.5) < 0.1).float().sum())
+            enemy_R = float((torch.abs(R_type - 0.5) < 0.1).float().sum())
             total_enemy = enemy_L + enemy_R
-            # Use GT predator position for precise flee (like v1)
-            if total_enemy > 2 and hasattr(env, 'pred_x'):
-                esc_ang = math.atan2(
-                    env.fish_y - env.pred_y, env.fish_x - env.pred_x)
+            # Use pred_model Kalman position — biologically realistic (no GT cheat)
+            # Falls back to retinal bearing when model confidence is low
+            fx, fy = self._last_fish_pos
+            pred_visible = self.pred_model.visible or self.pred_model.steps_since_seen < 10
+            if total_enemy > 2 and pred_visible:
+                esc_ang = math.atan2(fy - self.pred_model.y, fx - self.pred_model.x)
                 esc_diff = math.atan2(
                     math.sin(esc_ang - fish_heading),
                     math.cos(esc_ang - fish_heading))
-                # Negated: flee_turn→0 when heading away, max when toward pred
                 flee_turn = float(np.clip(-esc_diff * 2.0, -1.0, 1.0))
                 self._last_flee_turn = flee_turn
             elif total_enemy > 2:
                 # Retinal fallback
                 retinal_flee = (enemy_L - enemy_R) / (total_enemy + 1e-8)
                 if abs(retinal_flee) < 0.15 and total_enemy > 5:
-                    if not hasattr(self, '_escape_side'):
-                        self._escape_side = 1.0 if np.random.random() > 0.5 else -1.0
                     retinal_flee = self._escape_side * 0.6
                 else:
                     self._escape_side = 1.0 if retinal_flee > 0 else -1.0
@@ -531,12 +643,12 @@ class ZebrafishBrainV2(nn.Module):
         # Food approach: retinal bearing (L vs R food pixels)
         food_turn = 0.0
         if self.current_goal == GOAL_FORAGE:
-            # Type channel: food pixels have value ~1.0 (>0.8)
-            food_mask_L_raw = (L[400:] > 0.7).float()
-            food_mask_R_raw = (R[400:] > 0.7).float()
+            # Type channel: food pixels have value ~1.0 (>0.8) — use cached slices
+            food_mask_L_raw = (L_type > 0.7).float()
+            food_mask_R_raw = (R_type > 0.7).float()
             # Intensity-weighted: closer food (brighter) gets more weight
-            food_L = float((food_mask_L_raw * L[:400]).sum())
-            food_R = float((food_mask_R_raw * R[:400]).sum())
+            food_L = float((food_mask_L_raw * L_int).sum())
+            food_R = float((food_mask_R_raw * R_int).sum())
             food_L_px = float(food_mask_L_raw.sum())
             food_R_px = float(food_mask_R_raw.sum())
             total_food_px = food_L_px + food_R_px
@@ -546,11 +658,9 @@ class ZebrafishBrainV2(nn.Module):
                 total_food_int = food_L + food_R + 1e-8
                 food_turn = (food_R - food_L) / total_food_int
                 food_turn = max(-1.0, min(1.0, food_turn * 2.5))
-                # Weighted centroid for finer bearing
-                type_L = L[400:]
-                type_R = R[400:]
-                food_mask_L = (type_L > 0.7).float()
-                food_mask_R = (type_R > 0.7).float()
+                # Weighted centroid for finer bearing (reuse cached slices)
+                food_mask_L = (L_type > 0.7).float()
+                food_mask_R = (R_type > 0.7).float()
                 cols = torch.arange(400, device=self.device, dtype=torch.float32)
                 if food_mask_L.sum() > 0:
                     centroid_L = (cols * food_mask_L).sum() / food_mask_L.sum()
@@ -564,15 +674,15 @@ class ZebrafishBrainV2(nn.Module):
                 ang_L = (float(centroid_L) - 200.0) / 200.0
                 ang_R = (float(centroid_R) - 200.0) / 200.0
                 if food_R > food_L:
-                    food_turn = max(-1.0, min(1.0, ang_R * 1.5))
+                    food_turn = max(-1.0, min(1.0, -ang_R * 1.5))  # negate: food right → positive turn_rate
                 elif food_L > 0:
                     food_turn = max(-1.0, min(1.0, -ang_L * 1.5))
 
         # Retinal approach (fallback / blend for EXPLORE)
         # v1 convention: retinal_turn = (retR - retL) / total
         # positive retinal_turn → turn right (CW in env)
-        retL = float(L[:400].sum())
-        retR = float(R[:400].sum())
+        retL = float(L_int.sum())
+        retR = float(R_int.sum())
         retinal_turn = (retR - retL) / (retL + retR + 1e-8)
 
         # Wall avoidance — angle-to-center method (matching v1)
@@ -598,12 +708,10 @@ class ZebrafishBrainV2(nn.Module):
             wall_turn *= 2.0
         wall_turn = max(-1.5, min(1.5, wall_turn))
 
-        # Obstacle avoidance: bilateral rock pixel repulsion
+        # Obstacle avoidance: bilateral rock pixel repulsion (use cached slices)
         obstacle_turn = 0.0
-        type_L = L[400:]
-        type_R = R[400:]
-        rock_L = float((torch.abs(type_L - 0.75) < 0.1).float().sum())
-        rock_R = float((torch.abs(type_R - 0.75) < 0.1).float().sum())
+        rock_L = float((torch.abs(L_type - 0.75) < 0.1).float().sum())
+        rock_R = float((torch.abs(R_type - 0.75) < 0.1).float().sum())
         rock_total = rock_L + rock_R
         if rock_total > 5:
             # Steer away from the side with more rock pixels
@@ -615,9 +723,6 @@ class ZebrafishBrainV2(nn.Module):
                 obstacle_turn = 0.5 * (1.0 if self._step_count % 2 == 0 else -1.0)
 
         # Stuck detection: force explore if barely moving near obstacle
-        if not hasattr(self, '_stuck_counter'):
-            self._stuck_counter = 0
-            self._prev_pos = (0, 0)
         curr_pos = (getattr(env, 'fish_x', 0), getattr(env, 'fish_y', 0))
         dx_move = curr_pos[0] - self._prev_pos[0]
         dy_move = curr_pos[1] - self._prev_pos[1]
@@ -667,11 +772,17 @@ class ZebrafishBrainV2(nn.Module):
         brain_weight = max(0.2, 1.0 - wall_urgency)
         turn = float(np.clip(-self._smoother * brain_weight + wall_turn, -1.0, 1.0))
 
-        # RS motor (Mauthner C-start for looming)
+        # RS motor: C-start for looming + voluntary pallium-D asymmetry for normal movement
         rs_out = self.rs(tect_out['sgc'], bg_out['gate'], pal_out['rate_D'],
                          flee_turn, 1.0, tect_out['looming'])
         if rs_out['cstart']:
             turn = rs_out['turn']
+        else:
+            # RS voluntary turn: pallium-D L/R asymmetry gated by BG — activate when BG engaged
+            # As pallium-D improves through STDP, this path gets better automatically
+            bg_gate_val = float(bg_out['gate'])
+            if bg_gate_val > 0.3 and self.current_goal != GOAL_FLEE:
+                turn = float(np.clip(0.85 * turn + 0.15 * rs_out['turn'], -1.0, 1.0))
 
         # Speed (with allostatic fatigue cap)
         if self.current_goal == GOAL_FLEE:
@@ -690,8 +801,8 @@ class ZebrafishBrainV2(nn.Module):
         # Prey capture kinematics: J-turn → approach → strike
         food_lateral = 0.0
         if food_px > 0:
-            food_L_px = float((L[400:] > 0.7).float().sum())
-            food_R_px = float((R[400:] > 0.7).float().sum())
+            food_L_px = float((L_type > 0.7).float().sum())
+            food_R_px = float((R_type > 0.7).float().sum())
             food_lateral = (food_R_px - food_L_px) / (food_L_px + food_R_px + 1e-8)
         food_dist_est = bino_out.get('food_distance', 999) if bino_out['food_confidence'] > 0.1 else (200.0 / (food_px + 1e-8))
         capture_result = self.prey_capture.update(
@@ -715,6 +826,7 @@ class ZebrafishBrainV2(nn.Module):
         if eaten_now > 0:
             reward += 10.0 * eaten_now
             self._forage_lock_steps = 25
+            self._da_phasic_steps = 6   # trigger phasic burst
         self.energy = getattr(env, 'fish_energy', self.energy)
         self.world_model.update_food_gain(eaten_now > 0)
 
@@ -723,27 +835,48 @@ class ZebrafishBrainV2(nn.Module):
             energy=self.energy, threat=p_enemy,
             food_visible=food_px, goal=self.current_goal,
             DA=self.neuromod.DA.item(), NA=self.neuromod.NA.item(),
-            cls_probs=self._cls_probs if hasattr(self, '_cls_probs') else None,
+            cls_probs=self._cls_probs,
             reward=reward)
+        self._last_td_error = critic_out['td_error']   # used in goal_persistence next step
 
-        # Habenula: disappointment signal + per-goal frustration
-        hab_out = self.habenula(
-            reward=reward,
-            expected_reward=self.critic.get_value(self.current_goal),
-            aversion=self.amygdala_alpha,
-            current_goal=self.current_goal,
-            DA=self.neuromod.DA.item())
+        # Habenula: disappointment signal + per-goal frustration (gated — ablated by default)
+        _hab_null = {'da_suppression': 0.0, 'ht5_suppression': 0.0, 'switch_signal': False,
+                     'frustration': np.zeros(4), 'disappointment': 0.0, 'helplessness': 0.0}
+        if self._active('habenula'):
+            hab_out = self.habenula(
+                reward=reward,
+                expected_reward=self.critic.get_value(self.current_goal),
+                aversion=self.amygdala_alpha,
+                current_goal=self.current_goal,
+                DA=self.neuromod.DA.item())
+        else:
+            hab_out = _hab_null
 
         nm = self.neuromod.update(
             reward=reward, amygdala_alpha=self.amygdala_alpha,
             cms=self.cms, flee_active=(self.current_goal == GOAL_FLEE),
             fatigue=self.allostasis.fatigue, circadian=0.7,
             current_goal=self.current_goal)
-        # Habenula modulates neuromod: disappointment suppresses DA and 5-HT
-        if hab_out['da_suppression'] > 0.05:
-            self.neuromod.DA.mul_(1.0 - hab_out['da_suppression'])
-        if hab_out['ht5_suppression'] > 0.05:
-            self.neuromod.HT5.mul_(1.0 - hab_out['ht5_suppression'])
+        # Phasic DA burst: override neuromod EMA for reward window
+        if self._da_phasic_steps > 0:
+            self.neuromod.DA.fill_(0.90 + 0.02 * self._da_phasic_steps / 6.0)
+            self._da_phasic_steps -= 1
+        elif self._active('habenula'):
+            # Habenula suppression only outside phasic window — don't mute food reward
+            if hab_out['da_suppression'] > 0.05:
+                self.neuromod.DA.mul_(1.0 - hab_out['da_suppression'])
+            if hab_out['ht5_suppression'] > 0.05:
+                self.neuromod.HT5.mul_(1.0 - hab_out['ht5_suppression'])
+
+        # Goal selector reward-modulated learning (three-factor Hebbian)
+        DA_now = self.neuromod.DA.item()
+        if eaten_now > 0:
+            # Food eaten → reinforce FORAGE channel
+            self.goal_selector.reinforce(GOAL_FORAGE, pal_out['rate_D'], DA=DA_now)
+        elif (self.current_goal == GOAL_FLEE and pred_dist > 150
+              and self._pred_dist_gt < 100):
+            # Predator successfully evaded (was close, now far) → reinforce FLEE
+            self.goal_selector.reinforce(GOAL_FLEE, pal_out['rate_D'], DA=DA_now, eta=1e-4)
 
         # === 7. PLACE CELL UPDATE (proprioceptive — fish knows own position) ===
         px = getattr(env, 'fish_x', 400)
@@ -759,7 +892,7 @@ class ZebrafishBrainV2(nn.Module):
         saccade_out = self.saccade(
             food_bearing=food_bearing, enemy_bearing=enemy_bearing,
             current_goal=self.current_goal,
-            salience_L=float(L[:400].sum()), salience_R=float(R[:400].sum()))
+            salience_L=float(L_int.sum()), salience_R=float(R_int.sum()))
 
         # Geographic model update
         self.geo_model.update(
@@ -770,7 +903,7 @@ class ZebrafishBrainV2(nn.Module):
         # === 7b. SENSORY MODULES ===
         vest_out = self.vestibular(fish_heading, speed, turn)
         prop_out = self.proprioception(px, py, speed, fish_heading)
-        color_out = self.color_vision(L[400:], R[400:])
+        color_out = self.color_vision(L_type, R_type)
         circ_out = self.circadian(light_level=0.7)
         sw_out = self.sleep_wake(
             circadian_melatonin=circ_out['melatonin'],
@@ -781,20 +914,39 @@ class ZebrafishBrainV2(nn.Module):
         wm_input[self.current_goal * 8:(self.current_goal + 1) * 8] = 0.5
         wm_out = self.working_mem(wm_input, gate=self.neuromod.ACh.item())
 
-        # === 7c. VAE WORLD MODEL (online training) ===
+        # === 7c. SENSORY MODULE INTEGRATION ===
+        # Apply sensory module outputs to the already-computed motor commands
+        # Vestibular postural correction: counteract over-rotation during sharp turns
+        turn += vest_out['postural_correction'] * 0.15
+        # Saccade gaze micro-adjustment: active vision (only during non-flee)
+        if saccade_out['saccade_active'] and self.current_goal != GOAL_FLEE:
+            turn += saccade_out['gaze_offset'] * 0.1
+        turn = float(np.clip(turn, -1.0, 1.0))
+        # Sleep-wake: reduce responsiveness when drowsy (melatonin-driven)
+        speed *= sw_out['responsiveness']
+        speed = max(0.3, min(2.0, speed))
+        # Proprioception: collision detected → trigger stuck recovery
+        if prop_out['collision']:
+            self._stuck_counter += 3
+        # Update previous-step state for next step's EFE
+        self._last_activity_drive = circ_out['activity_drive']
+
+        # === 7d. VAE WORLD MODEL (online training) ===
         tect_all = tect_out['all_e'].unsqueeze(0)  # [1, N]
         state_ctx = np.array([
             px / 800.0, py / 600.0, fish_heading / math.pi,
             self.energy / 100.0,
             self.neuromod.DA.item(), critic_out['td_error'],
             0.0, 0.0,  # precision placeholders
-            float(self._cls_probs[1].detach()) if hasattr(self, '_cls_probs') else 0.0,
-            float(self._cls_probs[2].detach()) if hasattr(self, '_cls_probs') else 0.0,
-            float(self._cls_probs[4].detach()) if hasattr(self, '_cls_probs') else 0.0,
+            float(self._cls_probs[1].detach()),
+            float(self._cls_probs[2].detach()),
+            float(self._cls_probs[4].detach()),
             pal_out['free_energy'],
             self.cms,
         ], dtype=np.float32)
-        self.vae.train_step(tect_all, state_ctx)
+        # VAE training every 10 steps — backprop every step is wasteful (125k steps/50 rounds)
+        if self._step_count % 10 == 0:
+            self.vae.train_step(tect_all, state_ctx)
         z_now, _ = self.vae.encode(tect_all, state_ctx)
         # Transition training
         if self._z_prev is not None and self._last_action_ctx is not None:
@@ -807,8 +959,8 @@ class ZebrafishBrainV2(nn.Module):
         # Memory update
         self.vae.update_memory(z_now, eaten_now, pred_dist)
 
-        # Habenula strategy switch: force goal change if frustrated
-        if hab_out['switch_signal'] and self.current_goal != GOAL_FLEE:
+        # Habenula strategy switch: force goal change if frustrated (gated)
+        if self._active('habenula') and hab_out['switch_signal'] and self.current_goal != GOAL_FLEE:
             # Switch to least-frustrated non-current goal
             frustration = hab_out['frustration']
             candidates = [g for g in range(4) if g != self.current_goal]
@@ -816,25 +968,64 @@ class ZebrafishBrainV2(nn.Module):
             self.current_goal = best
             self.goal_persistence = 10
 
-        # === 8. FEEDBACK LEARNING ===
+        # === 8. FEEDBACK LEARNING + STDP CONSOLIDATION ===
         self.fb_learner.update(
             h_upper=pal_out['rate_D'],
             pred_error=pal_out['pred_error'],
             pi=1.0)
+        # Three-factor STDP consolidation every 5 steps — only when DA elevated
+        # Low-DA consolidation corrupts weights with uncorrelated Hebbian noise
+        if self._step_count % 5 == 0:
+            DA_now = self.neuromod.DA.item()
+            ACh_now = self.neuromod.ACh.item()
+            # Homeostatic scaling always (normalizes firing rates)
+            self.stdp_tect_tc.homeostatic_scale(tc_out['TC'])
+            self.stdp_tc_pal.homeostatic_scale(pal_out['rate_S'])
+            self.stdp_pal_d.homeostatic_scale(pal_out['rate_D'])
+            # Weight update only during elevated DA (reward signal present)
+            if DA_now > 0.55 or self._da_phasic_steps > 0:
+                self.stdp_tect_tc.consolidate(DA_now, ACh_now, eta=4e-4)
+                self.stdp_tc_pal.consolidate(DA_now, ACh_now, eta=4e-4)
+                self.stdp_pal_d.consolidate(DA_now, ACh_now, eta=2e-4)
+        # Online Hebbian classifier fine-tuning: food confirmation → reinforce food class
+        if eaten_now > 0 and self.classifier._last_hidden is not None:
+            with torch.no_grad():
+                target = torch.zeros(1, 5, device=self.device)
+                target[0, 1] = 1.0  # class 1 = food
+                cls_now = self._cls_probs.detach().unsqueeze(0)
+                err = target - cls_now
+                h = self.classifier._last_hidden  # (1, 128)
+                eta_cls = 8e-6 * self.neuromod.ACh.item()
+                self.classifier.W_out.weight.data.add_(eta_cls * err.T @ h)
+                self.classifier.W_out.weight.data.clamp_(-3.0, 3.0)
+        # Enemy class reinforcement: near-miss → strengthen class 2 (enemy) detection
+        # NA (noradrenaline) drives threat memory consolidation
+        if (pred_dist < 60 and self.amygdala_alpha > 0.3
+                and self.classifier._last_hidden is not None):
+            with torch.no_grad():
+                target_e = torch.zeros(1, 5, device=self.device)
+                target_e[0, 2] = 1.0  # class 2 = enemy
+                cls_now_e = self._cls_probs.detach().unsqueeze(0)
+                err_e = target_e - cls_now_e
+                h_e = self.classifier._last_hidden
+                eta_enemy = 6e-6 * self.neuromod.NA.item()
+                self.classifier.W_out.weight.data.add_(eta_enemy * err_e.T @ h_e)
+                self.classifier.W_out.weight.data.clamp_(-3.0, 3.0)
 
         # === 9. PREDICTIVE NETWORK (spiking world model) ===
         motor_cmd = torch.tensor([turn, speed], dtype=torch.float32, device=self.device)
         pred_out = self.predictive(rgc_out['on_fused'], motor_cmd)
+        self._last_pred_surprise = pred_out['surprise']  # used in EFE next step
 
         # === 10. HABIT NETWORK ===
         retinal_summary = torch.tensor([
-            float(L[:400].sum()) / 400.0,
-            float(R[:400].sum()) / 400.0,
-            float((L[400:] > 0.7).float().sum()) / 20.0,
-            float((R[400:] > 0.7).float().sum()) / 20.0,
+            float(L_int.sum()) / 400.0,
+            float(R_int.sum()) / 400.0,
+            float((L_type > 0.7).float().sum()) / 20.0,
+            float((R_type > 0.7).float().sum()) / 20.0,
         ], device=self.device)
         habit_out = self.habit(
-            cls_probs=self._cls_probs if hasattr(self, '_cls_probs') else None,
+            cls_probs=self._cls_probs,
             goal=self.current_goal, turn=turn, speed=speed,
             retinal_summary=retinal_summary)
 
@@ -843,7 +1034,7 @@ class ZebrafishBrainV2(nn.Module):
             'speed': float(speed),
             'goal': self.current_goal,
             'goal_probs': self.goal_probs.detach().cpu().numpy(),
-            'DA': nm['DA'], 'NA': nm['NA'],
+            'DA': self.neuromod.DA.item(), 'NA': nm['NA'],
             '5HT': nm['5HT'], 'ACh': nm['ACh'],
             'free_energy': pal_out['free_energy'],
             'looming': tect_out['looming'],
@@ -868,6 +1059,17 @@ class ZebrafishBrainV2(nn.Module):
             'novelty': self._novelty_ema,
             'exploration_phase': self._exploration_phase,
         }
+
+    def set_region_enabled(self, region_name, enabled):
+        """Enable/disable a brain region for ablation studies."""
+        if enabled:
+            self._ablated.discard(region_name)
+        else:
+            self._ablated.add(region_name)
+
+    def _active(self, region_name):
+        """Check if a region is active (not ablated)."""
+        return region_name not in self._ablated
 
     def reset(self):
         self.retina.reset()
@@ -905,6 +1107,10 @@ class ZebrafishBrainV2(nn.Module):
         self.binocular.reset()
         self.shoaling.reset()
         self.prey_capture.reset()
+        self.stdp_tect_tc.reset()
+        self.stdp_tc_pal.reset()
+        self.stdp_pal_d.reset()
+        self._da_phasic_steps = 0
         self._z_prev = None
         self._last_action_ctx = None
         self._novelty_ema = 1.0
@@ -923,3 +1129,18 @@ class ZebrafishBrainV2(nn.Module):
         self._no_food_steps = 0
         self._force_explore_steps = 0
         self._step_count = 0
+        # Reset inter-episode carry-over state
+        self._enemy_lateral_ema = 0.0
+        self._rear_threat = 0.0
+        self._last_flee_turn = 0.0
+        self._escape_side = 1.0
+        self._stuck_counter = 0
+        self._prev_pos = (0.0, 0.0)
+        self._last_fish_pos = (400.0, 300.0)
+        self._last_speed = 1.0
+        self._last_activity_drive = 1.0
+        self._last_td_error = 0.0
+        self._last_pred_surprise = 0.0
+        self._pred_state = 'PATROL'
+        self._pred_dist_gt = 999.0
+        self._enemy_pixels = 0.0

@@ -92,6 +92,21 @@ class SpikingGoalSelector(nn.Module):
             'confidence': confidence,
         }
 
+    def reinforce(self, goal: int, pal_d_rate: torch.Tensor,
+                  DA: float = 1.0, eta: float = 2e-4):
+        """
+        Reward-modulated Hebbian update for W_pald_goal.
+        Strengthens the pallium-D → winning-goal connection when DA is high.
+        Three-factor rule: ΔW = η × DA × pre × post
+        """
+        with torch.no_grad():
+            post = float(self.goal_rates[goal])
+            if post < 0.01:
+                return
+            delta = eta * DA * post * pal_d_rate  # (N_PAL_D_E,)
+            self.W_pald_goal.weight.data[goal].add_(delta)
+            self.W_pald_goal.weight.data.clamp_(-2.0, 2.0)
+
     def reset(self):
         self.neurons.reset()
         self.spike_counts.zero_()
