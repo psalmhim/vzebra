@@ -131,7 +131,8 @@ class SpikingOlfaction(nn.Module):
     @torch.no_grad()
     def forward(self, fish_x: float, fish_y: float, fish_heading: float,
                 foods: list, conspecific_injured: bool = False,
-                pred_dist: float = 999.0) -> dict:
+                pred_dist: float = 999.0,
+                conspc_dist: float = 30.0) -> dict:
 
         # ── 1. Bilateral nostril sampling ──────────────────────────────
         (nL_x, nL_y), (nR_x, nR_y) = self._nostril_positions(
@@ -200,17 +201,18 @@ class SpikingOlfaction(nn.Module):
         self.receptor_adapt     = self._receptor_adapt_state
 
         # ── 5. Alarm substance (Fick, λ=100px) ────────────────────────
+        # Sources are independent: injured conspecific diffuses from conspc_dist,
+        # predator-proximity alarm diffuses from pred_dist.
+        alarm_C = 0.0
         if conspecific_injured:
-            alarm_source_strength = 0.8
-        elif pred_dist < 50:
-            # Same strength as conspecific injury: very close predator triggers
-            # maximum alarm response (fish likely cornered or being attacked)
-            alarm_source_strength = 0.8 * max(0.0, 1.0 - pred_dist / 50.0)
-        else:
-            alarm_source_strength = 0.0
-
-        alarm_C = alarm_source_strength * math.exp(-pred_dist / 100.0)
-        alarm_drive = min(1.0, alarm_C)
+            # Schreckstoff released by injured conspecific at conspc_dist
+            alarm_C = 0.8 * math.exp(-conspc_dist / 100.0)
+        if pred_dist < 50:
+            # Very close predator (fish cornered) also triggers alarm response
+            pred_alarm = 0.8 * max(0.0, 1.0 - pred_dist / 50.0) * math.exp(-pred_dist / 100.0)
+            alarm_C = max(alarm_C, pred_alarm)
+        alarm_C = min(1.0, alarm_C)
+        alarm_drive = alarm_C
         self.alarm_level = alarm_drive  # raw level before spiking scale
 
         I_alarm = torch.full((self.n_alarm,), alarm_drive * 20.0,

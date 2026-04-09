@@ -282,12 +282,28 @@ class ZebrafishBrainV2(nn.Module):
         if ll_out['dist'] < 999:
             ll_dist = ll_out['dist']
 
-        # Olfaction
+        # Olfaction — detect if any conspecific is close to the predator
+        _pred_x = getattr(env, 'pred_x', -9999)
+        _pred_y = getattr(env, 'pred_y', -9999)
+        _conspc_dist = ll_out.get('conspecific_dist', 999.0)
+        _conspecific_injured = False
+        for _cf in _ll_conspecifics:
+            try:
+                _cdx = float(_cf['x']) - _pred_x
+                _cdy = float(_cf['y']) - _pred_y
+                if math.sqrt(_cdx * _cdx + _cdy * _cdy) < 40:
+                    _conspecific_injured = True
+                    break
+            except (KeyError, TypeError):
+                pass
+
         olf_out = self.olfaction(
             fish_x=getattr(env, 'fish_x', 400), fish_y=getattr(env, 'fish_y', 300),
             fish_heading=getattr(env, 'fish_heading', 0.0),
             foods=getattr(env, 'foods', []),
-            pred_dist=ll_dist)
+            conspecific_injured=_conspecific_injured,
+            pred_dist=ll_dist,
+            conspc_dist=_conspc_dist)
 
         # Predator model: predict → retinal update → query
         self.pred_model.predict()
