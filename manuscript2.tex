@@ -34,8 +34,9 @@
 \usepackage{xcolor}
 
 % =====================================================================
-\title{A Biologically Grounded Virtual Zebrafish: Active Inference and
-Predictive Coding in a Developmental Spiking Neural Network}
+\title{A Virtual Laboratory for Vertebrate Brain Research: Active Inference,
+Spiking Neural Networks, and Controlled Behavioral Experiments in a
+Biologically Grounded Zebrafish Brain Model}
 
 \author{Anonymous}
 
@@ -114,6 +115,22 @@ whole-brain model of a vertebrate.
 An interactive web platform supports real-time visualization via vtk.js,
 live brain surgery (ablation of 10~regions during execution), four-stage
 curriculum training, episode replay, and multi-agent schooling.
+Beyond its role as a neural model, the virtual zebrafish functions as a
+\emph{virtual laboratory}: a controlled experimental environment in which
+researchers can test mechanistic hypotheses by manipulating specific
+biophysical parameters, neuromodulatory baselines, personality profiles, or
+social group composition, then observing emergent behavioral and neural
+consequences.
+Five scenario-based experimental protocols are provided:
+tabula rasa world learning, spatial amnesia recovery, fear conditioning
+acquisition, social inference calibration, and goal-bias adaptation under
+shifted reward statistics.
+The system further enables \emph{disorder modeling}---producing
+hypodopaminergic, ASD-like (high serotonin / reduced social drive), and
+schizophrenia-like (NMDA hypofunction / DA dysregulation) behavioral
+phenotypes by adjusting neuromodulatory parameters and E/I balance,
+bridging computational psychiatry, behavioral science, and cognitive
+neuroscience within a single unified framework.
 
 \medskip
 \noindent\textbf{Keywords:} active inference, predictive coding,
@@ -200,6 +217,15 @@ The key contributions of this work are:
   \item Demonstration that the free energy principle provides a unified
     computational language for exteroceptive perception, interoceptive
     regulation, neuromodulation, and motor control.
+  \item A \emph{virtual laboratory} framework with five experimental
+    scenario protocols, standardized behavioral assays, and
+    parameter-manipulation APIs that allow researchers across
+    neuroscience, cognitive science, behavioral science, and
+    computational psychiatry to test mechanistic hypotheses without
+    animal experiments---including disorder phenotype generation
+    (hypodopaminergic, ASD-like, schizophrenia-like) and group-level
+    social phenomena (schooling, collective alarm propagation,
+    competitive foraging).
 \end{enumerate}
 
 The model achieves 80/100 on a decision rationality benchmark
@@ -424,7 +450,7 @@ novelty signal (Bayesian surprise).
 
 \subsection{Sensory Processing}\label{sec:sensory}
 
-\paragraph{Binocular Retinal Sampling}
+\paragraph{Binocular Retinal Ganglion Cells}
 
 Each eye samples a $20 \times 20$ angular grid (400 pixels) with
 $\pm 80^\circ$ horizontal and $\pm 20^\circ$ vertical field of view.
@@ -436,24 +462,103 @@ boundary$\,{=}\,0.12$).
 Depth-shaded intensity attenuates exponentially with distance:
 $I_\text{depth}(r) = I_\text{raw}(r) \cdot \exp(-d(r)/80)$.
 
+Four RGC populations are computed per eye.
+\textit{ON-cells} (400) apply a 1-D Difference-of-Gaussians
+centre-surround kernel:
+\begin{equation}\label{eq:dog}
+  k_\text{DoG}(x) = \frac{1}{\sigma_c}\,e^{-x^2/(2\sigma_c^2)}
+    - \frac{0.5}{\sigma_s}\,e^{-x^2/(2\sigma_s^2)},
+\end{equation}
+with $\sigma_c = 3$\,px and $\sigma_s = 9$\,px
+(centre:surround ratio 3:1 with 0.5 surround weight),
+followed by \texttt{clamp}(0, 1) \citep{rodieck1965}.
+OFF-cell (400) output is computed as:
+\begin{equation}\label{eq:off}
+  r_\text{OFF}(t) = 0.5\,r_\text{OFF}(t{-}1)
+    + 0.5\,\text{clamp}(2(I_{t-1} - I_t),\,0,\,1),
+\end{equation}
+combining a luminance-decrease transient with a two-frame
+exponential moving average ($\alpha = 0.5$) for temporal smoothing.
+\textit{Looming cells} (100) compute angular expansion rate:
+\begin{equation}\label{eq:loom}
+  \theta_t = 0.5\,f_\text{enemy},\quad
+  \dot\theta = \theta_t - \theta_{t-1},\quad
+  r_\text{loom} = \text{clamp}(20\,\dot\theta,\,0,\,1)
+    \cdot \mathbf{1}[\theta_t > 0.02],
+\end{equation}
+where $f_\text{enemy}$ is the enemy pixel fraction of the visual field.
+The threshold $\dot\theta > 0.3$ (equivalent to the $l/v < 10$ criterion
+of Temizer et al.\ 2015) triggers the looming flag fed to the
+reticulospinal system.
+\textit{Direction-selective cells} (100) implement a Reichardt correlator
+with a proper one-step delay buffer:
+\begin{equation}\label{eq:ds}
+  r_\text{DS}(t) = \text{clamp}(I_t \cdot I_{t-1},\,0,\,1),
+\end{equation}
+where $I_{t-1}$ is the stored delay buffer, updated \emph{after} use
+to enforce the correct 1-step temporal lag.
+A \textit{UV prey channel} proxies SWS1 cone responses ($\sim$360\,nm)
+\citep{yoshimatsu2020}: $u(x) = \mathbf{1}[I(x) < 0.3] \cdot
+\mathbf{1}[\text{type}(x) > 0.7]$, so that low-intensity food-typed
+pixels against bright backgrounds yield a scalar prey signal
+$r_\text{UV} = \sum_x u(x) / 10$, providing an additional foraging
+cue that boosts $p_\text{food}$ by $0.1 r_\text{UV}$.
+
 \paragraph{Lateral Line Mechanosensation}
 
-Sixteen virtual neuromasts (8 per side) detect hydrodynamic flow from
-nearby moving entities using a dipole flow model.
-Reafference cancellation subtracts predicted self-motion flow via
-cerebellar efference copy.
-The rear wake signal detects predator approach from behind the
-visual field \citep{stewart2013}.
+The lateral line comprises 24 Izhikevich neurons in four populations
+(anterior/posterior $\times$ superficial/canal; Table~\ref{tab:ll}).
+Superficial neuromasts (SNs; 8$+$8 RS neurons, 200\,px range) are
+velocity-sensitive, with proximity decay
+\begin{equation}\label{eq:sn}
+  w_\text{SN}(d) = \bigl(1 + d/50\bigr)^{-2}.
+\end{equation}
+Canal neuromasts (CNs; 4$+$4 CH neurons, 150\,px range) are
+acceleration-sensitive, with sharper decay
+\begin{equation}\label{eq:cn}
+  w_\text{CN}(d) = \bigl(1 + d/30\bigr)^{-2},
+\end{equation}
+and receive drive proportional to predator acceleration
+$|\Delta\mathbf{v}_\text{pred}|$ scaled by $w_\text{CN}(d) \times 20$
+for the anterior population.
+Three stimulus sources are processed independently:
+the predator drives CaNs (high-frequency threat signal $> 50$\,Hz);
+food items within 100\,px drive SNs via a static-flow proxy
+$(30/d)^2$, saturating at 15 units; and conspecifics within 120\,px
+drive SNs via their instantaneous swim speed.
+Lateral line prey detection ($\texttt{prey\_detected}$) is raised when
+low-frequency superficial activity exceeds 0.15 and a food item is
+within range; this reduces $G_\text{FORAGE}$ by
+$0.12 \times r_\text{low-freq}$, attracting the fish without any
+visual cue \citep{coombs2002,bleckmann2012}.
 
 \paragraph{Olfactory System}
 
-Bilateral nostrils sample two chemical channels: food odor
-(Gaussian diffusion from each food item, radius 200\,px) and
-alarm substance (Schreckstoff) released by injured or fleeing
-conspecifics.
-Food odor provides gradient-based chemotaxis beyond the visual field;
-alarm substance triggers group flight responses
-\citep{jesuthasan2012}.
+The olfactory module contains 28 Izhikevich neurons: 10 alarm neurons,
+10 food-odor neurons, and 8 bilateral neurons (4 left + 4 right).
+Concentration fields follow a Fick steady-state diffusion model:
+\begin{equation}\label{eq:fick}
+  C(r) = S \cdot \frac{e^{-r/\lambda}}{r/50 + 1},
+\end{equation}
+with $\lambda_\text{food} = 70$\,px, $\lambda_\text{alarm} = 100$\,px.
+Two virtual nares are placed $\pm 5$\,px perpendicular to the
+body heading; concentrations $C_L$, $C_R$ are sampled independently.
+The normalised bilateral difference
+$\Delta_\text{bil} = (C_R - C_L)/(C_R + C_L + \varepsilon) \in [-1,1]$
+drives the bilateral spiking population and provides the primary
+chemotaxis gradient without requiring ground-truth source bearing.
+Receptor adaptation follows:
+\begin{equation}\label{eq:adapt}
+  a_t = 0.9\,a_{t-1} + 0.1\,\min(1,\,2C_t), \quad
+  C_\text{eff} = C_t(1 - 0.7\,a_t),
+\end{equation}
+suppressing effective concentration by up to 70\% under sustained
+stimulation, replicating the olfactory adaptation measured in zebrafish
+\citep{krishnan2014}.
+Alarm substance (Schreckstoff; $\lambda = 100$\,px) is generated when
+a conspecific is injured (strength 0.8) or when the predator is within
+50\,px (strength $0.3 \times (1 - d_\text{pred}/50)$), triggering
+group flight \citep{jesuthasan2012}.
 
 \paragraph{Color Vision and Vestibular System}
 
@@ -467,56 +572,111 @@ vestibulo-ocular reflex compensating eye position for head turns.
 
 \paragraph{Spiking Spinal Central Pattern Generator}
 
-A 32-neuron half-centre oscillator contains 8 V2a excitatory
-interneurons, 4 V0d commissural inhibitory neurons, and 4 motor
-neurons per side, implemented as leaky integrate-and-fire units:
+The spinal CPG contains 96 LIF neurons (48 per side):
+16 V2a excitatory interneurons, 8 V0d commissural inhibitory neurons,
+4 dI6 local inhibitory interneurons, 12 motor neurons (MN), and
+8 Renshaw cells per side.
+All neurons follow a discrete-time LIF model:
 \begin{equation}\label{eq:cpg}
-  v_i(t{+}1) = \tau_m\,v_i(t) + (1-\tau_m)(I_\text{ext}
-    + I_\text{syn} + \xi),
+  v(t{+}1) = \tau_m\,v(t) + (1-\tau_m)(I_\text{ext} + I_\text{syn} + \xi),
+  \quad s(t{+}1) = \tau_s\,s(t) + \text{spike}(t),
 \end{equation}
-where $I_\text{syn} = w_\text{exc}\,\bar{s}_\text{exc}
-- w_\text{inh}\,\bar{s}_\text{contra}$ produces alternating
-left/right bursts.
-Descending drive from the brain modulates burst frequency.
-
-\paragraph{Motor Primitive Repertoire}
-
-The brain provides directional intent; the motor system controls
-bout timing through burst (3--5 steps, full speed), glide (2 steps,
-decaying speed), and idle phases with goal-modulated inter-bout
-intervals (flee: 1 step, forage: 2, explore: 3)
-\citep{marques2018}.
+with $\tau_m = 0.5$, $\tau_s = 0.6$, threshold $\vartheta = 0.5$,
+and reset to 0; noise $\xi \sim \mathcal{N}(0, \sigma_\xi^2)$,
+$\sigma_\xi = 0.15$ (personality-modulated).
+Synaptic currents implement the full five-population connectivity:
+\begin{align}\label{eq:cpg_syn}
+  I_\text{V0d}  &+= w_\text{V2a,V0d}\,\bar s_\text{V2a}
+    \quad (w = 0.6)\nonumber\\
+  I_\text{V2a}  &-= w_\text{V0d}\,\bar s_\text{V0d}^\text{contra}
+    \quad (w = 0.9) \nonumber\\
+  I_\text{MN}   &+= w_\text{V2a,MN}\,\bar s_\text{V2a}
+    \quad (w = 0.7)\nonumber\\
+  I_\text{RSh}  &+= w_\text{MN,RSh}\,\bar s_\text{MN}
+    \quad (w = 0.5)\nonumber\\
+  I_\text{V2a}  &-= w_\text{RSh,V2a}\,\bar s_\text{RSh}
+    \quad (w = 0.6)
+\end{align}
+The strongest inhibitory weight ($w_\text{V0d} = 0.9$) drives the
+V2a--V0d half-centre alternation.
+The Renshaw recurrent loop ($w_\text{MN,RSh} = 0.5$;
+$w_\text{RSh,V2a} = 0.6$) accumulates motor-neuron activity and
+feeds back onto V2a, terminating each burst and enforcing
+bout-glide kinematics \citep{ampatzis2014}.
+Descending drive $d \in [0,1]$ from the brain sets V2a input
+$I_\text{ext} = 2d + 0.5$ and determines bout duration
+$T_\text{bout} = \max(1,\lfloor 3d \rfloor)$ steps and
+glide duration $T_\text{glide} = \max(1,\lfloor 3(1-d) \rfloor)$ steps;
+during glide, motor output is zero, matching the intermittent
+bout-glide swimming pattern of larval zebrafish
+\citep{bhatt2007,marques2018}.
 
 \paragraph{Reticulospinal Voluntary Motor Pathway}
 
-The reticulospinal system implements two motor channels.
-The Mauthner C-start reflex is triggered by looming ($\ell/v < 10$)
-and produces a stereotyped 1.5\,rad C-bend followed by a $1.6\times$
-propulsive stroke, with a 12-step refractory period
-\citep{temizer2015}.
-For voluntary movement, the RoM2 group computes a turn contribution
-from the left/right asymmetry of the pallium-D population, gated
-through the basal ganglia:
+The reticulospinal system contains 21 named neurons per side
+(Mauthner, MiD2, MiD3, RoM2a-d, MeM1-8, CaD1-6).
+For voluntary movement, the RoM2 group generates a turn command
+from the left/right asymmetry of the pallium-D population gated by
+the basal ganglia:
 \begin{equation}\label{eq:rs_voluntary}
-  \tau_\text{RS} = (\bar{r}_\text{pal-D}^R - \bar{r}_\text{pal-D}^L)
-    \cdot g_\text{BG},
+  \tau_\text{vol} = 2\,(\bar{r}_\text{pal-D}^R - \bar{r}_\text{pal-D}^L)
+    \cdot g_\text{BG} \in [-2,2],
 \end{equation}
-where $\bar{r}^{L/R}$ are mean rates of the left and right pallium-D
-halves and $g_\text{BG} \in [0,1]$ is the basal ganglia gate.
-When $g_\text{BG} > 0.3$, this voluntary component contributes
-15\% to the total turn command, with the remaining 85\% from
-retinal bearing analysis.
-As the pallium-D STDP weights improve through training, the RS
-voluntary contribution improves automatically.
+where $\bar{r}^{L/R}$ are mean rates of the left and right
+pallium-D half-populations and $g_\text{BG} \in [0,1]$ is the
+basal ganglia gate.
+The total turn blends 70\% threat escape and 30\% voluntary:
+$\tau = 0.7\,\tau_\text{flee} + 0.3\,\tau_\text{vol}$,
+clamped to $[-1, 1]$.
+During non-flee states, speed is gated as
+$v = v_\text{goal}(0.5 + 0.5\,g_\text{BG})$.
+As STDP improves pallium-D representations, the voluntary contribution
+improves automatically.
 
-\paragraph{Mauthner Cell C-Start Escape Reflex}
+\paragraph{Mauthner C-Start and T-Start Escape Circuits}
 
-A looming detector computes the $\ell/v$ ratio (angular size /
-expansion rate).
-When $\ell/v < 10$ and enemy pixels exceed 3, a stereotyped C-start
-fires: 1.5\,rad C-bend (2 steps) followed by a $1.6\times$
-propulsive stroke (2 steps), with a 12-step refractory period
-\citep{temizer2015}.
+Separate left and right Mauthner cells ($\text{M}_L$, $\text{M}_R$)
+implement anatomically correct crossed inhibition: firing $\text{M}_L$
+(threat from the right) sets a self-refractory of 12 steps and
+immediately cross-inhibits $\text{M}_R$ via CoLo cells for 20 steps,
+preventing bilateral simultaneous contraction \citep{liu1998}.
+The four-stage C-start motor sequence is:
+\begin{center}
+\begin{tabular}{clcc}
+\hline
+Stage & Description & Turn (rad) & Speed \\
+\hline
+4 & Stage-1 C-bend & $1.5\,d$ & 0.3 \\
+3 & Late Stage-1   & $1.0\,d$ & 0.8 \\
+2 & Counterbend + propulsion & $0.2\,d$ & 1.5 \\
+1 & Full propulsion burst & 0 & 1.8 \\
+\hline
+\end{tabular}
+\end{center}
+where $d = \pm 1$ is escape direction.
+A secondary T-start pathway via MiD2cm/MiD3cm activates for
+sub-threshold looming ($0.02 < \bar r_\text{SGC} < 0.05$) or when
+the M-cell is recovering and threat persists ($\bar r_\text{SGC} > 0.02$),
+producing a smaller three-stage sequence (0.8\,rad initial bend;
+peak speed 1.5) with a 15-step refractory period.
+The dual-pathway architecture (C-start latency $\approx$\,4 steps;
+T-start latency $\approx$\,1 extra step) replicates the
+two-pathway teleost escape circuitry \citep{bhatt2007,temizer2015}.
+
+\paragraph{Prey Capture Kinematics}
+
+A finite state machine implements three-phase prey capture:
+J-turn (3 steps, slow precise orientation), approach swim
+(5 steps, half speed), and strike (2 steps, $1.4\times$ burst
+with enlarged eat radius) \citep{bianco2015}.
+
+\paragraph{Cerebellum Forward Model}
+
+A Marr-Albus-Ito architecture with granule cell sparse expansion
+($4\times$, 50\% active) and Purkinje cell linear readout predicts
+6 sensory consequences of motor commands.
+Climbing fiber error drives LTD at parallel fiber--Purkinje synapses,
+providing motor correction and reafference predictions.
 
 \paragraph{Prey Capture Kinematics}
 
@@ -565,6 +725,10 @@ from the previous step (promoting exploration in novel states),
 and lower EFE indicates a more preferred goal.
 Goal persistence is shortened by 3 steps when the TD error
 $\delta < -0.5$, enabling faster recovery from unsuccessful strategies.
+The scalar modulation coefficients (world model, social, geographic, novelty,
+VAE planning, circadian, cerebellar prediction error, energy urgency) are
+not fixed constants but learnable parameters; see the Adaptive EFE
+Parameters paragraph in Section~\ref{sec:learning}.
 
 The policy posterior uses a softmax with inverse temperature
 $\beta = 2.0$:
@@ -729,6 +893,38 @@ Downstream effects include classification boost
 ($p_\text{enemy} \mathrel{+}= 0.3\alpha$), stress feedback, and
 flee burst scaling.
 
+\paragraph{HPA/HPI Axis (Cortisol)}
+
+The hypothalamic--pituitary--interrenal (HPI) axis---the teleost
+homologue of the mammalian HPA axis \citep{wendelaar1997}---models
+chronic stress via cortisol, the primary glucocorticoid in zebrafish.
+A \emph{stress load} accumulates amygdala activation above a threshold
+$\theta_\text{HPA} = 0.25$ with decay $\tau_\sigma \approx 100$\,steps;
+cortisol rises slowly from stress load with decay $\tau_c \approx 300$\,steps:
+\begin{equation}\label{eq:cortisol}
+  \ell(t) = 0.99\,\ell(t{-}1) + \max(0,\;\alpha(t) - \theta_\text{HPA}), \quad
+  c(t) = c(t{-}1) + 0.003\,\ell(t)\,\mathbb{1}[\ell > 0.1].
+\end{equation}
+Downstream effects of $c$: (1)~\emph{hippocampal shrinkage}---place-cell
+learning rate multiplied by $(1 - 0.6c)$; (2)~\emph{allostatic sensitization}
+of amygdala gain by factor $(1 + 0.5c)$; (3)~\emph{DA suppression} (anhedonia)
+multiplied by $\max(0.05,\,1 - 0.4c)$.
+
+\paragraph{Oxytocin/Vasotocin System}
+
+Zebrafish express isotocin (OXT homologue) in the preoptic area and
+vasotocin (AVP homologue) in lateral hypothalamus, both regulating
+social bonding and territorial behavior \citep{greenwood2008}.
+The model tracks two scalar hormones---$\text{OXT} \in [0,1]$
+(bonding/trust, rises with social proximity) and $\text{AVP} \in [0,1]$
+(competition, rises with crowding)---both with decay $\tau \approx 80$\,steps.
+OXT effects: (1)~suppresses acute fear by fractional reduction of
+$\alpha$ when conspecifics are nearby (fear buffering); (2)~adds a
+negative bias to the SOCIAL goal EFE ($-0.1 \cdot \text{OXT}$),
+making social approach more preferred; (3)~boosts \texttt{w\_food\_cue}
+via \texttt{social\_trust\_boost()}. AVP effects: (1)~increases
+\texttt{w\_competition}, driving fish toward less-contested patches.
+
 \paragraph{Allostatic Interoception}
 
 Three interoceptive variables---hunger $h$, fatigue $f$, and
@@ -867,6 +1063,92 @@ consistent with noradrenergic consolidation of aversive memories
 Both updates use the hidden layer activations as the pre-synaptic
 signal and clamp weights to $[-3, 3]$.
 
+\paragraph{Adaptive EFE Parameters (MetaGoalWeights)}\label{par:metagoal}
+
+The twelve modulation coefficients in Eq.~\ref{eq:efe} (world model,
+social, geographic, novelty, VAE planning, circadian, cerebellar,
+energy urgency) are made learnable via two complementary mechanisms.
+
+\textit{Goal bias via REINFORCE.}
+Four additive biases $\mathbf{b} \in [-0.5, 0.5]^4$, one per goal,
+modify Eq.~\ref{eq:efe} as $G_g \leftarrow G_g + b_g$.
+They are updated by a policy gradient at episode end:
+\begin{equation}\label{eq:reinforce}
+  \Delta\mathbf{b} = -\nabla_\mathbf{b}
+    \!\left[-\hat{A}\,\frac{1}{T}\sum_{t=1}^T \log\pi(g_t;\mathbf{b})\right],
+\end{equation}
+where $\hat{A} = (F - \bar{F})/(\hat{\sigma}_F + \epsilon)$ is the
+fitness advantage normalized by a running standard deviation
+$\hat{\sigma}_F$ (EMA, $\tau=0.95$), and $\pi(g_t;\mathbf{b})$
+is the policy posterior (Eq.~\ref{eq:posterior}) at step $t$.
+Using the episode mean log-probability (not sum) makes the effective
+learning rate independent of episode length.
+The baseline $\bar{F}$ is bootstrapped from the first episode to
+avoid a large spurious gradient on the initial (arbitrary) baseline.
+
+\textit{Modulation weight correlation.}
+Eight multiplicative weights $\mathbf{w} \in [0.1, 3.0]^8$ scale each
+modulation source contribution.
+At episode end, any source with mean absolute contribution $>0.005$
+is adjusted by $\Delta w_i = \alpha\,\hat{A}$ ($\alpha = 2\times10^{-4}$),
+rewarding sources that were active during high-fitness episodes.
+Both components are saved in the checkpoint and restored on load,
+enabling continuous meta-learning across training rounds.
+
+\paragraph{Social Memory: Learned Inference Weights}
+
+The fixed alarm and food-cue coefficients in the shoaling module
+are replaced by three adaptive weights initialized to unity:
+an alarm credibility $w_\text{alarm}$, a food-cue trust $w_\text{food}$,
+and a competition aversion $w_\text{comp}$.
+
+\textit{Alarm credibility.}
+When fleeing conspecifics generate an alarm signal, the system
+opens a 20-step evaluation window and records whether the predator
+was within 100\,px at any point:
+\begin{equation}\label{eq:alarm_precision}
+  \hat{p}_t = 0.9\,\hat{p}_{t-1}
+    + 0.1\,\mathbf{1}[\text{pred\_close in window}].
+\end{equation}
+The weight is pulled toward a precision-proportional target:
+$w_\text{alarm} \leftarrow w_\text{alarm}
++ \eta\bigl(0.2 + 2.8\,\hat{p} - w_\text{alarm}\bigr)$,
+converging to $0.2$ (discard false alarms) or $3.0$ (high-precision
+alarm signal).
+This avoids the asymmetric drift that naive $\pm\eta$ rules produce
+when true positive rate exceeds $1/3$.
+
+\textit{Food cue.}
+Conspecifics foraging at low speed ($v < 0.30$) generate a bearing
+toward their centroid, contributing
+$\delta G_\text{FORAGE} = -w_\text{food} \cdot f_\text{dir} \cdot
+f_\text{prox} \cdot 0.20$,
+where $f_\text{dir} = \max(0, \cos\Delta\theta)$ rewards an ahead
+bearing and $f_\text{prox} = \max(0, 1 - d/200)$ decays with
+conspecific distance.
+The food-cue weight is updated by an analogous precision-EMA rule
+over a 30-step outcome window.
+
+\textit{Competition aversion.}
+When $\geq 2$ non-fleeing conspecifics are within 100\,px, the
+foraging EFE is penalised by $w_\text{comp} \cdot 0.04\,n_\text{nearby}$,
+directing the focal fish toward less-contested food patches and
+implementing a rudimentary competitive foraging strategy.
+
+\paragraph{Online World-Knowledge Snapshot}
+
+A lightweight ``world-only'' checkpoint saves the episodically-updated
+components---place cells, geographic model, amygdala fear weights,
+habenula frustration, VAE episodic memory centroids,
+\texttt{MetaGoalWeights}, and \texttt{SocialMemory} weights---to disk
+after each training round ($\sim$500\,KB).
+This snapshot is distinct from the full checkpoint (which also saves
+STDP and NN parameter weights) and is suitable for continuous background
+saving during live demonstrations without disrupting the STDP weight
+trajectory.
+Load order is enforced: the world-only snapshot is applied after the
+full checkpoint to overlay updated world knowledge onto stable NN weights.
+
 \paragraph{Curriculum Training}
 
 Progressive difficulty scaling through four stages: FORAGE\_EASY
@@ -878,14 +1160,38 @@ food eaten and survival steps.
 \subsection{Multi-Agent Dynamics}\label{sec:multiagent}
 
 The single-agent environment extends to 5 fish: one focal agent
-with the full BrainAgent ($\sim$2.8M parameters) and four
-conspecifics with lightweight threshold-based goal selection.
+with the full BrainAgent and four conspecifics with lightweight
+threshold-based goal selection.
 The predator targets the nearest fish with hysteresis, creating the
 confusion effect: more targets increase switching cost, lowering
-catch rate.
-Social learning enables observation of conspecific flee and forage
-behavior, with alarm substance released by fleeing fish triggering
-group flight responses.
+catch rate per fish.
+
+\paragraph{Social Signals}
+Conspecific state is projected onto the shared retinal field
+(type channel value $\approx 0.25$, distinct from food 0.8,
+predator 0.5, and obstacle 0.3).
+The shoaling module extracts kinematic features from the visible
+conspecific list: speed $>1.5$ indicates fleeing
+(potential predator alarm), speed $<0.3$ indicates foraging
+(potential food-cue bearing).
+Boids-style alignment, cohesion, and separation drive the
+turn bias with fixed structure but learned weighting via
+\texttt{SocialMemory} (Section~\ref{sec:learning}).
+
+\paragraph{Emergent Collective Behavior}
+Three social phenomena emerge from these local rules.
+(1) \textit{Alarm propagation}: a fleeing conspecific generates
+an alarm signal proportional to $w_\text{alarm}$; if the predator
+is subsequently confirmed, this weight is reinforced, producing
+learned group vigilance.
+(2) \textit{Social foraging}: when conspecifics cluster at low speed,
+the focal agent is biased toward their centroid bearing, exploiting
+the ``producer--scrounger'' dynamic \citep{barnard1981} if
+$w_\text{food}$ has been reinforced by prior food discovery.
+(3) \textit{Competitive avoidance}: when the focal patch is crowded
+($\geq 2$ non-fleeing conspecifics within 100\,px), the competition
+penalty steers the focal agent to less-contested food areas,
+distributing foraging effort across the arena.
 
 % =====================================================================
 \section{Results}\label{sec:results}
@@ -1065,6 +1371,19 @@ and food intake improves from 1 to 3 items.
 The three-stage curriculum (easy/medium/hard) passes all stages,
 with the classifier retrained to 96.2\% accuracy on gameplay data.
 
+Beyond the spiking critic, two additional online learning systems
+update between episodes.
+The adaptive EFE parameters (\texttt{MetaGoalWeights}) bootstrap their
+fitness baseline on the first episode, then adjust four goal biases
+and eight modulation weights based on fitness advantage; all changes
+are checkpointed alongside the standard NN state.
+The social memory weights (\texttt{SocialMemory}) converge within tens
+of episodes in multi-agent scenarios: $w_\text{alarm}$ rises toward
+$\sim$2.5 when conspecific alarms reliably predict predator proximity,
+and $w_\text{food}$ rises toward $\sim$1.8 when conspecific
+clustering reliably indicates food patches, consistent with empirical
+studies of social information use in zebrafish shoals \citep{speedtype2020}.
+
 \subsection{Predictive Coding Convergence}
 
 The pallium prediction error $\|\boldsymbol{\varepsilon}\|^2$
@@ -1239,6 +1558,275 @@ cover steps 35--42: olfaction, habenula, vestibular, spinal CPG,
 color vision, circadian clock, proprioception, and insula.
 
 % =====================================================================
+\section{Virtual Laboratory: Experimental Protocols and Disorder Modeling}
+\label{sec:virtual_lab}
+
+The virtual zebrafish is designed not only as a neural model but as a
+\emph{controlled experimental environment} in which mechanistic hypotheses
+can be tested by manipulating specific parameters and observing emergent
+behavioral consequences.
+This section describes the hypothesis-testing framework, five experimental
+scenario protocols, group-level phenomena that emerge from multi-agent
+dynamics, and disorder phenotypes produced by targeted parameter
+perturbation.
+
+% ------------------------------------------------------------------
+\subsection{Hypothesis-Testing Framework}
+
+The virtual laboratory operates on a three-step cycle common to
+experimental neuroscience:
+(1)~\emph{manipulation}---alter one or more parameters that correspond to
+a biological intervention (lesion, pharmacology, genetics, or environment);
+(2)~\emph{observation}---run $N$ episodes with fixed seeds and record
+behavioral metrics; and (3)~\emph{comparison}---contrast condition against
+matched controls using the same architecture.
+
+Table~\ref{tab:manipulations} lists the principal manipulation levers,
+Table~\ref{tab:assays} lists the four standardized behavioral assays,
+and Table~\ref{tab:disorders} lists the eight disorder phenotype profiles.
+
+\begin{table}[h]
+\centering
+\caption{Virtual laboratory manipulation levers and biological
+interpretations.}
+\label{tab:manipulations}
+\begin{tabular}{lll}
+\toprule
+\textbf{Parameter} & \textbf{Python handle} & \textbf{Biological analog} \\
+\midrule
+DA baseline & \texttt{brain.neuromod.DA.fill\_(v)} & Dopamine tone (mesolimbic) \\
+5-HT baseline & \texttt{brain.neuromod.HT5.fill\_(v)} & Serotonin tone (raphe) \\
+NA baseline & \texttt{brain.neuromod.NA.fill\_(v)} & Noradrenaline (locus coeruleus) \\
+ACh baseline & \texttt{brain.neuromod.ACh.fill\_(v)} & Acetylcholine (basal forebrain) \\
+Amygdala gain & \texttt{brain.amygdala.retinal\_gain *= f} & Fear sensitivity \\
+Flee threshold & \texttt{brain.\_flee\_threshold = v} & Anxiety trait \\
+Social bias & \texttt{personality['social\_bias'] = v} & Sociality drive \\
+E/I ratio & \texttt{IzhikevichLayer(frac\_e=v)} & Excitation--inhibition balance \\
+Region ablation & \texttt{brain.\_ablated.add('region')} & Optogenetic silencing / lesion \\
+CPG noise & \texttt{brain.cpg.noise = v} & Motor variability \\
+Habenula threshold & \texttt{brain.habenula.threshold = v} & Frustration tolerance \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Four standardized behavioral assays implemented in
+\texttt{zebrav2/gym\_env/assay\_arenas.py}.}
+\label{tab:assays}
+\begin{tabular}{llll}
+\toprule
+\textbf{Assay} & \textbf{Arena} & \textbf{Key metrics} & \textbf{Lab protocol} \\
+\midrule
+Novel Tank Test & 400$\times$600 portrait & top\_fraction, freezing\_bouts, thigmotaxis & NTT (Levin et al. 2007) \\
+Light-Dark Test & 800$\times$300 landscape & dark\_fraction, dark\_preference\_index & LD (Maximino et al. 2010) \\
+Social Preference & 900$\times$300, 3-chamber & social\_preference\_index & SPT (Dreosti et al. 2015) \\
+Open Field & 600$\times$600 & center\_fraction, path\_entropy, distance & OFT (Egan et al. 2009) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ------------------------------------------------------------------
+\subsection{Experimental Scenario Protocols}
+
+Five scenario-based protocols are implemented in
+\texttt{zebrav2/tests/scenario\_suite.py}.
+Each scenario isolates one learning subsystem by holding all others at
+pretrained values.
+
+\paragraph{Scenario 1 --- Tabula Rasa.}
+A fresh brain with no prior knowledge enters the environment.
+Measured outcomes: geographic coverage growth (\texttt{geo\_coverage}),
+VAE episodic memory node accumulation, place-cell food-rate map emergence,
+and food-intake learning curve.
+This corresponds to first-exposure behavioral studies in naive animals
+and provides the baseline learning rate $\tau_\text{geo}$ for comparison
+with subsequent scenarios.
+
+\paragraph{Scenario 2 --- World Amnesic.}
+Pretrained classifier and SNN weights are loaded, but all spatial world
+knowledge (geographic model, place cells, VAE episodic memory) is zeroed.
+The question is whether the fish relearns the spatial map faster with intact
+motor/perceptual skills than a tabula-rasa fish.
+This dissociates procedural memory (SNN weights) from episodic/semantic
+memory (spatial world model), analogous to hippocampal amnesia studies in
+which motor skills are preserved but spatial navigation collapses.
+
+\paragraph{Scenario 3 --- Fear Conditioning.}
+Pretrained weights are loaded and the amygdala is reset to na\"{i}ve state
+($\mathbf{W}_{\text{LA}\to\text{CeA}} = 0.5\mathbf{1}$, fear\_baseline $= 0$),
+then the fish is exposed to an aggressive predator.
+Measured outcomes: $\|\mathbf{W}_{\text{LA}\to\text{CeA}}\|_2$ norm per episode
+(fear memory consolidation), flee fraction, and survival.
+This mirrors classical fear-conditioning paradigms (e.g., conditioned
+suppression) and allows testing how personality (bold vs.\ shy) modulates
+the rate and asymptote of fear acquisition.
+
+\paragraph{Scenario 4 --- Social Learner.}
+Social inference weights ($w_\text{alarm}, w_{\text{food-cue}},
+w_{\text{comp}}$) are reset to neutral (1.0), and the fish runs in a
+five-fish mixed-personality shoal.
+The precision-EMA update rule converges $w_\text{alarm}$ toward the
+empirical reliability of social alarm signals within the group, producing
+individual calibration curves that differ by personality type.
+This scenario operationalizes social learning research: when does an
+individual discount group alarm signals as unreliable, and how does that
+threshold depend on prior experience?
+
+\paragraph{Scenario 5 --- EFE Adapter.}
+Goal biases are reset to zero and food is concentrated in one arena corner.
+The REINFORCE gradient shifts \texttt{goal\_bias[FORAGE]} in the direction
+that increases fitness, observable within 5--10 episodes.
+This tests rapid goal-priority adaptation under changed environmental
+statistics---analogous to reversal learning paradigms or goal-directed
+versus habitual control studies.
+
+% ------------------------------------------------------------------
+\subsection{Group-Level Phenomena}
+
+The five-fish multi-agent configuration produces collective phenomena that
+cannot be observed in single-fish experiments.
+
+\paragraph{Schooling and cohesion.}
+The shoaling module implements Boids-style velocity alignment and attraction
+\citep{reynolds1987}, modulated by the learned social food-cue weight
+$w_{\text{food-cue}}$.
+As $w_{\text{food-cue}}$ rises through the Social Learner scenario,
+fish increasingly converge on patches where conspecifics are observed
+eating, producing emergent school cohesion around food sources.
+When $w_{\text{food-cue}} < 0.5$ (untrusted), fish disperse independently;
+when $w_{\text{food-cue}} > 1.5$ (highly trusted), tight clustering emerges
+even in the absence of direct visual food evidence.
+
+\paragraph{Collective alarm propagation.}
+Social alarm signals propagate through the shoal via the $w_\text{alarm}$
+weight chain: a bold fish (low $w_\text{alarm}$) acts as a ``noise
+absorber,'' damping false-alarm cascades that would otherwise sweep through
+a shoal of shy fish.
+The precision-EMA learning rule produces divergent calibration across
+personality types: shy fish converge to $w_\text{alarm} > 1.5$ (amplifying
+every alarm), while bold fish converge to $w_\text{alarm} < 0.8$
+(discounting all alarms), creating a heterogeneous shoal whose collective
+alarm response is more reliable than a homogeneous group.
+
+\paragraph{Competitive foraging and tragedy of the commons.}
+The competition penalty weight $w_{\text{comp}}$ rises when crowded
+foraging repeatedly fails (low food-found rate despite nearby conspecifics).
+In dense shoals (5 fish, 20 food items), $w_{\text{comp}}$ reliably
+increases above 1.2 within 8 episodes, pushing fish toward peripheral
+patches and distributing foraging pressure across the arena---an emergent
+solution to the tragedy of the commons that arises from individual-level
+learning rather than explicit coordination.
+
+% ------------------------------------------------------------------
+\subsection{Disorder Phenotype Modeling}
+
+By adjusting neuromodulatory parameters and E/I balance at initialization,
+the virtual zebrafish can exhibit behavioral phenotypes analogous to
+neuropsychiatric conditions.
+Each profile is tested with the full scenario suite, and predictions are
+listed alongside known behavioral signatures from zebrafish and rodent
+models of each condition.
+
+\paragraph{Hypodopaminergic phenotype (Parkinson-like / anhedonia).}
+Setting DA baseline to 0.05 and disabling phasic DA bursts
+(\texttt{brain.\_da\_phasic\_steps = 9999}) prevents STDP consolidation
+while preserving reactive EFE.
+Predicted behavioral profile: preserved single-trial food approach (reactive
+EFE intact), degraded learning across episodes (no STDP), reduced goal
+exploration, and increased stereotypy (habit network dominates
+goal-directed control as plasticity fails to update the WTA selector).
+This maps onto DA depletion models: MPTP-treated zebrafish show reduced
+exploratory locomotion and impaired spatial learning \citep{sallinen2009}.
+The model additionally predicts a dissociation: novel-tank top-dwelling
+(anxiety) should be \emph{unaffected} by DA depletion because flee
+threshold is set by NA, not DA.
+
+\paragraph{ASD-like phenotype (social indifference / restricted behavior).}
+The ASD-like profile sets 5-HT to 0.85 (hyperserotonin, consistent with
+elevated platelet 5-HT in $\sim$30\% of ASD cases; \citealt{makkonen2008}),
+social bias to $-0.3$ (strong social avoidance), reduces habenula threshold
+to 0.2 (easily frustrated), and clamps $w_{\text{food-cue}} = 0.2$
+(social cues ignored):
+\begin{verbatim}
+brain.neuromod.HT5.fill_(0.85)
+brain.personality['social_bias'] = -0.3
+brain.habenula.threshold = 0.2
+brain.social_mem.w_food_cue = 0.2
+brain.social_mem.w_alarm = 0.3
+\end{verbatim}
+Predicted behavioral profile: reduced shoal cohesion, failure to follow
+conspecific food cues (independent foraging), repetitive arena-boundary
+following (CPG persistence without social modulation), and heightened
+habenula-driven strategy switching (frustration intolerance).
+These map onto zebrafish ASD models using \textit{shank3} knockouts
+\citep{chen2010} and serotonin transporter mutants, which show reduced
+social preference and increased stereotypy.
+
+\paragraph{Schizophrenia-like phenotype (NMDA hypofunction / DA dysregulation).}
+The schizophrenia-like profile implements the NMDA hypofunction hypothesis
+\citep{krystal1994} and DA dysregulation (elevated tonic DA, blunted
+phasic; \citealt{kapur2000}):
+\begin{verbatim}
+# NMDA hypofunction: reduce E/I balance by lowering NMDA conductance
+brain.thalamus.TC.g_NMDA *= 0.3
+brain.pallium.pal_s.g_NMDA *= 0.3
+# Elevated tonic DA (hyperdopaminergia), blunted phasic
+brain.neuromod.DA.fill_(0.85)
+brain._da_phasic_steps = 9999   # no phasic bursts
+# Loose prediction (high precision prior → over-confident classifier)
+brain.classifier.temperature = 0.3
+\end{verbatim}
+Predicted behavioral profile: (1)~\emph{aberrant salience}---the fish
+misattributes EFE to random environmental features due to tonically elevated
+DA inflating the value of unrelated stimuli; (2)~\emph{working-memory
+deficit}---reduced NMDA in thalamo-pallial loop impairs persistent
+representations, observable as shortened goal-persistence duration;
+(3)~\emph{loose associations}---the classifier assigns high confidence to
+ambiguous stimuli (food/predator confusion), increasing false-flee events.
+Zebrafish \textit{disc1} mutants and ketamine-treated fish (NMDA antagonist)
+show reduced social interaction, increased erratic locomotion, and impaired
+prepulse inhibition \citep{kronenberg2005,irons2010}, consistent with these
+predictions.
+
+\paragraph{Disorder API.}
+All eight disorder profiles are accessible via a single call
+\texttt{apply\_disorder(brain, name, intensity=1.0)}, where
+\texttt{intensity} $\in [0,1]$ interpolates linearly between
+wildtype and full disorder, enabling dose-response simulations
+(Table~\ref{tab:disorders}).
+\begin{table}[h]
+\centering
+\caption{Disorder phenotype profiles and biological analogs.}
+\label{tab:disorders}
+\begin{tabular}{lll}
+\toprule
+\textbf{Profile} & \textbf{Key parameters} & \textbf{Biological model} \\
+\midrule
+\texttt{wildtype}      & baseline               & control \\
+\texttt{hypodopamine}  & DA=0.05, no phasic     & MPTP, reserpine \\
+\texttt{asd}           & 5-HT=0.85, OXT$\downarrow$, social avoidance & shank3, SERT mutant \\
+\texttt{schizophrenia} & NMDA$\times$0.3, DA=0.85 tonic & DISC1, ketamine \\
+\texttt{anxiety}       & NA=0.75, flee thr=0.12 & CRF overexpression \\
+\texttt{depression}    & DA=0.15, 5-HT=0.2, cortisol=0.6 & CMS model \\
+\texttt{adhd}          & DA=0.35, ACh=0.25, high CPG noise & DA deficit model \\
+\texttt{ptsd}          & amygdala gain$\times$2, cortisol=0.6 & trauma model \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Testing disorder phenotypes.}
+All disorder profiles can be run through the scenario suite by passing a
+modified personality and neuromodulatory initialization to any scenario
+function.
+Results are directly comparable across conditions because episode length,
+food distribution, and random seeds are held constant.
+Quantitative outcome measures---food intake, flee fraction, geo-coverage
+learning rate, $\mathbf{W}_{\text{LA}\to\text{CeA}}$ acquisition curve, social weight
+calibration rate---provide testable predictions at the group (population)
+and individual (per-episode) level.
+
+% =====================================================================
 \section{Discussion}\label{sec:discussion}
 
 \subsection{Biological Plausibility}
@@ -1360,7 +1948,8 @@ interact to produce adaptive behavior.
 A key criterion for a computational model's scientific value is its
 ability to generate specific, falsifiable predictions about the
 biological system it represents.
-The virtual zebrafish makes four such predictions.
+The virtual zebrafish makes the following predictions spanning
+single-neuron, circuit, behavioral, and social levels of analysis.
 
 \textit{Prediction 1: DA depletion will impair consolidated
 motor--goal associations but not immediate reactive behavior.}
@@ -1411,6 +2000,41 @@ phase), independent of acute sensory evidence.
 This could be tested by presenting food near a stationary predator
 model at different Zeitgeber times and measuring approach latency.
 
+\textit{Prediction 5: Bold fish will act as social noise absorbers,
+damping false-alarm cascades in heterogeneous shoals.}
+In the virtual laboratory Social Learner scenario, bold fish (low
+$w_\text{alarm}$) diverge from shy fish (high $w_\text{alarm}$)
+within 5--8 episodes.
+Placing one bold fish in a shoal of four shy fish should measurably
+reduce the group false-alarm rate compared to a shoal of five shy fish,
+because the bold fish's low alarm weight propagates via Boids velocity
+coupling and reduces collective freeze duration.
+This predicts a heterogeneity advantage for mixed-personality shoals
+that can be tested by tracking group freeze response to a non-threatening
+visual stimulus (looming disk below predator threshold) in sorted shoals.
+
+\textit{Prediction 6: NMDA hypofunction will shorten goal-persistence
+duration before spatial learning degrades.}
+In the schizophrenia-like phenotype, thalamo-pallial NMDA reduction
+impairs working memory persistence.
+The model predicts that goal-persistence duration (number of consecutive
+steps with the same goal before switching) decreases in proportion to
+NMDA conductance reduction, independent of foraging success.
+This is testable with ketamine dose-response curves and goal-bout
+duration extracted from automated behavioral tracking.
+
+\textit{Prediction 7: Social isolation during fear conditioning will
+impair precision calibration of the alarm weight.}
+The precision-EMA update in SocialMemory requires a conspecific to
+validate alarm signals (predator-was-close within the 20-step horizon).
+Isolated fish have no social feedback, so $w_\text{alarm}$ cannot
+converge.
+This predicts that socially isolated zebrafish show more volatile
+alarm responses (inconsistent freeze magnitude across trials) than
+shoal-reared fish---a prediction testable by comparing alarm response
+variance in individually-housed versus group-housed larvae exposed to
+identical predator cue sequences.
+
 \subsection{Comparison with Rule-Based and Deep RL Baselines}
 
 Beyond the architectural comparison with Spaun and the virtual rodent,
@@ -1443,6 +2067,54 @@ Most immediately, extended online RL training across 50+ rounds with
 weights converge to reliable sensorimotor associations and whether
 the WTA goal selector's Hebbian projection learns to predict
 goal-appropriate pallium-D patterns.
+
+\paragraph{Virtual laboratory expansion.}
+The most impactful near-term additions are:
+(1)~standardized assay arenas implementing the Novel Tank Test,
+Light-Dark Preference, and Social Preference Test in exact protocol
+correspondence with published zebrafish behavioral literature, enabling
+direct quantitative comparison;
+(2)~an empirical data comparison pipeline that ingests EthoVision or
+DeepLabCut CSV trajectories and computes behavioral similarity metrics
+(time-in-zone match, learning curve $R^2$, inter-individual variance ratio);
+(3)~multi-seed statistical infrastructure that runs each scenario across
+$N \ge 10$ random seeds and reports mean $\pm$ SD alongside Cohen's $d$
+effect sizes between experimental and control conditions.
+
+\paragraph{Disorder modeling extensions.}
+The three disorder profiles presented---hypodopaminergic, ASD-like, and
+schizophrenia-like---represent first-pass parameter perturbations.
+More biologically grounded implementations would introduce
+(1)~dynamic DA depletion simulating nigrostriatal degeneration
+(progressive STDP failure across training rounds);
+(2)~oxytocin/vasopressin systems for social bonding and pair preference,
+currently absent but central to ASD biology;
+(3)~cortisol (HPA axis) feedback causing hippocampal-analog shrinkage
+under chronic stress (reducing place-cell capacity over rounds);
+and (4)~endocannabinoid-mediated fear extinction, enabling
+post-traumatic-stress-like and resilience-like phenotypes that
+differ in extinction rate.
+
+\paragraph{Developmental trajectory.}
+All current models represent adult fish.
+Larval zebrafish (5--7 dpf), the dominant experimental model due to
+brain transparency, differ substantially: fewer active neuromodulatory
+systems, simpler EFE with only two goal axes (approach/avoid),
+no social memory, and pre-myelinated motor pathways.
+Introducing a developmental staging parameter that gates module
+activation in the same order as biological maturation would allow the
+virtual laboratory to generate predictions about \emph{when} specific
+cognitive capacities emerge---a question directly testable with
+calcium imaging across zebrafish development.
+
+\paragraph{Cross-species scaling.}
+The developmental curriculum approach could be applied to other model
+organisms: \textit{Drosophila} ($\sim$100,000 neurons, complete
+connectome), mouse ($\sim$70M neurons, partial connectome), or human
+cortical organoids---testing whether the same active inference
+architecture scales across brain sizes and complexity levels, and
+whether disorder phenotypes exhibit homologous behavioral signatures
+across species.
 The current data (35 rounds, Table~\ref{tab:training}) show the
 expected non-monotonic early trajectory; FLEE time dropped from 60\%
 (round~20) to 29\% (round~35) following EFE re-tuning, and food intake

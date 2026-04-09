@@ -47,6 +47,10 @@ from zebrav2.brain.binocular_depth import BinocularDepth
 from zebrav2.brain.shoaling import ShoalingModule
 from zebrav2.brain.prey_capture import PreyCaptureKinematics
 from zebrav2.brain.personality import get_personality
+from zebrav2.brain.meta_goal import MetaGoalWeights
+from zebrav2.brain.social_memory import SocialMemory
+from zebrav2.brain.hpa_axis import HPAAxis
+from zebrav2.brain.oxytocin import OxytocinSystem
 
 GOAL_FORAGE, GOAL_FLEE, GOAL_EXPLORE, GOAL_SOCIAL = 0, 1, 2, 3
 
@@ -128,6 +132,12 @@ class ZebrafishBrainV2(nn.Module):
         self.binocular = BinocularDepth()
         self.shoaling = ShoalingModule()
         self.prey_capture = PreyCaptureKinematics()
+        # Learned EFE weights + social inference
+        self.meta_goal = MetaGoalWeights(device=device)
+        self.social_mem = SocialMemory()
+        # Stress hormone (HPA/HPI axis) + social bonding (oxytocin/vasopressin)
+        self.hpa = HPAAxis()
+        self.oxt = OxytocinSystem()
         # EFE state (adapted from v1)
         self.goal_probs = torch.tensor([0.25, 0.25, 0.25, 0.25], device=device)
         self.current_goal = GOAL_EXPLORE
@@ -254,12 +264,21 @@ class ZebrafishBrainV2(nn.Module):
             else:
                 ll_dist = 999.0  # beyond detection range
 
-        # Spiking lateral line module
+        # Spiking lateral line module — multi-source: predator + food + conspecifics
+        _ll_conspecifics = []
+        if hasattr(env, 'all_fish'):
+            for _i, _f in enumerate(env.all_fish):
+                if _i == 0 or not _f.get('alive', True):
+                    continue
+                _ll_conspecifics.append({'x': _f['x'], 'y': _f['y'],
+                                         'speed': _f.get('speed', 0.5)})
         ll_out = self.lateral_line_mod(
             fish_x=getattr(env, 'fish_x', 400), fish_y=getattr(env, 'fish_y', 300),
             fish_heading=getattr(env, 'fish_heading', 0.0),
             pred_x=getattr(env, 'pred_x', -999), pred_y=getattr(env, 'pred_y', -999),
-            pred_vx=self.pred_model.vx, pred_vy=self.pred_model.vy)
+            pred_vx=self.pred_model.vx, pred_vy=self.pred_model.vy,
+            foods=getattr(env, 'foods', []),
+            conspecifics=_ll_conspecifics)
         if ll_out['dist'] < 999:
             ll_dist = ll_out['dist']
 
@@ -326,6 +345,10 @@ class ZebrafishBrainV2(nn.Module):
         # Boost effective threat with rear estimate (only if recently saw enemy)
         if self._rear_threat > self.amygdala_alpha and self._rear_threat > 0.05:
             self.amygdala_alpha = min(self._rear_threat, 0.5)  # cap phantom threat
+        # HPA axis: update cortisol from sustained amygdala activation
+        self.hpa.update(self.amygdala_alpha)
+        # Allostatic sensitization: chronic cortisol amplifies fear
+        self.amygdala_alpha = min(1.0, self.amygdala_alpha * self.hpa.amygdala_sensitization())
         # CMS (novelty)
         self.cms = 0.3 * self.amygdala_alpha + 0.1
 
@@ -395,7 +418,9 @@ class ZebrafishBrainV2(nn.Module):
         # Use classifier food probability + retinal food pixels for robust food detection
         cls_food = float(self._cls_probs[1])
         p_food_retinal = float(L_type.max()) + float(R_type.max())
-        p_food = min(1.0, max(p_food_retinal * 0.5, cls_food))
+        # UV prey channel: UV cones detect small dark food items against bright background
+        _uv_prey = float(rgc_out.get('uv_prey_L', 0.0)) + float(rgc_out.get('uv_prey_R', 0.0))
+        p_food = min(1.0, max(p_food_retinal * 0.5, cls_food) + _uv_prey * 0.1)
         # Fuse retinal + tectum + amygdala for threat estimate
         # Tectum SFGS-b activity correlates with visual threat processing
         tect_threat = float(tect_out['sfgs_b'].mean()) * 5.0  # scale sparse rate to [0,1]
@@ -420,8 +445,11 @@ class ZebrafishBrainV2(nn.Module):
         steps_to_critical = (self.energy - 25.0) / (energy_drain_per_step + 1e-8)
         middle_factor = 4.0 * energy_ratio * (1.0 - energy_ratio)  # 0 at full/empty, 1.0 at 50%
         energy_anxiety = max(0.0, (200.0 - steps_to_critical) / 200.0) * middle_factor * 0.4
-        # Combined urgency: current + predicted + anticipatory
-        energy_urgency = starvation * starvation * 3.0 + future_crisis * 2.0 + energy_anxiety
+        # Combined urgency: current + predicted + anticipatory (scaled by learned urgency weight)
+        _mw = self.meta_goal.scales().detach().cpu().numpy()  # [8] floats
+        _mc = np.zeros(8, dtype=np.float32)   # modulation contribution magnitudes
+        energy_urgency = (starvation * starvation * 3.0 + future_crisis * 2.0 + energy_anxiety) * float(_mw[7])
+        _mc[7] = starvation * starvation * 3.0 + future_crisis * 2.0 + energy_anxiety
         G_forage = 0.2 * U - 0.8 * p_food + 0.15 - energy_urgency
         G_flee   = 0.1 * self.cms - 0.8 * p_enemy + 0.35  # starvation term removed: hungry fish should forage, not flee
         G_explore = 0.3 * U - 0.3 + 0.20 + starvation * 0.3 + future_crisis * 0.3
@@ -440,13 +468,15 @@ class ZebrafishBrainV2(nn.Module):
         G_flee += allo_bias[1]
         G_explore += allo_bias[2]
         G_social += allo_bias[3]
-        # World model EFE
+        # World model EFE (mod_w[0])
         wm_efe = self.world_model.compute_efe_per_goal(
             self.energy, self.pred_model, fish_pos, pc_bonus, self.allostasis)
-        G_forage += 0.15 * wm_efe[0]
-        G_flee += 0.15 * wm_efe[1]
-        G_explore += 0.15 * wm_efe[2]
-        G_social += 0.15 * wm_efe[3]
+        _wm_scale = 0.15 * float(_mw[0])
+        G_forage += _wm_scale * wm_efe[0]
+        G_flee += _wm_scale * wm_efe[1]
+        G_explore += _wm_scale * wm_efe[2]
+        G_social += _wm_scale * wm_efe[3]
+        _mc[0] = _wm_scale * sum(abs(float(x)) for x in wm_efe)
         # Interoceptive spiking bias (gated — ablation showed insula hurts performance)
         if self._active('insula'):
             int_bias = self.insula.get_allostatic_bias()
@@ -459,10 +489,14 @@ class ZebrafishBrainV2(nn.Module):
         # Olfactory bias: food odor attracts FORAGE, alarm drives FLEE
         G_forage += self.olfaction.get_forage_bias()
         G_flee += self.olfaction.get_flee_bias()
+        # Lateral line prey detection: water disturbance from nearby food → attract FORAGE
+        if ll_out['prey_detected']:
+            G_forage -= 0.12 * ll_out['low_freq_prey']
         # Personality bias on EFE
         G_explore += self._explore_bias
         G_social += self._social_bias
-        # Shoaling: social cues from conspecifics
+        G_social += self.oxt.social_efe_bias()  # OXT makes social goal more preferred
+        # Shoaling: social cues from conspecifics (mod_w[1] + learned social weights)
         colleagues = []
         if hasattr(env, 'all_fish'):
             for i, f in enumerate(env.all_fish):
@@ -475,14 +509,39 @@ class ZebrafishBrainV2(nn.Module):
         self.shoaling.step(fish_px, fish_py, fish_heading, colleagues)
         self.shoaling.observe_social_cues(fish_px, fish_py, colleagues)
         social_bias = self.shoaling.get_efe_bias()
-        G_forage += social_bias['social_forage']
-        G_flee += social_bias['social_flee']
-        G_explore += social_bias['social_explore']
-        # Geographic model EFE bias
+        # Update social memory state tracker
+        self.social_mem.update_states(fish_px, fish_py, colleagues)
+        # Oxytocin/vasopressin: compute proximity counts from cached fish states
+        _n_nearby = sum(1 for s in self.social_mem._fish_states.values() if s['dist'] < 150)
+        _n_crowd  = sum(1 for s in self.social_mem._fish_states.values()
+                        if s['dist'] < 100 and s['eating'])
+        self.oxt.update(_n_nearby, _n_crowd)
+        # OXT fear buffering: social contact reduces acute fear expression
+        if _n_nearby > 0:
+            self.amygdala_alpha = max(0.0, self.amygdala_alpha
+                                      - self.oxt.fear_extinction_factor() * 0.3)
+        # Learned alarm replaces fixed shoaling alarm coefficient
+        learned_alarm = self.social_mem.get_social_alarm(self.shoaling.social_alarm)
+        _social_scale = float(_mw[1])
+        G_forage += social_bias['social_forage'] * _social_scale
+        G_flee += -learned_alarm * 0.2 * _social_scale  # learned alarm weight
+        G_explore += social_bias['social_explore'] * _social_scale
+        # Social food cue: steer toward where conspecifics are eating (uses cached _fish_states)
+        G_forage += self.social_mem.get_food_cue_efe(fish_px, fish_py, fish_heading) * _social_scale
+        # Competition penalty: avoid crowded food patches
+        _competition_penalty = self.social_mem.get_competition_penalty(fish_px, fish_py)
+        G_forage += _competition_penalty * _social_scale
+        _mc[1] = abs(social_bias['social_forage']) + learned_alarm * 0.2 + abs(social_bias['social_explore'])
+        # Error-driven social weight updates — called unconditionally (window-based, not single-snapshot)
+        self.social_mem.update_alarm_outcome(pred_dist < 100)
+        self.social_mem.update_food_cue_outcome(getattr(env, '_eaten_now', 0) > 0)
+        # Geographic model EFE bias (mod_w[2])
         geo_bias = self.geo_model.get_efe_bias(self._last_fish_pos[0], self._last_fish_pos[1])
-        G_forage += geo_bias['forage_bias']
-        G_flee += geo_bias['flee_bias']
-        G_explore += geo_bias['explore_bias']
+        _geo_scale = float(_mw[2])
+        G_forage += geo_bias['forage_bias'] * _geo_scale
+        G_flee += geo_bias['flee_bias'] * _geo_scale
+        G_explore += geo_bias['explore_bias'] * _geo_scale
+        _mc[2] = (abs(geo_bias['forage_bias']) + abs(geo_bias['flee_bias']) + abs(geo_bias['explore_bias']))
         # World learning: novelty drives exploration in unfamiliar environments
         # VAE surprise + place cell visit count → novelty estimate
         vae_novelty, _ = self.vae.memory.query_epistemic(self._z_prev if self._z_prev is not None else np.zeros(16, dtype=np.float32))
@@ -490,19 +549,23 @@ class ZebrafishBrainV2(nn.Module):
         place_novelty = 1.0 / (1.0 + place_visits * 0.1)  # high when few visits
         novelty = 0.5 * vae_novelty + 0.5 * place_novelty
         self._novelty_ema = 0.98 * self._novelty_ema + 0.02 * novelty
-        # High novelty → explore more (lower G_explore = more preferred)
+        # High novelty → explore more (lower G_explore = more preferred) (mod_w[3])
         if self._novelty_ema > 0.5:
-            G_explore -= 0.3 * (self._novelty_ema - 0.5)
+            _novelty_contrib = 0.3 * (self._novelty_ema - 0.5) * float(_mw[3])
+            G_explore -= _novelty_contrib
             self._exploration_phase = True
+            _mc[3] = _novelty_contrib
         else:
             self._exploration_phase = False
-        # VAE world model planning: 3-goal latent horizon simulation
+        # VAE world model planning: 3-goal latent horizon simulation (mod_w[4])
         # plan() returns G[0..2] for FORAGE/FLEE/EXPLORE; blends in gradually after warmup
         if self._z_prev is not None and self._last_action_ctx is not None:
             vae_G = self.vae.plan(self._z_prev, self._last_action_ctx)
-            G_forage  += 0.2 * float(vae_G[0])
-            G_flee    += 0.2 * float(vae_G[1])
-            G_explore += 0.2 * float(vae_G[2])
+            _vae_scale = 0.2 * float(_mw[4])
+            G_forage  += _vae_scale * float(vae_G[0])
+            G_flee    += _vae_scale * float(vae_G[1])
+            G_explore += _vae_scale * float(vae_G[2])
+            _mc[4] = _vae_scale * sum(abs(float(x)) for x in vae_G[:3])
         # Habenula goal avoidance (gated — ablation showed habenula hurts performance)
         if self._active('habenula'):
             hab_frustration = self.habenula.frustration  # numpy (4,)
@@ -512,22 +575,30 @@ class ZebrafishBrainV2(nn.Module):
             G_flee += hab_bias[1]
             G_explore += hab_bias[2]
             G_social += hab_bias[3]
-        # Circadian EFE bias: daytime (activity_drive~1.0) → prefer forage + explore
+        # Circadian EFE bias: daytime (activity_drive~1.0) → prefer forage + explore (mod_w[5])
         # Uses previous step's value — 1-step lag is biologically fine for circadian
         circ_efe = (self._last_activity_drive - 0.65) * 0.15  # 0 at night, ~0.05 at day
-        G_explore -= circ_efe
-        G_forage -= circ_efe * 0.5
-        # Predictive surprise: high surprise last step → boost exploration this step
+        _circ_scale = float(_mw[5])
+        G_explore -= circ_efe * _circ_scale
+        G_forage -= circ_efe * 0.5 * _circ_scale
+        _mc[5] = abs(circ_efe)
+        # Predictive surprise: high surprise last step → boost exploration this step (mod_w[6])
         if self._last_pred_surprise > 0.1:
-            G_explore -= 0.15 * (self._last_pred_surprise - 0.1)
+            _cb_contrib = 0.15 * (self._last_pred_surprise - 0.1) * float(_mw[6])
+            G_explore -= _cb_contrib
+            _mc[6] = _cb_contrib
         # Analytic EFE → bias for spiking goal selector
-        G = torch.tensor([G_forage, G_flee, G_explore, G_social], device=self.device)
-        efe_bias = -2.0 * (G - G.min())  # lower G = stronger bias (inverted for excitation)
+        # Add learned goal_bias (autograd flows for REINFORCE)
+        G_base = torch.tensor([G_forage, G_flee, G_explore, G_social], device=self.device)
+        G = G_base + self.meta_goal.goal_bias  # gradient through goal_bias
+        efe_bias = -2.0 * (G - G.min())       # lower G = stronger bias (inverted for excitation)
 
         # Spiking WTA goal selection — full pallium-D (no 75% truncation)
+        # Detach efe_bias for goal_selector to avoid spurious gradients through spiking ops
         wta_out = self.goal_selector(pal_out['rate_D'],
-                                      neuromod_bias=efe_bias)
-        self.goal_probs = torch.softmax(efe_bias, dim=0)  # keep for monitoring
+                                      neuromod_bias=efe_bias.detach())
+        _goal_probs_grad = torch.softmax(efe_bias, dim=0)  # with gradient for REINFORCE
+        self.goal_probs = _goal_probs_grad.detach()         # detached for monitoring
         # Use WTA winner if confident, else fall back to analytic EFE
         if wta_out['confidence'] > 0.4:
             new_goal = wta_out['winner']
@@ -607,6 +678,9 @@ class ZebrafishBrainV2(nn.Module):
             if new_goal != self.current_goal:
                 self.goal_persistence = 8
             self.current_goal = new_goal
+
+        # Record step for REINFORCE update at episode end
+        self.meta_goal.record_step(self.current_goal, _goal_probs_grad, _mc)
 
         # === 5. MOTOR COMMAND ===
         # Flee direction: pred_model Kalman estimate (no GT reads)
@@ -857,6 +931,9 @@ class ZebrafishBrainV2(nn.Module):
             cms=self.cms, flee_active=(self.current_goal == GOAL_FLEE),
             fatigue=self.allostasis.fatigue, circadian=0.7,
             current_goal=self.current_goal)
+        # HPA cortisol suppresses DA (anhedonia under chronic stress)
+        self.neuromod.DA.mul_(self.hpa.da_suppression())
+        self.neuromod.DA.clamp_(0.0, 1.0)
         # Phasic DA burst: override neuromod EMA for reward window
         if self._da_phasic_steps > 0:
             self.neuromod.DA.fill_(0.90 + 0.02 * self._da_phasic_steps / 6.0)
@@ -1144,3 +1221,20 @@ class ZebrafishBrainV2(nn.Module):
         self._pred_state = 'PATROL'
         self._pred_dist_gt = 999.0
         self._enemy_pixels = 0.0
+        # Reset per-episode state (learned weights persist across episodes)
+        self.social_mem.reset()
+        self.meta_goal.clear_episode()
+        self.hpa.reset()
+        self.oxt.reset()  # discard any stale log_probs from aborted episodes
+
+    def on_episode_end(self, fitness: float, goal_counts: dict = None):
+        """
+        Called at end of each episode to update all online-learned parameters.
+        Trainer calls this after run_round() with the episode fitness score.
+
+        Updates:
+          - MetaGoalWeights via REINFORCE (goal_bias) + fitness correlation (mod_w)
+          - SocialMemory episode reset (weights persist across episodes)
+        """
+        self.meta_goal.episode_update(fitness)
+        self.social_mem.reset()
