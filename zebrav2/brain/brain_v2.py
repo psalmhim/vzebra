@@ -64,7 +64,9 @@ class ZebrafishBrainV2(nn.Module):
         # --- Core modules ---
         self.retina    = RetinaV2(device)
         self.tectum    = Tectum(device)
-        self.thalamus  = Thalamus(device)
+        _sfgs_b_half_n_e = self.tectum.sfgs_b_L.n_e   # 450 per hemisphere
+        self.thalamus_L = Thalamus(device, sfgs_b_n_e=_sfgs_b_half_n_e, n_tc=150)  # L_tectum → TC_L
+        self.thalamus_R = Thalamus(device, sfgs_b_n_e=_sfgs_b_half_n_e, n_tc=150)  # R_tectum → TC_R
         self.pallium   = Pallium(device)
         self.bg        = BasalGanglia(device)
         self.rs        = ReticulospinalSystem(device)
@@ -73,11 +75,14 @@ class ZebrafishBrainV2(nn.Module):
         # PE-driven feedback learning (W_FB is nn.Linear; pass its weight parameter)
         self.fb_learner = FeedbackPELearning(self.pallium.W_FB.weight, device=device)
         # --- Three-factor STDP: tectum→thalamus→pallium visual pathway ---
-        sfgs_b_n_e = self.tectum.sfgs_b.n_e   # 900
+        sfgs_b_n_e = self.tectum.sfgs_b_L.n_e  # 450 per hemisphere
         pal_s_n_e  = self.pallium.pal_s.n_e    # 1200
         pal_d_n_e  = self.pallium.pal_d.n_e    # 600
-        self.stdp_tect_tc = EligibilitySTDP(
-            self.thalamus.W_tect_tc.weight, device=device,
+        self.stdp_tect_tc_L = EligibilitySTDP(
+            self.thalamus_L.W_tect_tc.weight, device=device,
+            A_plus=0.002, A_minus=0.001, w_max=0.8, w_min=0.0)
+        self.stdp_tect_tc_R = EligibilitySTDP(
+            self.thalamus_R.W_tect_tc.weight, device=device,
             A_plus=0.002, A_minus=0.001, w_max=0.8, w_min=0.0)
         self.stdp_tc_pal = EligibilitySTDP(
             self.pallium.W_tc_pals.weight, device=device,
@@ -85,6 +90,17 @@ class ZebrafishBrainV2(nn.Module):
         self.stdp_pal_d = EligibilitySTDP(
             self.pallium.W_pals_pald.weight, device=device,
             A_plus=0.001, A_minus=0.001, w_max=0.8, w_min=0.0)
+        # Top-down attention: pallium-S → tectum (one-step delayed prediction)
+        _pal_s_n_e = self.pallium.pal_s.n_e   # 1200
+        _sfgs_b_n_e = self.tectum.sfgs_b_L.n_e  # 450
+        self.W_pal_tect_L = nn.Linear(_pal_s_n_e, _sfgs_b_n_e, bias=False)
+        self.W_pal_tect_R = nn.Linear(_pal_s_n_e, _sfgs_b_n_e, bias=False)
+        nn.init.xavier_uniform_(self.W_pal_tect_L.weight, gain=0.05)  # weak top-down
+        nn.init.xavier_uniform_(self.W_pal_tect_R.weight, gain=0.05)
+        self.W_pal_tect_L.to(device)
+        self.W_pal_tect_R.to(device)
+        # Previous-step pallium rate (for top-down prediction, 1-step delay)
+        self.register_buffer('_prev_pal_rate_s', torch.zeros(_pal_s_n_e, device=device))
         self._da_phasic_steps = 0  # phasic DA burst counter
         self.amygdala  = SpikingAmygdalaV2(device=device)
         self.classifier = ClassifierV2(device=device)
@@ -108,9 +124,11 @@ class ZebrafishBrainV2(nn.Module):
         self.habit = SpikingHabitNet(device=device)
         self.insula = SpikingInsularCortex(device=device)
         self.cpg = SpinalCPG(device=device)
-        # Tectum all_e size = sum of 4 layer E neuron counts
-        _tect_e_total = (self.tectum.sfgs_b.n_e + self.tectum.sfgs_d.n_e
-                         + self.tectum.sgc.n_e + self.tectum.so.n_e)
+        # Tectum all_e size = sum of all 8 half-layer E neuron counts (2 hemispheres)
+        _tect_e_total = (self.tectum.sfgs_b_L.n_e + self.tectum.sfgs_d_L.n_e +
+                         self.tectum.sgc_L.n_e    + self.tectum.so_L.n_e    +
+                         self.tectum.sfgs_b_R.n_e + self.tectum.sfgs_d_R.n_e +
+                         self.tectum.sgc_R.n_e    + self.tectum.so_R.n_e)
         self.vae = VAEWorldModelV2(tectum_dim=_tect_e_total, device=device)
         self._z_prev = None  # for VAE transition training
         self._last_action_ctx = None
@@ -370,12 +388,23 @@ class ZebrafishBrainV2(nn.Module):
 
         # Tectum
         if self._active('tectum'):
-            tect_out = self.tectum(rgc_out)
+            # Top-down prediction from previous step's pallium-S
+            with torch.no_grad():
+                I_td_L = self.W_pal_tect_L(self._prev_pal_rate_s).clamp(-3.0, 3.0)
+                I_td_R = self.W_pal_tect_R(self._prev_pal_rate_s).clamp(-3.0, 3.0)
+            tect_out = self.tectum(rgc_out, I_topdown_L=I_td_L, I_topdown_R=I_td_R)
         else:
-            tect_out = {'sfgs_b': torch.zeros(self.tectum.sfgs_b.n_e, device=self.device),
-                        'sfgs_d': torch.zeros(self.tectum.sfgs_d.n_e, device=self.device),
-                        'sgc': torch.zeros(self.tectum.sgc.n_e, device=self.device),
-                        'so': torch.zeros(self.tectum.so.n_e, device=self.device)}
+            tect_out = {
+                'sfgs_b': torch.zeros(self.tectum.sfgs_b_L.n_e * 2, device=self.device),
+                'sfgs_d': torch.zeros(self.tectum.sfgs_d_L.n_e * 2, device=self.device),
+                'sgc':    torch.zeros(self.tectum.sgc_L.n_e    * 2, device=self.device),
+                'so':     torch.zeros(self.tectum.so_L.n_e     * 2, device=self.device),
+                'sfgs_b_L': torch.zeros(self.tectum.sfgs_b_L.n_e, device=self.device),
+                'sfgs_b_R': torch.zeros(self.tectum.sfgs_b_R.n_e, device=self.device),
+                'sgc_L':    torch.zeros(self.tectum.sgc_L.n_e,    device=self.device),
+                'sgc_R':    torch.zeros(self.tectum.sgc_R.n_e,    device=self.device),
+                'sgc_L_mean': 0.0, 'sgc_R_mean': 0.0,
+            }
 
         # Interoception (spiking insular cortex)
         if self._active('insula'):
@@ -389,14 +418,22 @@ class ZebrafishBrainV2(nn.Module):
         # === 2. THALAMO-PALLIAL ===
         NA = self.neuromod.NA.item()
         if self._active('thalamus'):
-            tc_out = self.thalamus(tect_out['sfgs_b'], self.pallium.rate_s, NA)
+            tc_L_out = self.thalamus_L(tect_out['sfgs_b_L'], self.pallium.rate_s, NA)
+            tc_R_out = self.thalamus_R(tect_out['sfgs_b_R'], self.pallium.rate_s, NA)
+            # cat([TC_R, TC_L]): TC_R carries left visual field, TC_L carries right visual field.
+            # This ordering makes pal_d[:half]=left_visual, pal_d[half:]=right_visual,
+            # so RS voluntary_turn = (pal_R - pal_L) = (right_visual - left_visual) → correct sign.
+            tc_combined = torch.cat([tc_R_out['TC'], tc_L_out['TC']])
         else:
-            tc_out = {'TC': torch.zeros(self.thalamus.TC.n, device=self.device),
-                      'TRN': torch.zeros(self.thalamus.TRN.n, device=self.device)}
+            tc_L_out = {'TC': torch.zeros(self.thalamus_L.TC.n, device=self.device),
+                        'TRN': torch.zeros(self.thalamus_L.TRN.n, device=self.device)}
+            tc_R_out = {'TC': torch.zeros(self.thalamus_R.TC.n, device=self.device),
+                        'TRN': torch.zeros(self.thalamus_R.TRN.n, device=self.device)}
+            tc_combined = torch.zeros(self.thalamus_L.TC.n + self.thalamus_R.TC.n, device=self.device)
         goal_tensor = torch.zeros(4, device=self.device)
         goal_tensor[self.current_goal] = 1.0
         if self._active('pallium'):
-            pal_out = self.pallium(tc_out['TC'], goal_tensor, self.neuromod.ACh.item())
+            pal_out = self.pallium(tc_combined, goal_tensor, self.neuromod.ACh.item())
         else:
             pal_out = {'rate_S': torch.zeros(self.pallium.pal_s.n_e, device=self.device),
                        'rate_D': torch.zeros(self.pallium.pal_d.n_e, device=self.device),
@@ -408,9 +445,10 @@ class ZebrafishBrainV2(nn.Module):
         _da_for_stdp = self.neuromod.DA.item()
         if _da_for_stdp > 0.55 or self._da_phasic_steps > 0:
             if self._active('tectum') and self._active('thalamus'):
-                self.stdp_tect_tc.update_traces(tect_out['sfgs_b'], tc_out['TC'])
+                self.stdp_tect_tc_L.update_traces(tect_out['sfgs_b_L'], tc_L_out['TC'])
+                self.stdp_tect_tc_R.update_traces(tect_out['sfgs_b_R'], tc_R_out['TC'])
             if self._active('thalamus') and self._active('pallium'):
-                self.stdp_tc_pal.update_traces(tc_out['TC'], pal_out['rate_S'])
+                self.stdp_tc_pal.update_traces(tc_combined, pal_out['rate_S'])
             if self._active('pallium'):
                 self.stdp_pal_d.update_traces(pal_out['rate_S'], pal_out['rate_D'])
 
@@ -730,6 +768,14 @@ class ZebrafishBrainV2(nn.Module):
             else:
                 flee_turn = self._last_flee_turn * 0.2
 
+        # Tectum lateral asymmetry → escape direction (correct biological source)
+        # sgc_L_mean > sgc_R_mean: L_tectum active = R_eye input = RIGHT visual field = threat RIGHT
+        _tect_flee = (tect_out['sgc_L_mean'] - tect_out['sgc_R_mean']) * 2.0
+        flee_dir = 0.6 * flee_turn + 0.4 * _tect_flee  # blend retinal + tectal
+        flee_dir = max(-1.0, min(1.0, flee_dir))
+        if self.current_goal == GOAL_FLEE:
+            flee_turn = flee_dir
+
         # Food approach: retinal bearing (L vs R food pixels)
         food_turn = 0.0
         if self.current_goal == GOAL_FORAGE:
@@ -982,10 +1028,14 @@ class ZebrafishBrainV2(nn.Module):
         enemy_bearing = math.atan2(
             getattr(env, 'pred_y', 300) - py,
             getattr(env, 'pred_x', 400) - px) - fish_heading if enemy_px > 1 else 0.0
+        # Prediction-error per hemifield: DS motion + loom signals = surprise/novelty
+        _pe_L = float(rgc_out['L_ds'].mean()) + float(rgc_out['L_loom'].mean())
+        _pe_R = float(rgc_out['R_ds'].mean()) + float(rgc_out['R_loom'].mean())
         saccade_out = self.saccade(
             food_bearing=food_bearing, enemy_bearing=enemy_bearing,
             current_goal=self.current_goal,
-            salience_L=float(L_int.sum()), salience_R=float(R_int.sum()))
+            salience_L=float(L_int.sum()), salience_R=float(R_int.sum()),
+            pe_L=_pe_L, pe_R=_pe_R)
 
         # Geographic model update
         self.geo_model.update(
@@ -1015,6 +1065,11 @@ class ZebrafishBrainV2(nn.Module):
         if saccade_out['saccade_active'] and self.current_goal != GOAL_FLEE:
             turn += saccade_out['gaze_offset'] * 0.1
         turn = float(np.clip(turn, -1.0, 1.0))
+        # Store gaze offset on env so sensory_bridge uses it next step
+        try:
+            env.gaze_offset = saccade_out['gaze_offset']
+        except Exception:
+            pass
         # Sleep-wake: reduce responsiveness when drowsy (melatonin-driven)
         speed *= sw_out['responsiveness']
         speed = max(0.3, min(2.0, speed))
@@ -1072,12 +1127,14 @@ class ZebrafishBrainV2(nn.Module):
             DA_now = self.neuromod.DA.item()
             ACh_now = self.neuromod.ACh.item()
             # Homeostatic scaling always (normalizes firing rates)
-            self.stdp_tect_tc.homeostatic_scale(tc_out['TC'])
+            self.stdp_tect_tc_L.homeostatic_scale(tc_L_out['TC'])
+            self.stdp_tect_tc_R.homeostatic_scale(tc_R_out['TC'])
             self.stdp_tc_pal.homeostatic_scale(pal_out['rate_S'])
             self.stdp_pal_d.homeostatic_scale(pal_out['rate_D'])
             # Weight update only during elevated DA (reward signal present)
             if DA_now > 0.55 or self._da_phasic_steps > 0:
-                self.stdp_tect_tc.consolidate(DA_now, ACh_now, eta=1e-4)
+                self.stdp_tect_tc_L.consolidate(DA_now, ACh_now, eta=1e-4)
+                self.stdp_tect_tc_R.consolidate(DA_now, ACh_now, eta=1e-4)
                 self.stdp_tc_pal.consolidate(DA_now, ACh_now, eta=1e-4)
                 self.stdp_pal_d.consolidate(DA_now, ACh_now, eta=5e-5)
         # Online Hebbian classifier fine-tuning: food confirmation → reinforce food class
@@ -1121,6 +1178,9 @@ class ZebrafishBrainV2(nn.Module):
             cls_probs=self._cls_probs,
             goal=self.current_goal, turn=turn, speed=speed,
             retinal_summary=retinal_summary)
+
+        # Store pallium-S rate for top-down attention next step
+        self._prev_pal_rate_s.copy_(pal_out['rate_S'].detach())
 
         return {
             'turn': float(turn),
@@ -1167,7 +1227,8 @@ class ZebrafishBrainV2(nn.Module):
     def reset(self):
         self.retina.reset()
         self.tectum.reset()
-        self.thalamus.reset()
+        self.thalamus_L.reset()
+        self.thalamus_R.reset()
         self.pallium.reset()
         self.bg.reset()
         self.rs.reset()
@@ -1200,9 +1261,11 @@ class ZebrafishBrainV2(nn.Module):
         self.binocular.reset()
         self.shoaling.reset()
         self.prey_capture.reset()
-        self.stdp_tect_tc.reset()
+        self.stdp_tect_tc_L.reset()
+        self.stdp_tect_tc_R.reset()
         self.stdp_tc_pal.reset()
         self.stdp_pal_d.reset()
+        self._prev_pal_rate_s.zero_()
         self._da_phasic_steps = 0
         self._z_prev = None
         self._last_action_ctx = None

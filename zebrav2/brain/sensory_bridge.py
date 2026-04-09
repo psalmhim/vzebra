@@ -25,6 +25,9 @@ def inject_sensory(env):
     fish_x = getattr(env, 'fish_x', arena_w / 2)
     fish_y = getattr(env, 'fish_y', arena_h / 2)
     fish_heading = getattr(env, 'fish_heading', 0.0)
+    gaze_offset = getattr(env, 'gaze_offset', 0.0)
+    # Gaze offset from saccade module: shifts visual sampling without body rotation
+    effective_heading = fish_heading + gaze_offset  # eye direction ≠ body heading
     fov_rad = math.radians(200)  # wider FoV reduces rear blind spot
 
     brain_L = np.zeros(800, dtype=np.float32)
@@ -37,8 +40,8 @@ def inject_sensory(env):
         if dist > 500:
             return
         angle_to = math.atan2(dy, dx)
-        rel = math.atan2(math.sin(angle_to - fish_heading),
-                         math.cos(angle_to - fish_heading))
+        rel = math.atan2(math.sin(angle_to - effective_heading),
+                         math.cos(angle_to - effective_heading))
         if abs(rel) > fov_rad / 2:
             return
         ang_hw = math.atan(radius / dist)

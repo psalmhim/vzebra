@@ -41,12 +41,15 @@ class SpikingSaccade(nn.Module):
 
     @torch.no_grad()
     def forward(self, food_bearing: float, enemy_bearing: float,
-                current_goal: int, salience_L: float, salience_R: float) -> dict:
+                current_goal: int, salience_L: float, salience_R: float,
+                pe_L: float = 0.0, pe_R: float = 0.0) -> dict:
         """
         food_bearing: relative angle to nearest food (-pi to pi)
         enemy_bearing: relative angle to predator
         current_goal: 0=FORAGE, 1=FLEE, 2=EXPLORE, 3=SOCIAL
         salience_L/R: total retinal activity left/right eye
+        pe_L/pe_R: prediction error / surprise per hemifield (direction-selective +
+                   looming signal, [0,1]) — drives epistemic free-energy gaze
         """
         # Target gaze direction based on goal
         if current_goal == 0:  # FORAGE: look toward food
@@ -57,6 +60,11 @@ class SpikingSaccade(nn.Module):
             target_gaze = 0.5 * math.sin(self._gaze_ema * 3.0)  # oscillating scan
         else:  # SOCIAL: look toward conspecific (most salient)
             target_gaze = 0.3 * (salience_R - salience_L) / (salience_L + salience_R + 1e-8)
+
+        # Free-energy gaze: shift toward the hemifield with more prediction error
+        # pe_R > pe_L → more surprise on right → saccade right (positive gaze offset)
+        target_gaze += (pe_R - pe_L) * 0.3
+        target_gaze = max(-0.8, min(0.8, target_gaze))  # clamp after epistemic addition
 
         # Spiking dynamics
         I_dir = torch.zeros(self.n_dir, device=self.device)

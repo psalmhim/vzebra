@@ -2,6 +2,9 @@
 Thalamo-pallial loop with reticular nucleus (TRN).
 TC neurons (LTS type): relay tectum → pallium.
 TRN neurons (FS type): gate TC relay based on attention.
+
+Can be instantiated as a full thalamus (default) or as a half-thalamus for
+hemispheric organisation by passing sfgs_b_n_e and n_tc at half-size.
 """
 import torch
 import torch.nn as nn
@@ -9,26 +12,47 @@ from zebrav2.spec import DEVICE, N_TC, N_TRN, N_OT_SFGS_B, N_PAL_S, SUBSTEPS
 from zebrav2.brain.neurons import IzhikevichLayer
 
 class Thalamus(nn.Module):
-    def __init__(self, device=DEVICE):
+    def __init__(self, device=DEVICE,
+                 sfgs_b_n_e: int = None,
+                 n_tc: int = None,
+                 n_trn: int = None):
+        """
+        sfgs_b_n_e: size of the SFGS-b E input from tectum.
+                    Defaults to int(0.75 * N_OT_SFGS_B) = 900.
+                    Pass 450 for a half-thalamus receiving one hemisphere.
+        n_tc:       number of TC relay neurons.
+                    Defaults to N_TC = 300. Pass 150 for a half-thalamus.
+        n_trn:      number of TRN inhibitory neurons.
+                    Defaults to N_TRN = 80. Kept the same for each half.
+        """
         super().__init__()
         self.device = device
+
+        # Resolve sizes (use spec defaults when not specified)
+        _sfgs_b_n_e = sfgs_b_n_e if sfgs_b_n_e is not None else int(0.75 * N_OT_SFGS_B)
+        _n_tc       = n_tc       if n_tc       is not None else N_TC
+        _n_trn      = n_trn      if n_trn      is not None else N_TRN
+        # Full pallium feedback always uses complete pallium-S n_e
+        _pal_s_n_e  = int(0.75 * N_PAL_S)   # 1200
+
         # TC neurons: LTS type (burst in low-drive, tonic in high-drive)
-        self.TC = IzhikevichLayer(N_TC, 'LTS', device)
+        self.TC = IzhikevichLayer(_n_tc, 'LTS', device)
         # TRN neurons: FS type (fast inhibitory gate)
-        self.TRN = IzhikevichLayer(N_TRN, 'FS', device)
+        self.TRN = IzhikevichLayer(_n_trn, 'FS', device)
+
         # Input projections
-        n_tect_in = N_OT_SFGS_B  # 375 total (sfgs_b n_e = 281)
-        sfgs_b_n_e = int(0.75 * N_OT_SFGS_B)  # 281
-        pal_s_n_e = int(0.75 * N_PAL_S)        # 375
-        self.W_tect_tc  = nn.Linear(sfgs_b_n_e, N_TC, bias=False)
-        self.W_pal_trn  = nn.Linear(pal_s_n_e, N_TRN, bias=False)
-        self.W_tc_trn   = nn.Linear(N_TC, N_TRN, bias=False)
-        self.W_trn_tc   = nn.Linear(N_TRN, N_TC, bias=False)  # inhibitory
+        self.W_tect_tc  = nn.Linear(_sfgs_b_n_e, _n_tc,  bias=False)
+        self.W_pal_trn  = nn.Linear(_pal_s_n_e,  _n_trn, bias=False)
+        self.W_tc_trn   = nn.Linear(_n_tc,        _n_trn, bias=False)
+        self.W_trn_tc   = nn.Linear(_n_trn,       _n_tc,  bias=False)  # inhibitory
+
         for W in [self.W_tect_tc, self.W_pal_trn, self.W_tc_trn, self.W_trn_tc]:
             nn.init.xavier_uniform_(W.weight, gain=0.3)
             W.to(device)
-        self.register_buffer('tc_rate', torch.zeros(N_TC, device=device))
-        self.register_buffer('trn_rate', torch.zeros(N_TRN, device=device))
+
+        self.register_buffer('tc_rate',  torch.zeros(_n_tc,  device=device))
+        self.register_buffer('trn_rate', torch.zeros(_n_trn, device=device))
+
         # TC: stimulus-driven (no tonic), TRN: light tonic for gating
         self.TC.i_tonic.zero_()
         self.TRN.i_tonic.fill_(0.5)
