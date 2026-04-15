@@ -2160,10 +2160,14 @@ brain.habenula.threshold = 0.2
 brain.social_mem.w_food_cue = 0.2
 brain.social_mem.w_alarm = 0.3
 \end{verbatim}
+The precision profile implements the ``high sensory, low integrative''
+pattern of \citet{lawson2014}: sensory modules (retina, lateral line,
+color vision, proprioception) receive elevated $\gamma_\text{floor}$
+while thalamus and pallium receive reduced $\gamma_\text{ceiling}$.
 Predicted behavioral profile: reduced shoal cohesion, failure to follow
 conspecific food cues (independent foraging), repetitive arena-boundary
-following (CPG persistence without social modulation), and heightened
-habenula-driven strategy switching (frustration intolerance).
+following (CPG persistence without social modulation), heightened
+detail-focused sensory responses, and weakened contextual integration.
 These map onto zebrafish ASD models using \textit{shank3} knockouts
 \citep{chen2010} and serotonin transporter mutants, which show reduced
 social preference and increased stereotypy.
@@ -2182,12 +2186,18 @@ brain._da_phasic_steps = 9999   # no phasic bursts
 # Loose prediction (high precision prior -> over-confident classifier)
 brain.classifier.temperature = 0.3
 \end{verbatim}
+The precision profile sets $\gamma_\text{ceiling} = -1.5$ across all
+two-compartment columns, capping precision at $\pi \leq 0.18$. This
+structural constraint cannot be overcome by online precision learning,
+modeling NMDA hypofunction as a permanent deficit \citep{adams2013}.
 Predicted behavioral profile: (1)~\emph{aberrant salience}---the fish
 misattributes EFE to random environmental features due to tonically elevated
-DA inflating the value of unrelated stimuli; (2)~\emph{working-memory
+DA inflating the value of unrelated stimuli; (2)~\emph{attenuated free
+energy}---a 3$\times$ reduction in total $F$ reflects the brain's failure
+to properly weight prediction errors; (3)~\emph{working-memory
 deficit}---reduced NMDA in thalamo-pallial loop impairs persistent
 representations, observable as shortened goal-persistence duration;
-(3)~\emph{loose associations}---the classifier assigns high confidence to
+(4)~\emph{loose associations}---the classifier assigns high confidence to
 ambiguous stimuli (food/predator confusion), increasing false-flee events.
 Zebrafish \textit{disc1} mutants and ketamine-treated fish (NMDA antagonist)
 show reduced social interaction, increased erratic locomotion, and impaired
@@ -2202,23 +2212,59 @@ wildtype and full disorder, enabling dose-response simulations
 (Table~\ref{tab:disorders}).
 \begin{table}[h]
 \centering
-\caption{Disorder phenotype profiles and biological analogs.}
+\caption{Disorder phenotype profiles with precision parameters and biological analogs.
+$\gamma_\text{ceil}$/$\gamma_\text{floor}$ constrain the learnable precision parameter $\gamma$
+via structural bounds on the two-compartment column (Lee et~al.\ 2026).}
 \label{tab:disorders}
-\begin{tabular}{lll}
+\small
+\begin{tabular}{llll}
 \toprule
-\textbf{Profile} & \textbf{Key parameters} & \textbf{Biological model} \\
+\textbf{Profile} & \textbf{Key parameters} & \textbf{Precision ($\gamma$)} & \textbf{Biological model} \\
 \midrule
-\texttt{wildtype}      & baseline               & control \\
-\texttt{hypodopamine}  & DA=0.05, no phasic     & MPTP, reserpine \\
-\texttt{asd}           & 5-HT=0.85, OXT$\downarrow$, social avoidance & shank3, SERT mutant \\
-\texttt{schizophrenia} & NMDA$\times$0.3, DA=0.85 tonic & DISC1, ketamine \\
-\texttt{anxiety}       & NA=0.75, flee thr=0.12 & CRF overexpression \\
-\texttt{depression}    & DA=0.15, 5-HT=0.2, cortisol=0.6 & CMS model \\
-\texttt{adhd}          & DA=0.35, ACh=0.25, high CPG noise & DA deficit model \\
-\texttt{ptsd}          & amygdala gain$\times$2, cortisol=0.6 & trauma model \\
+\texttt{wildtype}      & baseline               & $\gamma \in [-3, 3]$  & control \\
+\texttt{hypodopamine}  & DA=0.05, no phasic     & ---                   & MPTP, reserpine \\
+\texttt{asd}           & 5-HT=0.85, OXT$\downarrow$ & sensory $\gamma_\text{floor}$=+1.2, & shank3, SERT mutant \\
+                       & social avoidance       & integrative $\gamma_\text{ceil}$=$-$0.5 & \\
+\texttt{schizophrenia} & NMDA$\times$0.3, DA=0.85 & $\gamma_\text{ceil}$=$-$1.5 ($\pi\!\approx\!0.18$) & DISC1, ketamine \\
+\texttt{anxiety}       & NA=0.75, flee thr=0.12 & $\gamma_\text{floor}$=+1.0 ($\pi\!\geq\!0.73$) & CRF overexpression \\
+\texttt{depression}    & DA=0.15, 5-HT=0.2     & $\gamma_\text{ceil}$=$-$0.8 ($\pi\!\leq\!0.31$) & CMS model \\
+\texttt{adhd}          & DA=0.35, ACh=0.25      & ---                   & DA deficit model \\
+\texttt{ptsd}          & amygdala$\times$2, cortisol & $\gamma_\text{floor}$=+0.8 ($\pi\!\geq\!0.69$) & trauma model \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\paragraph{Precision-based disorder modeling.}
+The two-compartment predictive coding architecture (Section~\ref{sec:methods})
+enables a principled account of precision abnormalities across disorders,
+following the ``aberrant precision'' framework of \citet{adams2013}.
+Each disorder sets structural bounds on the learnable precision parameter
+$\gamma$ in all TwoCompColumn modules, producing persistent phenotypes
+that cannot be overwritten by online precision learning:
+\begin{itemize}
+  \item \textbf{Schizophrenia}: $\gamma_\text{ceiling} = -1.5$
+    ($\pi \leq 0.18$) models NMDA hypofunction as a permanent
+    structural deficit in precision. The brain attenuates prediction
+    errors, producing a 3$\times$ reduction in total free energy
+    and aberrant salience (Adams et al.\ 2013).
+  \item \textbf{Anxiety}: $\gamma_\text{floor} = +1.0$
+    ($\pi \geq 0.73$) prevents precision from dropping below a
+    hypervigilant baseline. The fish cannot habituate to
+    non-threatening stimuli, over-weighting sensory prediction
+    errors.
+  \item \textbf{Depression}: $\gamma_\text{ceiling} = -0.8$
+    ($\pi \leq 0.31$) caps precision at a low level, modeling
+    anhedonia as diminished responsiveness to prediction errors.
+  \item \textbf{ASD}: Per-module uneven precision (Lawson et al.\
+    2014). Sensory modules receive elevated $\gamma_\text{floor}$
+    (detail-focused perception) while integrative modules
+    (thalamus, pallium) receive reduced $\gamma_\text{ceiling}$
+    (weak top-down integration).
+  \item \textbf{PTSD}: $\gamma_\text{floor} = +0.8$
+    ($\pi \geq 0.69$), combined with elevated amygdala gain and
+    cortisol, produces persistent hypervigilance with inability
+    to down-regulate threat-related precision.
+\end{itemize}
 
 \paragraph{Testing disorder phenotypes.}
 All disorder profiles can be run through the scenario suite by passing a

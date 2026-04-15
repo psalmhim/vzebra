@@ -23,7 +23,7 @@ if _ROOT not in sys.path:
 import torch
 from zebrav2.brain.brain_v2 import ZebrafishBrainV2
 from zebrav2.brain.disorder import apply_disorder
-from zebrav2.gym_env.prey_predator_env import ZebrafishPreyPredatorEnv
+from zebrav1.gym_env.zebrafish_env import ZebrafishPreyPredatorEnv
 
 
 def run_condition(disorder_name, n_steps=200, n_seeds=3):

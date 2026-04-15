@@ -144,6 +144,38 @@ async def ablate_region(req: AblationRequest):
             "ablated": list(engine.brain._ablated)}
 
 
+class DisorderRequest(BaseModel):
+    disorder: str
+    intensity: float = 1.0
+
+
+@app.post("/api/disorder")
+async def apply_disorder_api(req: DisorderRequest):
+    if engine.brain is None:
+        return {"status": "error", "message": "No brain loaded — start training first"}
+    try:
+        from zebrav2.brain.disorder import apply_disorder, DISORDER_DESCRIPTIONS
+        changes = apply_disorder(engine.brain, req.disorder, intensity=req.intensity)
+        return {
+            "status": "ok",
+            "disorder": req.disorder,
+            "intensity": req.intensity,
+            "changes": {k: [float(v[0]), float(v[1])] for k, v in changes.items()},
+            "description": DISORDER_DESCRIPTIONS.get(req.disorder, ''),
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/disorders")
+async def list_disorders_api():
+    try:
+        from zebrav2.brain.disorder import DISORDER_DESCRIPTIONS
+        return {"disorders": DISORDER_DESCRIPTIONS}
+    except ImportError:
+        return {"disorders": {}}
+
+
 class ConfigUpdate(BaseModel):
     config: dict
 

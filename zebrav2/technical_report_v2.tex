@@ -2343,11 +2343,20 @@ upper bound 3.0) and food cue precision after confirmed feeding
 (weight increases toward upper bound). Target weights track
 hit/miss outcomes within 20-step and 30-step windows respectively.
 
-\paragraph{Disorder presets (1 test).}
+\paragraph{Disorder presets with precision phenotypes (1 test).}
 All 8 disorder phenotype presets (wildtype, hypodopamine, ASD,
 schizophrenia, anxiety, depression, ADHD, PTSD) apply successfully
 and produce measurably different neuromodulatory profiles from
-baseline.
+baseline.  Five disorders now include precision perturbations via
+structural bounds on $\gamma$ in all TwoCompColumn modules:
+schizophrenia ($\gamma_\text{ceil} = -1.5$, $\pi \leq 0.18$),
+anxiety ($\gamma_\text{floor} = +1.0$, $\pi \geq 0.73$),
+depression ($\gamma_\text{ceil} = -0.8$, $\pi \leq 0.31$),
+PTSD ($\gamma_\text{floor} = +0.8$, $\pi \geq 0.69$),
+and ASD (per-module: sensory $\gamma_\text{floor} = +1.2$,
+integrative $\gamma_\text{ceil} = -0.5$).
+These constraints persist throughout the episode---online precision
+learning cannot override the structural deficit or elevation.
 
 % ================================================================
 \subsection{Spatial Atlas Synchronization Tests}\label{sec:atlas_sync_tests}

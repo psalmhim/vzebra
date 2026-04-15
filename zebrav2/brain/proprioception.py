@@ -108,11 +108,11 @@ class SpikingProprioception(nn.Module):
         coll_val = 1.0 if self.collision else 0.0
         sensory = torch.tensor([norm_speed, heading_delta,
                                 self.wall_proximity, coll_val],
-                               device=self.device)
+                               dtype=torch.float32, device=self.device)
         prediction = torch.tensor([self._predicted_speed,
                                    self._predicted_heading_delta,
                                    self._predicted_wall, 0.0],
-                                  device=self.device)
+                                  dtype=torch.float32, device=self.device)
         pc_out = self.pc(sensory_drive=sensory, prediction_drive=prediction)
         pe = pc_out['pe']
         self.speed_pe = float(pe[0])
