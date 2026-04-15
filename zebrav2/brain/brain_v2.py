@@ -8,7 +8,7 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-from zebrav2.spec import DEVICE
+from zebrav2.spec import DEVICE, N_TC
 from zebrav2.brain.neurons import IzhikevichLayer
 from zebrav2.brain.retina import RetinaV2
 from zebrav2.brain.tectum import Tectum
@@ -48,6 +48,7 @@ from zebrav2.brain.shoaling import ShoalingModule
 from zebrav2.brain.prey_capture import PreyCaptureKinematics
 from zebrav2.brain.personality import get_personality
 from zebrav2.brain.meta_goal import MetaGoalWeights
+from zebrav2.brain.active_motor import ActiveInferenceMotor
 from zebrav2.brain.social_memory import SocialMemory
 from zebrav2.brain.hpa_axis import HPAAxis
 from zebrav2.brain.oxytocin import OxytocinSystem
@@ -55,12 +56,23 @@ from zebrav2.brain.oxytocin import OxytocinSystem
 GOAL_FORAGE, GOAL_FLEE, GOAL_EXPLORE, GOAL_SOCIAL = 0, 1, 2, 3
 
 class ZebrafishBrainV2(nn.Module):
-    def __init__(self, device=DEVICE, personality=None):
+    def __init__(self, device=DEVICE, personality=None, brain_config=None, body_config=None):
         super().__init__()
         self.device = device
-        self._ablated = set()  # region names to skip during step()
-        # Personality profile (default if not specified)
-        self.personality = personality if personality is not None else get_personality('default')
+        # Config objects (lazy import to avoid circular deps)
+        from zebrav2.config.brain_config import BrainConfig
+        from zebrav2.config.body_config import BodyConfig
+        self.cfg = brain_config if brain_config is not None else BrainConfig()
+        self.body_cfg = body_config if body_config is not None else BodyConfig()
+        self._ablated = self.cfg.get_ablated_set()
+        # Perturbation manager (set externally via VirtualZebrafish or directly)
+        self._perturbations = None  # PerturbationManager, set via set_perturbations()
+        # Personality profile (config overrides parameter)
+        _pers_name = personality if personality is not None else self.cfg.personality
+        if isinstance(_pers_name, dict):
+            self.personality = _pers_name
+        else:
+            self.personality = get_personality(_pers_name if _pers_name else 'default')
         # --- Core modules ---
         self.retina    = RetinaV2(device)
         self.tectum    = Tectum(device)
@@ -78,29 +90,36 @@ class ZebrafishBrainV2(nn.Module):
         sfgs_b_n_e = self.tectum.sfgs_b_L.n_e  # 450 per hemisphere
         pal_s_n_e  = self.pallium.pal_s.n_e    # 1200
         pal_d_n_e  = self.pallium.pal_d.n_e    # 600
+        _p_tt = self.cfg.plasticity.tect_tc
+        _p_tp = self.cfg.plasticity.tc_pal
+        _p_pd = self.cfg.plasticity.pal_d
         self.stdp_tect_tc_L = EligibilitySTDP(
             self.thalamus_L.W_tect_tc.weight, device=device,
-            A_plus=0.002, A_minus=0.001, w_max=0.8, w_min=0.0)
+            A_plus=_p_tt.a_plus, A_minus=_p_tt.a_minus, w_max=_p_tt.w_max, w_min=_p_tt.w_min)
         self.stdp_tect_tc_R = EligibilitySTDP(
             self.thalamus_R.W_tect_tc.weight, device=device,
-            A_plus=0.002, A_minus=0.001, w_max=0.8, w_min=0.0)
+            A_plus=_p_tt.a_plus, A_minus=_p_tt.a_minus, w_max=_p_tt.w_max, w_min=_p_tt.w_min)
         self.stdp_tc_pal = EligibilitySTDP(
             self.pallium.W_tc_pals.weight, device=device,
-            A_plus=0.002, A_minus=0.001, w_max=0.8, w_min=0.0)
+            A_plus=_p_tp.a_plus, A_minus=_p_tp.a_minus, w_max=_p_tp.w_max, w_min=_p_tp.w_min)
         self.stdp_pal_d = EligibilitySTDP(
             self.pallium.W_pals_pald.weight, device=device,
-            A_plus=0.001, A_minus=0.001, w_max=0.8, w_min=0.0)
+            A_plus=_p_pd.a_plus, A_minus=_p_pd.a_minus, w_max=_p_pd.w_max, w_min=_p_pd.w_min)
         # Top-down attention: pallium-S → tectum (one-step delayed prediction)
         _pal_s_n_e = self.pallium.pal_s.n_e   # 1200
         _sfgs_b_n_e = self.tectum.sfgs_b_L.n_e  # 450
         self.W_pal_tect_L = nn.Linear(_pal_s_n_e, _sfgs_b_n_e, bias=False)
         self.W_pal_tect_R = nn.Linear(_pal_s_n_e, _sfgs_b_n_e, bias=False)
-        nn.init.xavier_uniform_(self.W_pal_tect_L.weight, gain=0.05)  # weak top-down
-        nn.init.xavier_uniform_(self.W_pal_tect_R.weight, gain=0.05)
+        _td_gain = self.cfg.plasticity.top_down_gain
+        nn.init.xavier_uniform_(self.W_pal_tect_L.weight, gain=_td_gain)
+        nn.init.xavier_uniform_(self.W_pal_tect_R.weight, gain=_td_gain)
         self.W_pal_tect_L.to(device)
         self.W_pal_tect_R.to(device)
         # Previous-step pallium rate (for top-down prediction, 1-step delay)
         self.register_buffer('_prev_pal_rate_s', torch.zeros(_pal_s_n_e, device=device))
+        # Thalamic activity from previous step: used as "prediction" for spatial novelty gaze
+        # tc_combined = cat([TC_R (left visual), TC_L (right visual)]) = 300 neurons
+        self.register_buffer('_prev_tc', torch.zeros(N_TC, device=device))
         self._da_phasic_steps = 0  # phasic DA burst counter
         self.amygdala  = SpikingAmygdalaV2(device=device)
         self.classifier = ClassifierV2(device=device)
@@ -123,7 +142,15 @@ class ZebrafishBrainV2(nn.Module):
         self.critic = SpikingCritic(device=device)
         self.habit = SpikingHabitNet(device=device)
         self.insula = SpikingInsularCortex(device=device)
-        self.cpg = SpinalCPG(device=device)
+        _cpg_cfg = self.body_cfg.motor.cpg
+        self.cpg = SpinalCPG(
+            tau_m=_cpg_cfg.tau_m, tau_syn=_cpg_cfg.tau_syn,
+            v_thresh=_cpg_cfg.v_thresh, v_reset=_cpg_cfg.v_reset,
+            w_v2a_mn=_cpg_cfg.w_v2a_mn, w_v2a_v0d=_cpg_cfg.w_v2a_v0d,
+            w_v0d_cross=_cpg_cfg.w_v0d_cross, w_v2a_di6=_cpg_cfg.w_v2a_di6,
+            w_di6_v2a=_cpg_cfg.w_di6_v2a, w_di6_mn=_cpg_cfg.w_di6_mn,
+            w_mn_rsh=_cpg_cfg.w_mn_rsh, w_rsh_v2a=_cpg_cfg.w_rsh_v2a,
+            noise=_cpg_cfg.noise, device=device)
         # Tectum all_e size = sum of all 8 half-layer E neuron counts (2 hemispheres)
         _tect_e_total = (self.tectum.sfgs_b_L.n_e + self.tectum.sfgs_d_L.n_e +
                          self.tectum.sgc_L.n_e    + self.tectum.so_L.n_e    +
@@ -138,10 +165,15 @@ class ZebrafishBrainV2(nn.Module):
         self._exploration_phase = True  # True until world is learned
         # --- Medium/Low priority modules ---
         self.lateral_line_mod = SpikingLateralLine(device=device)
+        _ll_cfg = self.body_cfg.sensory.lateral_line
+        self.lateral_line_mod.SN_RANGE = _ll_cfg.sn_range
+        self.lateral_line_mod.CN_RANGE = _ll_cfg.cn_range
+        self.lateral_line_mod.PREY_RANGE = _ll_cfg.prey_range
         self.olfaction = SpikingOlfaction(device=device)
         self.working_mem = SpikingWorkingMemory(device=device)
         self.vestibular = SpikingVestibular(device=device)
         self.proprioception = SpikingProprioception(device=device)
+        self.active_motor = ActiveInferenceMotor(device=device)
         self.color_vision = SpikingColorVision(device=device)
         self.circadian = SpikingCircadian(device=device)
         self.sleep_wake = SpikingSleepWake(device=device)
@@ -193,16 +225,56 @@ class ZebrafishBrainV2(nn.Module):
         # Sensory module state — previous-step values fed into EFE / motor
         self._last_activity_drive = 1.0   # circadian: 1.0=day, 0.3=night
         self._last_td_error = 0.0          # critic TD error from previous step
+        # Action-perception cycle state
+        self._prev_heading = 0.0           # previous heading for delta
+        self._last_ai_motor = None         # last active inference motor output
+        self._prop_cache = None            # cached proprioception from previous step
         self._last_pred_surprise = 0.0    # predictive network surprise from previous step
-        # Ablate habenula + insula: ablation study showed +22% performance gain without them
-        self._ablated.add('habenula')
-        self._ablated.add('insula')
+        # Ablation set loaded from self.cfg.ablation (habenula + insula off by default)
         # Spatial registry: assign atlas-derived positions to all neurons
         from zebrav2.brain.spatial_registry import SpatialRegistry
         self._spatial = SpatialRegistry(device=device)
         self._spatial.assign_to_brain(self)
+        # Modulate STDP weight matrices by inter-region distance
+        self._apply_spatial_priors()
         # Apply personality to neuromod baselines and thresholds
         self._apply_personality()
+
+    def _apply_spatial_priors(self):
+        """Modulate STDP pathway weights by atlas-derived inter-region distance.
+
+        Nearby neurons get stronger initial connections, distant ones weaker.
+        Uses exponential decay: w *= (1-s) + s*exp(-dist/lambda).
+        """
+        sr = self._spatial
+        # Tectum → Thalamus (retinotopic, short-range: lambda=80um)
+        sr.apply_distance_weights(
+            self.thalamus_L.W_tect_tc.weight,
+            'tectum.sfgs_b_L', 'thalamus.tc_L',
+            lambda_um=80.0, strength=0.4)
+        sr.apply_distance_weights(
+            self.thalamus_R.W_tect_tc.weight,
+            'tectum.sfgs_b_R', 'thalamus.tc_R',
+            lambda_um=80.0, strength=0.4)
+        # Thalamus → Pallium-S (longer range: lambda=120um)
+        sr.apply_distance_weights(
+            self.pallium.W_tc_pals.weight,
+            'thalamus.tc_L', 'pallium.pal_s',
+            lambda_um=120.0, strength=0.3)
+        # Pallium-S → Pallium-D (local: lambda=60um)
+        sr.apply_distance_weights(
+            self.pallium.W_pals_pald.weight,
+            'pallium.pal_s', 'pallium.pal_d',
+            lambda_um=60.0, strength=0.3)
+        # Top-down attention: Pallium → Tectum (long-range: lambda=150um)
+        sr.apply_distance_weights(
+            self.W_pal_tect_L.weight,
+            'pallium.pal_s', 'tectum.sfgs_b_L',
+            lambda_um=150.0, strength=0.2)
+        sr.apply_distance_weights(
+            self.W_pal_tect_R.weight,
+            'pallium.pal_s', 'tectum.sfgs_b_R',
+            lambda_um=150.0, strength=0.2)
 
     def _apply_personality(self):
         """Set neuromodulator baselines and thresholds from personality profile."""
@@ -430,6 +502,11 @@ class ZebrafishBrainV2(nn.Module):
             tc_R_out = {'TC': torch.zeros(self.thalamus_R.TC.n, device=self.device),
                         'TRN': torch.zeros(self.thalamus_R.TRN.n, device=self.device)}
             tc_combined = torch.zeros(self.thalamus_L.TC.n + self.thalamus_R.TC.n, device=self.device)
+        # Thalamic delta: |tc_now − tc_prev| → spatial novelty for gaze
+        # [:n_tc_half] = TC_R (left visual), [n_tc_half:] = TC_L (right visual)
+        _tc_delta = (tc_combined.detach() - self._prev_tc).abs()
+        self._prev_tc.copy_(tc_combined.detach())
+        _n_tc_half = self.thalamus_L.TC.n   # 150
         goal_tensor = torch.zeros(4, device=self.device)
         goal_tensor[self.current_goal] = 1.0
         if self._active('pallium'):
@@ -474,14 +551,14 @@ class ZebrafishBrainV2(nn.Module):
         p_food_retinal = float(L_type.max()) + float(R_type.max())
         # UV prey channel: UV cones detect small dark food items against bright background
         _uv_prey = float(rgc_out.get('uv_prey_L', 0.0)) + float(rgc_out.get('uv_prey_R', 0.0))
-        p_food = min(1.0, max(p_food_retinal * 0.5, cls_food) + _uv_prey * 0.1)
+        _tc = self.cfg.threat
+        p_food = min(1.0, max(p_food_retinal * _tc.p_food_retinal_weight, cls_food) + _uv_prey * _tc.p_food_uv_prey_weight)
         # Fuse retinal + tectum + amygdala for threat estimate
-        # Tectum SFGS-b activity correlates with visual threat processing
-        tect_threat = float(tect_out['sfgs_b'].mean()) * 5.0  # scale sparse rate to [0,1]
-        p_enemy = min(1.0, enemy_px / 15.0 + 0.15 * self.amygdala_alpha + 0.2 * tect_threat)
+        tect_threat = float(tect_out['sfgs_b'].mean()) * _tc.tect_threat_scale
+        p_enemy = min(1.0, enemy_px / _tc.enemy_pixel_normalization + _tc.amygdala_weight_in_fusion * self.amygdala_alpha + _tc.tect_threat_weight * tect_threat)
         energy_ratio = self.energy / 100.0
-        # Hunger starts at 75% energy (not 50%) — earlier food seeking
-        starvation = max(0.0, (0.75 - energy_ratio) / 0.75)
+        _ec = self.cfg.efe
+        starvation = max(0.0, (_ec.starvation_threshold - energy_ratio) / _ec.starvation_threshold)
         # EFE computation — energy trajectory prediction
         U = 1.0 - 0.5 * (self.cms + 0.3)
         # Predict future energy: current drain rate × horizon
@@ -496,23 +573,23 @@ class ZebrafishBrainV2(nn.Module):
         # Fires when within 200 steps of critical (energy < 25) — starts at ~65% energy.
         # Distinct from starvation panic: this is anticipatory, not reactive.
         # The parabolic middle_factor ensures it's QUIET at full/empty and LOUDEST at 50%.
-        steps_to_critical = (self.energy - 25.0) / (energy_drain_per_step + 1e-8)
-        middle_factor = 4.0 * energy_ratio * (1.0 - energy_ratio)  # 0 at full/empty, 1.0 at 50%
-        energy_anxiety = max(0.0, (200.0 - steps_to_critical) / 200.0) * middle_factor * 0.4
+        steps_to_critical = (self.energy - _ec.critical_energy) / (energy_drain_per_step + 1e-8)
+        middle_factor = _ec.middle_factor_amplitude * energy_ratio * (1.0 - energy_ratio)
+        energy_anxiety = max(0.0, (_ec.energy_anxiety_steps - steps_to_critical) / _ec.energy_anxiety_steps) * middle_factor * _ec.energy_anxiety_scale
         # Combined urgency: current + predicted + anticipatory (scaled by learned urgency weight)
         _mw = self.meta_goal.scales().detach().cpu().numpy()  # [8] floats
         _mc = np.zeros(8, dtype=np.float32)   # modulation contribution magnitudes
-        energy_urgency = (starvation * starvation * 3.0 + future_crisis * 2.0 + energy_anxiety) * float(_mw[7])
-        _mc[7] = starvation * starvation * 3.0 + future_crisis * 2.0 + energy_anxiety
-        G_forage = 0.2 * U - 0.8 * p_food + 0.15 - energy_urgency
-        G_flee   = 0.1 * self.cms - 0.8 * p_enemy + 0.35  # starvation term removed: hungry fish should forage, not flee
-        G_explore = 0.3 * U - 0.3 + 0.20 + starvation * 0.3 + future_crisis * 0.3
-        G_social  = 0.10 + starvation * 0.2 + future_crisis * 0.2
+        energy_urgency = (starvation * starvation * _ec.starvation_urgency_weight + future_crisis * _ec.future_crisis_weight + energy_anxiety) * float(_mw[7])
+        _mc[7] = starvation * starvation * _ec.starvation_urgency_weight + future_crisis * _ec.future_crisis_weight + energy_anxiety
+        G_forage = _ec.forage_uncertainty_weight * U + _ec.forage_food_weight * p_food + _ec.forage_offset - energy_urgency
+        G_flee   = _ec.flee_cms_weight * self.cms + _ec.flee_enemy_weight * p_enemy + _ec.flee_offset
+        G_explore = 0.3 * U - 0.3 + _ec.explore_offset + starvation * _ec.explore_starvation_weight + future_crisis * _ec.explore_future_crisis_weight
+        G_social  = _ec.social_offset + starvation * _ec.social_starvation_weight + future_crisis * _ec.social_future_crisis_weight
         # 5-HT patrol suppression: when predator far, strongly suppress flee and boost forage
-        if pred_state == 'PATROL' and pred_dist > 150:
+        if pred_state == 'PATROL' and pred_dist > _tc.patrol_threshold_distance:
             G_flee += self.neuromod.get_flee_efe_bias()
-            G_forage -= 0.15 * self.neuromod.HT5.item()  # stronger forage boost
-            G_explore += 0.1  # make explore less attractive when safe
+            G_forage -= _ec.ht5_forage_suppression * self.neuromod.HT5.item()
+            G_explore += _ec.safe_explore_boost
         # Place cell bonus
         pc_bonus = self.place.get_efe_bonus()
         G_forage -= pc_bonus['forage_bonus']
@@ -525,7 +602,7 @@ class ZebrafishBrainV2(nn.Module):
         # World model EFE (mod_w[0])
         wm_efe = self.world_model.compute_efe_per_goal(
             self.energy, self.pred_model, fish_pos, pc_bonus, self.allostasis)
-        _wm_scale = 0.15 * float(_mw[0])
+        _wm_scale = _ec.world_model_efe_scale * float(_mw[0])
         G_forage += _wm_scale * wm_efe[0]
         G_flee += _wm_scale * wm_efe[1]
         G_explore += _wm_scale * wm_efe[2]
@@ -534,18 +611,18 @@ class ZebrafishBrainV2(nn.Module):
         # Interoceptive spiking bias (gated — ablation showed insula hurts performance)
         if self._active('insula'):
             int_bias = self.insula.get_allostatic_bias()
-            G_forage += 0.5 * int_bias['forage_bias']
-            G_flee += 0.5 * int_bias['flee_bias']
-            G_explore += 0.5 * int_bias['explore_bias']
+            G_forage += _ec.insula_forage_coupling * int_bias['forage_bias']
+            G_flee += _ec.insula_flee_coupling * int_bias['flee_bias']
+            G_explore += _ec.insula_explore_coupling * int_bias['explore_bias']
         # Cerebellar prediction error: high PE → increase exploration
-        if cb_out['prediction_error'] > 0.1:
-            G_explore -= 0.1 * cb_out['prediction_error']
+        if cb_out['prediction_error'] > _ec.cerebellum_pe_threshold:
+            G_explore -= _ec.cerebellum_pe_explore_weight * cb_out['prediction_error']
         # Olfactory bias: food odor attracts FORAGE, alarm drives FLEE
         G_forage += self.olfaction.get_forage_bias()
         G_flee += self.olfaction.get_flee_bias()
         # Lateral line prey detection: water disturbance from nearby food → attract FORAGE
         if ll_out['prey_detected']:
-            G_forage -= 0.12 * ll_out['low_freq_prey']
+            G_forage -= _ec.ll_prey_forage_weight * ll_out['low_freq_prey']
         # Personality bias on EFE
         G_explore += self._explore_bias
         G_social += self._social_bias
@@ -623,29 +700,29 @@ class ZebrafishBrainV2(nn.Module):
         # Habenula goal avoidance (gated — ablation showed habenula hurts performance)
         if self._active('habenula'):
             hab_frustration = self.habenula.frustration  # numpy (4,)
-            hab_gate = np.clip(hab_frustration - 0.65, 0.0, None) / 0.35
-            hab_bias = hab_gate * 0.15
+            hab_gate = np.clip(hab_frustration - _ec.habenula_frustration_threshold, 0.0, None) / _ec.habenula_frustration_gain
+            hab_bias = hab_gate * _ec.habenula_goal_bias_weight
             G_forage += hab_bias[0]
             G_flee += hab_bias[1]
             G_explore += hab_bias[2]
             G_social += hab_bias[3]
         # Circadian EFE bias: daytime (activity_drive~1.0) → prefer forage + explore (mod_w[5])
         # Uses previous step's value — 1-step lag is biologically fine for circadian
-        circ_efe = (self._last_activity_drive - 0.65) * 0.15  # 0 at night, ~0.05 at day
+        circ_efe = (self._last_activity_drive - _ec.circadian_activity_threshold) * _ec.circadian_efe_gain
         _circ_scale = float(_mw[5])
         G_explore -= circ_efe * _circ_scale
-        G_forage -= circ_efe * 0.5 * _circ_scale
+        G_forage -= circ_efe * _ec.circadian_forage_reduction * _circ_scale
         _mc[5] = abs(circ_efe)
         # Predictive surprise: high surprise last step → boost exploration this step (mod_w[6])
-        if self._last_pred_surprise > 0.1:
-            _cb_contrib = 0.15 * (self._last_pred_surprise - 0.1) * float(_mw[6])
+        if self._last_pred_surprise > _ec.surprise_threshold:
+            _cb_contrib = _ec.surprise_explore_weight * (self._last_pred_surprise - _ec.surprise_threshold) * float(_mw[6])
             G_explore -= _cb_contrib
             _mc[6] = _cb_contrib
         # Analytic EFE → bias for spiking goal selector
         # Add learned goal_bias (autograd flows for REINFORCE)
         G_base = torch.tensor([G_forage, G_flee, G_explore, G_social], device=self.device)
         G = G_base + self.meta_goal.goal_bias  # gradient through goal_bias
-        efe_bias = -2.0 * (G - G.min())       # lower G = stronger bias (inverted for excitation)
+        efe_bias = _ec.efe_bias_amplitude * (G - G.min())
 
         # Spiking WTA goal selection — full pallium-D (no 75% truncation)
         # Detach efe_bias for goal_selector to avoid spurious gradients through spiking ops
@@ -654,7 +731,8 @@ class ZebrafishBrainV2(nn.Module):
         _goal_probs_grad = torch.softmax(efe_bias, dim=0)  # with gradient for REINFORCE
         self.goal_probs = _goal_probs_grad.detach()         # detached for monitoring
         # Use WTA winner if confident, else fall back to analytic EFE
-        if wta_out['confidence'] > 0.4:
+        _gs = self.cfg.goal_selection
+        if wta_out['confidence'] > _gs.wta_confidence_threshold:
             new_goal = wta_out['winner']
         else:
             new_goal = int(self.goal_probs.argmax().item())
@@ -664,25 +742,24 @@ class ZebrafishBrainV2(nn.Module):
 
         # 1. Food visible reflex: FORAGE when food in retina and no real threat
         # Tighter p_enemy threshold (0.10 vs 0.15) improves structured decision accuracy
-        if food_px > 1 and p_enemy < 0.10:
+        if food_px > _gs.food_pixels_threshold and p_enemy < _gs.food_reflex_threat_gate:
             new_goal = GOAL_FORAGE
-            self._forage_lock_steps = max(self._forage_lock_steps, 20)
-        # Forage lock persistence: tighter exit threshold (0.12 vs 0.20)
-        if self._forage_lock_steps > 0 and p_enemy < 0.12:
+            self._forage_lock_steps = max(self._forage_lock_steps, _gs.forage_lock_duration)
+        if self._forage_lock_steps > 0 and p_enemy < _gs.forage_exit_threat:
             new_goal = GOAL_FORAGE
             self._forage_lock_steps -= 1
 
         # 2. Critical starvation: must forage unless predator actively hunts
         # Raised threshold (0.45 vs 0.35) — was firing too early in decision scenarios
-        if starvation > 0.45 and pred_state not in ('HUNT', 'AMBUSH'):
+        if starvation > _gs.starvation_panic_threshold_1 and pred_state not in ('HUNT', 'AMBUSH'):
             new_goal = GOAL_FORAGE
-        if starvation > 0.7 and pred_dist > 80:
+        if starvation > _gs.starvation_panic_threshold_2 and pred_dist > _gs.starvation_panic_distance:
             new_goal = GOAL_FORAGE
 
         # 3. Threat overrides (visual OR lateral line OR amygdala evidence)
         ll_proximity = self.lateral_line_mod.proximity  # 0-1, high = close
-        has_threat_evidence = (enemy_px > 3 or ll_proximity > 0.15
-                               or self.amygdala_alpha > 0.25)
+        has_threat_evidence = (enemy_px > _gs.enemy_pixels_threat or ll_proximity > _gs.ll_proximity_threshold
+                               or self.amygdala_alpha > _gs.amygdala_threat_threshold)
         # Adjust flee threshold by hunger: hungry fish takes more risk
         effective_flee_threshold = self._flee_threshold + starvation * 0.15
 
@@ -693,17 +770,17 @@ class ZebrafishBrainV2(nn.Module):
             pfy = self.pred_model.y + 8 * self.pred_model.vy
             fx, fy = self._last_fish_pos
             intercept_dist = math.sqrt((pfx - fx) ** 2 + (pfy - fy) ** 2)
-            if intercept_dist < 110 and pred_dist < 280 and starvation < 0.55:
+            if intercept_dist < _tc.intercept_flee_distance and pred_dist < _tc.intercept_flee_range and starvation < _gs.starvation_hunger_gate:
                 # Predator trajectory converges — treat as soft threat
-                p_enemy = max(p_enemy, effective_flee_threshold * 0.85)
+                p_enemy = max(p_enemy, effective_flee_threshold * _gs.threat_evidence_confidence)
                 has_threat_evidence = True
         if p_enemy > effective_flee_threshold and has_threat_evidence and starvation < 0.6:
             new_goal = GOAL_FLEE
         # Close proximity flee: lateral line detects predator nearby
-        if ll_proximity > 0.4 or (pred_dist < 60 and enemy_px > 1):
+        if ll_proximity > _gs.ll_close_threshold or (pred_dist < _gs.pred_close_distance and enemy_px > 1):
             new_goal = GOAL_FLEE
         # Lateral line + amygdala: predator close even if not visible
-        elif ll_proximity > 0.15 and self.amygdala_alpha > 0.2 and starvation < 0.5:
+        elif ll_proximity > _gs.ll_proximity_threshold and self.amygdala_alpha > _gs.amygdala_moderate_threshold and starvation < 0.5:
             new_goal = GOAL_FLEE
 
         # Stuck detection: force explore when not finding food
@@ -712,25 +789,25 @@ class ZebrafishBrainV2(nn.Module):
             self._no_food_steps += 1
         else:
             self._no_food_steps = 0
-        if (self._no_food_steps > 30 and self.current_goal == GOAL_FORAGE
-                and starvation < 0.4):
+        if (self._no_food_steps > _gs.no_food_timeout and self.current_goal == GOAL_FORAGE
+                and starvation < _gs.starvation_explore_gate):
             new_goal = GOAL_EXPLORE
-            self._force_explore_steps = 15
+            self._force_explore_steps = _gs.force_explore_duration
             self._no_food_steps = 0
-        if self._force_explore_steps > 0 and new_goal != GOAL_FLEE and starvation < 0.4:
+        if self._force_explore_steps > 0 and new_goal != GOAL_FLEE and starvation < _gs.starvation_explore_gate:
             new_goal = GOAL_EXPLORE
             self._force_explore_steps -= 1
 
         if self.goal_persistence > 0 and new_goal != GOAL_FLEE:
             # Strongly negative TD error: current goal yielding worse-than-expected outcome
             # → shorten persistence to allow faster recovery
-            if self._last_td_error < -0.5:
-                self.goal_persistence = max(2, self.goal_persistence - 3)
+            if self._last_td_error < _gs.td_error_shortening_threshold:
+                self.goal_persistence = max(_gs.persistence_minimum, self.goal_persistence - _gs.td_error_shortening_amount)
             new_goal = self.current_goal
             self.goal_persistence -= 1
         else:
             if new_goal != self.current_goal:
-                self.goal_persistence = 8
+                self.goal_persistence = _gs.new_goal_persistence
             self.current_goal = new_goal
 
         # Record step for REINFORCE update at episode end
@@ -909,6 +986,7 @@ class ZebrafishBrainV2(nn.Module):
         turn = float(np.clip(-self._smoother * brain_weight + wall_turn, -1.0, 1.0))
 
         # RS motor: C-start for looming + voluntary pallium-D asymmetry for normal movement
+        _mc_cfg = self.body_cfg.motor
         rs_out = self.rs(tect_out['sgc'], bg_out['gate'], pal_out['rate_D'],
                          flee_turn, 1.0, tect_out['looming'])
         if rs_out['cstart']:
@@ -917,19 +995,18 @@ class ZebrafishBrainV2(nn.Module):
             # RS voluntary turn: pallium-D L/R asymmetry gated by BG — activate when BG engaged
             # As pallium-D improves through STDP, this path gets better automatically
             bg_gate_val = float(bg_out['gate'])
-            if bg_gate_val > 0.3 and self.current_goal != GOAL_FLEE:
-                turn = float(np.clip(0.85 * turn + 0.15 * rs_out['turn'], -1.0, 1.0))
+            if bg_gate_val > _mc_cfg.bg_gate_threshold_rs and self.current_goal != GOAL_FLEE:
+                turn = float(np.clip((1 - _mc_cfg.rs_weight) * turn + _mc_cfg.rs_weight * rs_out['turn'], -1.0, 1.0))
 
         # Speed (with allostatic fatigue cap)
         if self.current_goal == GOAL_FLEE:
-            speed = 1.5
+            speed = _mc_cfg.speed_flee
         elif self.current_goal == GOAL_FORAGE:
-            # Boost speed when food visible and no threat
-            speed = 1.2 if food_px > 2 and p_enemy < 0.1 else 1.0
+            speed = _mc_cfg.speed_forage_food_visible if food_px > 2 and p_enemy < 0.1 else _mc_cfg.speed_forage
         elif self.current_goal == GOAL_EXPLORE:
-            speed = 0.8
+            speed = _mc_cfg.speed_explore
         else:
-            speed = 0.7
+            speed = _mc_cfg.speed_social
         speed *= self.allostasis.get_speed_cap()
         # Binocular depth: slow down for precise food approach
         speed *= self.binocular.get_approach_gain()
@@ -948,21 +1025,71 @@ class ZebrafishBrainV2(nn.Module):
 
         self._last_speed = speed
 
+        # === 5a. ACTIVE INFERENCE MOTOR (action-perception cycle) ===
+        # Compute heading delta (proprioceptive feedback)
+        heading_delta = fish_heading - self._prev_heading
+        heading_delta = math.atan2(math.sin(heading_delta), math.cos(heading_delta))
+        self._prev_heading = fish_heading
+
+        # Food/enemy bearing for predictions
+        _ai_food_bearing = 0.0
+        if food_px > 0:
+            _ai_food_bearing = (float((R_type > 0.7).float().sum()) -
+                                float((L_type > 0.7).float().sum())) / (food_px + 1e-8)
+        _ai_enemy_bearing = 0.0
+        if enemy_px > 0:
+            _ai_enemy_bearing = (float((torch.abs(R_type - 0.5) < 0.1).float().sum()) -
+                                 float((torch.abs(L_type - 0.5) < 0.1).float().sum())) / (enemy_px + 1e-8)
+
+        ai_motor = self.active_motor.step(
+            goal=self.current_goal,
+            food_bearing=_ai_food_bearing,
+            enemy_bearing=_ai_enemy_bearing,
+            wall_proximity=wall_urgency,
+            food_visible=food_px > 2,
+            enemy_visible=enemy_px > 2,
+            gaze_target=self.saccade.gaze_offset,
+            explore_phase=math.sin(self._step_count * 0.08),
+            DA=self.neuromod.DA.item(),
+            NA=self.neuromod.NA.item(),
+            HT5=self.neuromod.HT5.item(),
+            ACh=self.neuromod.ACh.item(),
+            actual_speed=self._prop_cache['actual_speed'] if self._prop_cache else 0.0,
+            heading_delta=heading_delta,
+            tail_L=self.cpg.motor_L,
+            tail_R=self.cpg.motor_R,
+            gaze_offset=self.saccade.gaze_offset,
+            collision=self.proprioception.collision,
+            turn_rate=turn,
+        )
+        self._last_ai_motor = ai_motor
+
+        # Blend active inference motor with reactive motor
+        # ai_blend controls the mix (0 = fully reactive, 1 = fully AI)
+        _blend = self.active_motor.ai_blend
+        turn = (1.0 - _blend) * turn + _blend * ai_motor['turn']
+        speed = (1.0 - _blend) * speed + _blend * (ai_motor['speed'] * 1.5)
+        turn = float(np.clip(turn, -1.0, 1.0))
+        speed = max(0.0, speed)
+
         # === 5b. SPINAL CPG (rhythmic motor output) ===
+        # CPG drive: blend reactive + active inference predictions
         cpg_drive = min(1.0, speed / 1.5)  # normalize to [0,1]
-        mL, mR, cpg_speed, cpg_turn, cpg_diag = self.cpg.step(cpg_drive, turn)
+        cpg_turn_input = (1.0 - _blend) * turn + _blend * ai_motor['cpg_bias']
+        mL, mR, cpg_speed, cpg_turn, cpg_diag = self.cpg.step(cpg_drive, cpg_turn_input)
         # CPG modulation is very subtle — don't override brain motor commands
         # Only add slight phasic oscillation during calm movement
         if self.current_goal == GOAL_EXPLORE and abs(turn) < 0.3:
             turn = 0.9 * turn + 0.1 * cpg_turn
 
         # === 6. NEUROMOD UPDATE ===
-        reward = 0.01  # survival reward
+        _nm = self.cfg.neuromod
+        reward = _nm.survival_reward
         eaten_now = getattr(env, '_eaten_now', 0)
         if eaten_now > 0:
-            reward += 10.0 * eaten_now
-            self._forage_lock_steps = 25
-            self._da_phasic_steps = 6   # trigger phasic burst
+            reward += _nm.food_reward_gain * eaten_now
+            self._forage_lock_steps = _nm.forage_lock_on_food
+            self._da_phasic_steps = _nm.da_phasic_burst_duration
         self.energy = getattr(env, 'fish_energy', self.energy)
         self.world_model.update_food_gain(eaten_now > 0)
 
@@ -998,14 +1125,27 @@ class ZebrafishBrainV2(nn.Module):
         self.neuromod.DA.clamp_(0.0, 1.0)
         # Phasic DA burst: override neuromod EMA for reward window
         if self._da_phasic_steps > 0:
-            self.neuromod.DA.fill_(0.90 + 0.02 * self._da_phasic_steps / 6.0)
+            self.neuromod.DA.fill_(_nm.da_phasic_baseline + _nm.da_phasic_modulation * self._da_phasic_steps / float(_nm.da_phasic_burst_duration))
             self._da_phasic_steps -= 1
         elif self._active('habenula'):
             # Habenula suppression only outside phasic window — don't mute food reward
-            if hab_out['da_suppression'] > 0.05:
+            if hab_out['da_suppression'] > _nm.habenula_da_suppression_gate:
                 self.neuromod.DA.mul_(1.0 - hab_out['da_suppression'])
-            if hab_out['ht5_suppression'] > 0.05:
+            if hab_out['ht5_suppression'] > _nm.habenula_ht5_suppression_gate:
                 self.neuromod.HT5.mul_(1.0 - hab_out['ht5_suppression'])
+
+        # ── Perturbation: apply drug multipliers to neuromodulators ──
+        if self._perturbations is not None:
+            _mults = self._perturbations.get_neuromod_multipliers()
+            self.neuromod.DA.mul_(_mults.get('DA', 1.0))
+            self.neuromod.NA.mul_(_mults.get('NA', 1.0))
+            self.neuromod.HT5.mul_(_mults.get('5HT', 1.0))
+            self.neuromod.ACh.mul_(_mults.get('ACh', 1.0))
+            self.neuromod.DA.clamp_(0.0, 1.0)
+            self.neuromod.NA.clamp_(0.0, 1.0)
+            self.neuromod.HT5.clamp_(0.0, 1.0)
+            self.neuromod.ACh.clamp_(0.0, 1.0)
+            self._perturbations.step()
 
         # Goal selector reward-modulated learning (three-factor Hebbian)
         DA_now = self.neuromod.DA.item()
@@ -1028,9 +1168,17 @@ class ZebrafishBrainV2(nn.Module):
         enemy_bearing = math.atan2(
             getattr(env, 'pred_y', 300) - py,
             getattr(env, 'pred_x', 400) - px) - fish_heading if enemy_px > 1 else 0.0
-        # Prediction-error per hemifield: DS motion + loom signals = surprise/novelty
-        _pe_L = float(rgc_out['L_ds'].mean()) + float(rgc_out['L_loom'].mean())
-        _pe_R = float(rgc_out['R_ds'].mean()) + float(rgc_out['R_loom'].mean())
+        # Prediction-error per hemifield: DS motion + loom + thalamic novelty signal.
+        # Thalamic delta |tc_now − tc_prev| cleanly separates left vs right visual field:
+        #   _tc_delta[:n_tc_half] = TC_R change (left visual field, right thalamus)
+        #   _tc_delta[n_tc_half:] = TC_L change (right visual field, left thalamus)
+        # Novel input on right → TC_L fires unexpectedly → _tc_delta[n_tc_half:] high → _pe_R↑ → gaze right.
+        # (Pallium pred_error cannot be used directly because W_tc_pals is dense/random,
+        #  making pred_error spatially unstructured across pallium-S neurons.)
+        _pe_L = (float(rgc_out['L_ds'].mean()) + float(rgc_out['L_loom'].mean())
+                 + float(_tc_delta[:_n_tc_half].mean()) * 5.0)   # TC_R = left visual
+        _pe_R = (float(rgc_out['R_ds'].mean()) + float(rgc_out['R_loom'].mean())
+                 + float(_tc_delta[_n_tc_half:].mean()) * 5.0)   # TC_L = right visual
         saccade_out = self.saccade(
             food_bearing=food_bearing, enemy_bearing=enemy_bearing,
             current_goal=self.current_goal,
@@ -1044,8 +1192,18 @@ class ZebrafishBrainV2(nn.Module):
             pred_y=getattr(env, 'pred_y', None))
 
         # === 7b. SENSORY MODULES ===
-        vest_out = self.vestibular(fish_heading, speed, turn)
+        # Vestibular: pass efference copy (predicted motor output) for FEP
+        _ai_pred_turn = ai_motor['turn'] if self._last_ai_motor else 0.0
+        _ai_pred_speed = ai_motor['speed'] if self._last_ai_motor else 0.0
+        vest_out = self.vestibular(fish_heading, speed, turn,
+                                   predicted_turn=_ai_pred_turn,
+                                   predicted_speed=_ai_pred_speed)
+        # Set proprioceptive predictions from active motor (descending commands)
+        self.proprioception.set_predictions(
+            predicted_speed=ai_motor['speed'] if ai_motor else None,
+            predicted_heading_delta=ai_motor['turn'] * 0.1 if ai_motor else None)
         prop_out = self.proprioception(px, py, speed, fish_heading)
+        self._prop_cache = prop_out  # cached for next step's active inference motor
         color_out = self.color_vision(L_type, R_type)
         circ_out = self.circadian(light_level=0.7)
         sw_out = self.sleep_wake(
@@ -1072,7 +1230,7 @@ class ZebrafishBrainV2(nn.Module):
             pass
         # Sleep-wake: reduce responsiveness when drowsy (melatonin-driven)
         speed *= sw_out['responsiveness']
-        speed = max(0.3, min(2.0, speed))
+        speed = max(_mc_cfg.speed_min_clamp, min(_mc_cfg.speed_max_clamp, speed))
         # Proprioception: collision detected → trigger stuck recovery
         if prop_out['collision']:
             self._stuck_counter += 3
@@ -1093,7 +1251,7 @@ class ZebrafishBrainV2(nn.Module):
             self.cms,
         ], dtype=np.float32)
         # VAE training every 10 steps — backprop every step is wasteful (125k steps/50 rounds)
-        if self._step_count % 10 == 0:
+        if self._step_count % self.cfg.plasticity.vae_training_every == 0:
             self.vae.train_step(tect_all, state_ctx)
         z_now, _ = self.vae.encode(tect_all, state_ctx)
         # Transition training
@@ -1123,7 +1281,8 @@ class ZebrafishBrainV2(nn.Module):
             pi=1.0)
         # Three-factor STDP consolidation every 5 steps — only when DA elevated
         # Low-DA consolidation corrupts weights with uncorrelated Hebbian noise
-        if self._step_count % 5 == 0:
+        _plast = self.cfg.plasticity
+        if self._step_count % _plast.stdp_consolidation_every == 0:
             DA_now = self.neuromod.DA.item()
             ACh_now = self.neuromod.ACh.item()
             # Homeostatic scaling always (normalizes firing rates)
@@ -1132,11 +1291,11 @@ class ZebrafishBrainV2(nn.Module):
             self.stdp_tc_pal.homeostatic_scale(pal_out['rate_S'])
             self.stdp_pal_d.homeostatic_scale(pal_out['rate_D'])
             # Weight update only during elevated DA (reward signal present)
-            if DA_now > 0.55 or self._da_phasic_steps > 0:
-                self.stdp_tect_tc_L.consolidate(DA_now, ACh_now, eta=1e-4)
-                self.stdp_tect_tc_R.consolidate(DA_now, ACh_now, eta=1e-4)
-                self.stdp_tc_pal.consolidate(DA_now, ACh_now, eta=1e-4)
-                self.stdp_pal_d.consolidate(DA_now, ACh_now, eta=5e-5)
+            if DA_now > _plast.da_consolidation_threshold or self._da_phasic_steps > 0:
+                self.stdp_tect_tc_L.consolidate(DA_now, ACh_now, eta=_plast.tect_tc.consolidation_eta)
+                self.stdp_tect_tc_R.consolidate(DA_now, ACh_now, eta=_plast.tect_tc.consolidation_eta)
+                self.stdp_tc_pal.consolidate(DA_now, ACh_now, eta=_plast.tc_pal.consolidation_eta)
+                self.stdp_pal_d.consolidate(DA_now, ACh_now, eta=_plast.pal_d.consolidation_eta)
         # Online Hebbian classifier fine-tuning: food confirmation → reinforce food class
         if eaten_now > 0 and self.classifier._last_hidden is not None:
             with torch.no_grad():
@@ -1145,7 +1304,7 @@ class ZebrafishBrainV2(nn.Module):
                 cls_now = self._cls_probs.detach().unsqueeze(0)
                 err = target - cls_now
                 h = self.classifier._last_hidden  # (1, 128)
-                eta_cls = 8e-6 * self.neuromod.ACh.item()
+                eta_cls = _plast.classifier_eta * self.neuromod.ACh.item()
                 self.classifier.W_out.weight.data.add_(eta_cls * err.T @ h)
                 self.classifier.W_out.weight.data.clamp_(-3.0, 3.0)
         # Enemy class reinforcement: near-miss → strengthen class 2 (enemy) detection
@@ -1158,7 +1317,7 @@ class ZebrafishBrainV2(nn.Module):
                 cls_now_e = self._cls_probs.detach().unsqueeze(0)
                 err_e = target_e - cls_now_e
                 h_e = self.classifier._last_hidden
-                eta_enemy = 6e-6 * self.neuromod.NA.item()
+                eta_enemy = _plast.enemy_class_eta * self.neuromod.NA.item()
                 self.classifier.W_out.weight.data.add_(eta_enemy * err_e.T @ h_e)
                 self.classifier.W_out.weight.data.clamp_(-3.0, 3.0)
 
@@ -1190,6 +1349,8 @@ class ZebrafishBrainV2(nn.Module):
             'DA': self.neuromod.DA.item(), 'NA': nm['NA'],
             '5HT': nm['5HT'], 'ACh': nm['ACh'],
             'free_energy': pal_out['free_energy'],
+            'total_free_energy': self._aggregate_free_energy(
+                pal_out, ai_motor, saccade_out),
             'looming': tect_out['looming'],
             'bg_gate': bg_out['gate'],
             'amygdala': self.amygdala_alpha,
@@ -1211,7 +1372,58 @@ class ZebrafishBrainV2(nn.Module):
             'hab_helplessness': hab_out['helplessness'],
             'novelty': self._novelty_ema,
             'exploration_phase': self._exploration_phase,
+            # Active inference motor diagnostics
+            'ai_free_energy': ai_motor['free_energy'],
+            'ai_blend': _blend,
+            'gaze_free_energy': saccade_out.get('gaze_free_energy', 0.0),
+            'gaze_precision': saccade_out.get('gaze_precision', 1.0),
         }
+
+    # ------------------------------------------------------------------
+    # Brain-level free energy aggregation
+    # ------------------------------------------------------------------
+
+    def _aggregate_free_energy(self, pal_out: dict, ai_motor: dict,
+                                saccade_out: dict) -> float:
+        """Sum variational free energy across all TwoCompColumn modules.
+
+        Each module computes F = Σ πᵢ εᵢ² from within-neuron PE and
+        learned precision (Lee, Lee & Park 2026).  The brain-level
+        total is the global surprise signal available for monitoring,
+        disorder assays, and homeostatic regulation.
+        """
+        fe = 0.0
+        fe += self.retina.free_energy
+        fe += self.olfaction.free_energy
+        fe += self.lateral_line_mod.free_energy
+        fe += self.proprioception.free_energy
+        fe += self.vestibular.free_energy
+        fe += self.color_vision.free_energy
+        fe += self.thalamus_L.free_energy
+        fe += self.thalamus_R.free_energy
+        fe += pal_out.get('free_energy', 0.0)
+        fe += ai_motor.get('free_energy', 0.0)
+        fe += saccade_out.get('gaze_free_energy', 0.0)
+        return float(fe)
+
+    def get_module_free_energies(self) -> dict:
+        """Return per-module free energy breakdown (for diagnostics)."""
+        return {
+            'retina':        self.retina.free_energy,
+            'olfaction':     self.olfaction.free_energy,
+            'lateral_line':  self.lateral_line_mod.free_energy,
+            'proprioception':self.proprioception.free_energy,
+            'vestibular':    self.vestibular.free_energy,
+            'color_vision':  self.color_vision.free_energy,
+            'thalamus_L':    self.thalamus_L.free_energy,
+            'thalamus_R':    self.thalamus_R.free_energy,
+            'pallium':       self.pallium.pc.free_energy,
+            'active_motor':  self.active_motor.column.free_energy,
+        }
+
+    def set_perturbations(self, pm):
+        """Attach a PerturbationManager for drug/stimulation effects."""
+        self._perturbations = pm
 
     def set_region_enabled(self, region_name, enabled):
         """Enable/disable a brain region for ablation studies."""
@@ -1253,6 +1465,7 @@ class ZebrafishBrainV2(nn.Module):
         self.working_mem.reset()
         self.vestibular.reset()
         self.proprioception.reset()
+        self.active_motor.reset()
         self.color_vision.reset()
         self.circadian.reset()
         self.sleep_wake.reset()
@@ -1266,9 +1479,13 @@ class ZebrafishBrainV2(nn.Module):
         self.stdp_tc_pal.reset()
         self.stdp_pal_d.reset()
         self._prev_pal_rate_s.zero_()
+        self._prev_tc.zero_()
         self._da_phasic_steps = 0
         self._z_prev = None
         self._last_action_ctx = None
+        self._prev_heading = 0.0
+        self._last_ai_motor = None
+        self._prop_cache = None
         self._novelty_ema = 1.0
         self._surprise_history = []
         self._exploration_phase = True

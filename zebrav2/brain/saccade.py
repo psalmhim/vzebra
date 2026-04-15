@@ -11,6 +11,16 @@ Architecture:
 Gaze offset modifies the effective fish heading for retinal projection,
 so the fish can "look" in a direction different from its body heading.
 
+Active inference gaze (Friston 2011):
+  - Epistemic: gaze toward hemifield with higher prediction error (surprise)
+  - Pragmatic: gaze toward goal-relevant objects (food, predator)
+  - Precision-weighted: sensory precision gates PE → gaze coupling
+
+Schizophrenia model (Adams et al. 2012):
+  - Reduced sensory precision → noisy/imprecise saccades
+  - Aberrant precision weighting → smooth pursuit deficits
+  - gaze_precision parameter controls this (default 1.0, reduced in SZ)
+
 Inputs: tectum salience map, goal (forage=track food, flee=track predator)
 Output: gaze_offset (radians), applied to sensory_bridge heading
 """
@@ -36,8 +46,17 @@ class SpikingSaccade(nn.Module):
         self.gaze_offset = 0.0  # radians relative to body heading
         self.saccade_active = False
         self._gaze_ema = 0.0
+        self._scan_step = 0     # time counter for EXPLORE scan (avoids positive-feedback attractor)
         self.n_dir = n_dir
         self.n_trigger = n_trigger
+
+        # Precision weighting for active inference gaze
+        # Higher precision → PE drives gaze more strongly (confident PE)
+        # Lower precision → noisy PE, weak gaze coupling (as in schizophrenia)
+        self.gaze_precision = 1.0          # default: normal precision
+        self.sensory_precision = 1.0       # precision on sensory (salience) channel
+        self.pursuit_gain = 1.0            # smooth pursuit gain (reduced in SZ)
+        self._gaze_free_energy = 0.0       # accumulated gaze prediction error
 
     @torch.no_grad()
     def forward(self, food_bearing: float, enemy_bearing: float,
@@ -57,14 +76,24 @@ class SpikingSaccade(nn.Module):
         elif current_goal == 1:  # FLEE: look toward predator (to track it)
             target_gaze = enemy_bearing * 0.2
         elif current_goal == 2:  # EXPLORE: scanning saccades
-            target_gaze = 0.5 * math.sin(self._gaze_ema * 3.0)  # oscillating scan
+            # Time-based oscillation (period ~79 steps ≈ 4 s at 20 Hz behavioral)
+            # Avoids positive-feedback attractor from gaze_ema-based formula.
+            target_gaze = 0.4 * math.sin(self._scan_step * 0.08)
+            self._scan_step += 1
         else:  # SOCIAL: look toward conspecific (most salient)
             target_gaze = 0.3 * (salience_R - salience_L) / (salience_L + salience_R + 1e-8)
 
         # Free-energy gaze: shift toward the hemifield with more prediction error
         # pe_R > pe_L → more surprise on right → saccade right (positive gaze offset)
-        target_gaze += (pe_R - pe_L) * 0.3
+        # Precision-weighted: gaze_precision gates PE→gaze coupling strength
+        # In schizophrenia (Adams et al. 2012): reduced precision → weak/noisy coupling
+        epistemic_drive = (pe_R - pe_L) * 0.3 * self.gaze_precision
+        target_gaze += epistemic_drive
         target_gaze = max(-0.8, min(0.8, target_gaze))  # clamp after epistemic addition
+
+        # Gaze prediction error (for free energy computation)
+        gaze_pe = target_gaze - self._gaze_ema
+        self._gaze_free_energy = 0.5 * self.gaze_precision * gaze_pe ** 2
 
         # Spiking dynamics
         I_dir = torch.zeros(self.n_dir, device=self.device)
@@ -96,15 +125,23 @@ class SpikingSaccade(nn.Module):
         if self.saccade_active:
             alpha = 0.5  # fast saccade
         else:
-            alpha = 0.1  # smooth pursuit
+            alpha = 0.1 * self.pursuit_gain  # smooth pursuit (gain-modulated)
 
         self._gaze_ema = (1 - alpha) * self._gaze_ema + alpha * target_gaze
+        # Add precision-dependent noise (low precision → noisier gaze)
+        if self.gaze_precision < 0.8:
+            noise_scale = 0.1 * (1.0 - self.gaze_precision)
+            import random
+            self._gaze_ema += random.gauss(0, noise_scale)
         self.gaze_offset = max(-0.5, min(0.5, self._gaze_ema))  # ±30° max
 
         return {
             'gaze_offset': self.gaze_offset,
             'saccade_active': self.saccade_active,
             'target_gaze': target_gaze,
+            'gaze_free_energy': self._gaze_free_energy,
+            'gaze_precision': self.gaze_precision,
+            'epistemic_drive': epistemic_drive,
         }
 
     def reset(self):
@@ -115,3 +152,5 @@ class SpikingSaccade(nn.Module):
         self.gaze_offset = 0.0
         self.saccade_active = False
         self._gaze_ema = 0.0
+        self._scan_step = 0
+        self._gaze_free_energy = 0.0

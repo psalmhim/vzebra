@@ -7,14 +7,23 @@ Types per eye:
   Looming       (100) — angular expansion rate dθ/dt (Temizer 2015)
   Direction-sel (100) — Reichardt correlator with proper 1-step delay
 
+Free Energy Principle:
+  OFF cells ARE prediction error neurons (Rao & Ballard 1999):
+    OFF = prev_intensity - current = temporal PE (luminance decrease).
+  We add explicit retinal prediction error (spatial + temporal):
+    PE_L/R = predicted_ON - actual_ON (top-down minus bottom-up).
+  Retinal free energy drives surprise signaling to tectum.
+  Precision: based on signal-to-noise of the retinal image.
+
 Input : L, R each (800,): [:400] intensity (0-1), [400:] type channel
 Output: dict with L_on/off/loom/ds, R_on/off/loom/ds, *_fused, loom_trigger,
-        uv_prey_L, uv_prey_R
+        uv_prey_L, uv_prey_R, free_energy
 """
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from zebrav2.spec import DEVICE, N_RET_PER_TYPE, N_RET_LOOM, N_RET_DS
+from zebrav2.brain.two_comp_column import TwoCompColumn
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +85,18 @@ class RetinaV2(nn.Module):
         # -- Looming: angular size history (one scalar per eye) ---------------
         self.register_buffer('theta_prev_L', torch.zeros(1, device=device))
         self.register_buffer('theta_prev_R', torch.zeros(1, device=device))
+
+        # -- FEP: two-compartment temporal prediction (Lee et al. 2026) --------
+        # 4 channels: L_on, R_on, L_off, R_off
+        # Apical = previous frame (temporal prediction)
+        # Soma = current frame (sensory evidence)
+        # Bias = precision (contrast-dependent attention)
+        self.pc = TwoCompColumn(n_channels=4, n_per_ch=4, substeps=8, device=device)
+        self.register_buffer('prev_retinal', torch.zeros(4, device=device))
+        self.free_energy = 0.0
+        self.surprise_L = 0.0
+        self.surprise_R = 0.0
+        self.retinal_precision = 1.0
 
     # ------------------------------------------------------------------
     # DoG convolution helper
@@ -225,6 +246,30 @@ class RetinaV2(nn.Module):
             (loom_sig_L.item() > 0.3) or (loom_sig_R.item() > 0.3)
         )
 
+        # --- FEP: two-compartment temporal prediction (Lee et al. 2026) ---
+        # Sensory: current ON/OFF rate means per eye
+        sensory = torch.tensor([
+            float(L_on.mean()), float(R_on.mean()),
+            float(L_off.mean()), float(R_off.mean()),
+        ], device=self.device)
+        # Prediction: previous frame (temporal prediction)
+        prediction = self.prev_retinal.clone()
+        # Precision modulation from image contrast
+        contrast_L = float(L_int.std()) + 1e-8
+        contrast_R = float(R_int.std()) + 1e-8
+        att = torch.tensor([contrast_L, contrast_R, contrast_L, contrast_R],
+                            device=self.device) * 5.0
+        self.pc.set_attention(att)
+        # Run two-compartment column
+        pc_out = self.pc(sensory_drive=sensory, prediction_drive=prediction)
+        pe = pc_out['pe']
+        self.surprise_L = float(pe[0] ** 2 + pe[2] ** 2)  # L_on + L_off
+        self.surprise_R = float(pe[1] ** 2 + pe[3] ** 2)  # R_on + R_off
+        self.retinal_precision = float(pc_out['precision'].mean())
+        self.free_energy = pc_out['free_energy']
+        # Update temporal prediction
+        self.prev_retinal.copy_(sensory)
+
         return {
             'L_on':    L_on,    'R_on':    R_on,
             'L_off':   L_off,   'R_off':   R_off,
@@ -237,6 +282,11 @@ class RetinaV2(nn.Module):
             'loom_trigger': loom_trigger,
             'uv_prey_L':   uv_prey_L,
             'uv_prey_R':   uv_prey_R,
+            # FEP outputs
+            'surprise_L':  self.surprise_L,
+            'surprise_R':  self.surprise_R,
+            'retinal_precision': self.retinal_precision,
+            'free_energy': self.free_energy,
         }
 
     # ------------------------------------------------------------------
@@ -253,3 +303,9 @@ class RetinaV2(nn.Module):
         self.delay_R.zero_()
         self.theta_prev_L.zero_()
         self.theta_prev_R.zero_()
+        self.prev_retinal.zero_()
+        self.pc.reset()
+        self.free_energy = 0.0
+        self.surprise_L = 0.0
+        self.surprise_R = 0.0
+        self.retinal_precision = 1.0

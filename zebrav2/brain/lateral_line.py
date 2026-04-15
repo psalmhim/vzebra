@@ -7,22 +7,25 @@ Zebrafish lateral line has two neuromast types:
   Canal neuromasts (CN) — acceleration-sensitive, 50-300 Hz
     Detect fast-moving objects: predator rushes, escape turns.
 
+Free Energy Principle:
+  Generative model predicts expected hydrodynamic flow field.
+  PE = actual flow - predicted flow (from self-motion + known sources).
+  Self-motion generates predictable flow → suppressed (efference copy).
+  Unexpected flow = high PE → salient detection (predator approach).
+  Precision: canal (high-freq) has higher precision for threat detection.
+
 Architecture (24 neurons total):
   superficial_ant:  8 RS neurons  — anterior, velocity-sensitive
   superficial_post: 8 RS neurons  — posterior, velocity-sensitive
   canal_ant:        4 CH neurons  — anterior, acceleration-sensitive
   canal_post:       4 CH neurons  — posterior, acceleration-sensitive
-
-Sources processed independently (priority: predator > conspecific > prey):
-  Predator  — high-speed approach → canal drive → high_freq_threat
-  Prey/food — slow nearby objects → superficial drive → low_freq_prey
-  Conspecifics — swimming neighbours → superficial drive → conspecific_dist
 """
 import math
 import torch
 import torch.nn as nn
 from zebrav2.spec import DEVICE
 from zebrav2.brain.neurons import IzhikevichLayer
+from zebrav2.brain.two_comp_column import TwoCompColumn
 
 _SUBSTEPS = 10  # fixed — too expensive to use full SUBSTEPS here
 
@@ -61,6 +64,16 @@ class SpikingLateralLine(nn.Module):
         # Velocity history for canal (acceleration) computation
         self._prev_pred_vx = 0.0
         self._prev_pred_vy = 0.0
+
+        # FEP: two-compartment lateral line prediction (Lee et al. 2026)
+        # 3 channels: flow_ant, flow_post, threat (canal)
+        self.pc = TwoCompColumn(n_channels=3, n_per_ch=4, substeps=8, device=device)
+        self.pc.set_precision_channel(2, 1.0)  # threat: γ=1 → π=0.73
+        self._prev_self_speed = 0.0
+        self.flow_pe_ant = 0.0
+        self.flow_pe_post = 0.0
+        self.threat_pe = 0.0
+        self.free_energy = 0.0
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -265,6 +278,23 @@ class SpikingLateralLine(nn.Module):
         # food within ~35px gives low_freq_prey ≈ 0.009; baseline = 0.000
         prey_detected = bool(low_freq_prey > 0.005 and best_prey_dist < self.PREY_RANGE)
 
+        # --- FEP: two-compartment lateral line prediction (Lee et al. 2026) ---
+        sensory = torch.tensor([sup_ant_mean, sup_post_mean, high_freq_threat],
+                                device=self.device)
+        self_speed = float(self.flow_magnitude) if self.proximity > 0 else 0.0
+        prediction = torch.tensor([
+            self._prev_self_speed * 0.3,   # expected headwind
+            self._prev_self_speed * 0.2,   # expected wake
+            0.0,                            # no expected canal activity
+        ], device=self.device)
+        self._prev_self_speed = self_speed
+        pc_out = self.pc(sensory_drive=sensory, prediction_drive=prediction)
+        pe = pc_out['pe']
+        self.flow_pe_ant = float(pe[0])
+        self.flow_pe_post = float(pe[1])
+        self.threat_pe = float(pe[2])
+        self.free_energy = pc_out['free_energy']
+
         return {
             # --- Legacy keys (preserved) ---
             'proximity':       self.proximity,
@@ -273,13 +303,19 @@ class SpikingLateralLine(nn.Module):
             'ant_rate':        float(self.ant_rate.mean()),
             'post_rate':       float(self.post_rate.mean()),
             'dist':            pred_reported_dist,
-            # --- New keys ---
+            # --- Detection keys ---
             'prey_detected':   prey_detected,
             'prey_direction':  best_prey_angle,
             'prey_dist':       best_prey_dist,
             'high_freq_threat': min(1.0, high_freq_threat),
             'low_freq_prey':   min(1.0, low_freq_prey),
             'conspecific_dist': best_conspc_dist,
+            # --- FEP keys ---
+            'flow_pe_ant':     self.flow_pe_ant,
+            'flow_pe_post':    self.flow_pe_post,
+            'threat_pe':       self.threat_pe,
+            'free_energy':     self.free_energy,
+            'precision':       pc_out['precision'].detach().cpu().tolist(),
         }
 
     # ------------------------------------------------------------------
@@ -296,3 +332,9 @@ class SpikingLateralLine(nn.Module):
         self.flow_magnitude = 0.0
         self._prev_pred_vx  = 0.0
         self._prev_pred_vy  = 0.0
+        self.pc.reset()
+        self._prev_self_speed = 0.0
+        self.flow_pe_ant = 0.0
+        self.flow_pe_post = 0.0
+        self.threat_pe = 0.0
+        self.free_energy = 0.0

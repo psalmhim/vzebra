@@ -34,6 +34,7 @@ import torch
 import torch.nn as nn
 from zebrav2.spec import DEVICE, SUBSTEPS
 from zebrav2.brain.neurons import IzhikevichLayer
+from zebrav2.brain.two_comp_column import TwoCompColumn
 
 # ---------------------------------------------------------------------------
 # Physics helper
@@ -94,6 +95,15 @@ class SpikingOlfaction(nn.Module):
         # Internal state
         self._prev_concentration = 0.0
         self._receptor_adapt_state = 0.0
+
+        # FEP: two-compartment olfactory prediction (Lee et al. 2026)
+        # 2 channels: food concentration, alarm substance
+        self.pc = TwoCompColumn(n_channels=2, n_per_ch=4, substeps=8, device=device)
+        self.pc.set_precision_channel(1, 1.0)  # alarm: γ=1 → π=0.73
+        self.register_buffer('prev_olf_sensory', torch.zeros(2, device=device))
+        self.food_pe = 0.0
+        self.alarm_pe = 0.0
+        self.free_energy = 0.0
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -250,18 +260,32 @@ class SpikingOlfaction(nn.Module):
 
         self.alarm_level = float(self.alarm_rate.mean()) * 5.0
 
+        # --- FEP: two-compartment olfactory prediction (Lee et al. 2026) ---
+        sensory = torch.tensor([effective_C, alarm_C], device=self.device)
+        prediction = self.prev_olf_sensory.clone()
+        pc_out = self.pc(sensory_drive=sensory, prediction_drive=prediction)
+        pe = pc_out['pe']
+        self.food_pe = float(pe[0])
+        self.alarm_pe = float(pe[1])
+        self.free_energy = pc_out['free_energy']
+        self.prev_olf_sensory.copy_(sensory)
+
         return {
             'alarm_level':      self.alarm_level,
             'food_gradient_dir': self.food_gradient_dir,
             'food_odor_strength': self.food_odor_strength,
             'alarm_rate':       float(self.alarm_rate.mean()),
             'food_odor_rate':   float(self.food_rate.mean()),
-            # new keys
             'bilateral_diff':   bilateral_diff,
             'temporal_gradient': temporal_gradient,
             'receptor_adapt':   self._receptor_adapt_state,
             'C_L':              C_L,
             'C_R':              C_R,
+            # FEP keys
+            'food_pe':          self.food_pe,
+            'alarm_pe':         self.alarm_pe,
+            'free_energy':      self.free_energy,
+            'precision':        pc_out['precision'].detach().cpu().tolist(),
         }
 
     # ------------------------------------------------------------------
@@ -295,3 +319,8 @@ class SpikingOlfaction(nn.Module):
         self.receptor_adapt       = 0.0
         self._prev_concentration  = 0.0
         self._receptor_adapt_state = 0.0
+        self.prev_olf_sensory.zero_()
+        self.pc.reset()
+        self.food_pe = 0.0
+        self.alarm_pe = 0.0
+        self.free_energy = 0.0

@@ -5,19 +5,23 @@ Zebrafish have 4 cone types (UV, short/blue, medium/green, long/red)
 plus rods for scotopic vision. Tetrachromatic color processing enables
 object classification by spectral signature.
 
+Free Energy Principle:
+  Generative model predicts expected spectral composition given current
+  context (environment type, time of day, object expectations).
+  Prediction error = actual - predicted spectrum.
+  Chromatic adaptation = belief updating to minimize spectral PE.
+  High PE on a color channel → salient (unexpected object detected).
+
 Architecture:
   4 × 8 RS neurons (one population per cone type)
   Color opponent channels: R-G, B-Y (UV+B vs G+R)
-  Object spectral signatures:
-    Food (green algae): high G, moderate R
-    Predator: high R (warm body), low UV
-    Conspecific: UV-reflective (zebrafish stripes)
-    Rock: broadband, low UV
+  Spectral prediction error per channel
 """
 import torch
 import torch.nn as nn
 from zebrav2.spec import DEVICE, SUBSTEPS
 from zebrav2.brain.neurons import IzhikevichLayer
+from zebrav2.brain.two_comp_column import TwoCompColumn
 
 
 class SpikingColorVision(nn.Module):
@@ -40,7 +44,6 @@ class SpikingColorVision(nn.Module):
         self.register_buffer('red_rate', torch.zeros(n_per_channel, device=device))
 
         # Spectral signature templates
-        # [UV, B, G, R] normalized
         self.signatures = {
             'food': [0.1, 0.2, 0.8, 0.4],
             'enemy': [0.05, 0.1, 0.3, 0.7],
@@ -48,12 +51,19 @@ class SpikingColorVision(nn.Module):
             'rock': [0.2, 0.3, 0.3, 0.3],
         }
 
+        # FEP: two-compartment spectral prediction (Lee et al. 2026)
+        # 4 channels: UV, Blue, Green, Red
+        self.pc = TwoCompColumn(n_channels=4, n_per_ch=4, substeps=8, device=device)
+        self.register_buffer('prev_spectrum', torch.tensor([0.3, 0.3, 0.4, 0.3],
+                                                            device=device))
+        self._spectral_pe = [0.0, 0.0, 0.0, 0.0]
+        self.free_energy = 0.0
+
     @torch.no_grad()
     def forward(self, retinal_type_L: torch.Tensor,
                 retinal_type_R: torch.Tensor) -> dict:
         """
         retinal_type_L/R: (400,) type channel from retina (0-1 entity type values)
-        Derive approximate spectral content from entity types.
         """
         # Map type values to spectral content
         type_all = torch.cat([retinal_type_L, retinal_type_R])
@@ -63,18 +73,30 @@ class SpikingColorVision(nn.Module):
         conspe_px = ((type_all - 0.25).abs() < 0.1).float().sum()
         total = food_px + enemy_px + rock_px + conspe_px + 1e-8
 
-        # Weighted spectral sum
-        uv_drive = (food_px * 0.1 + enemy_px * 0.05 + conspe_px * 0.8 + rock_px * 0.2) / total
-        blue_drive = (food_px * 0.2 + enemy_px * 0.1 + conspe_px * 0.5 + rock_px * 0.3) / total
-        green_drive = (food_px * 0.8 + enemy_px * 0.3 + conspe_px * 0.3 + rock_px * 0.3) / total
-        red_drive = (food_px * 0.4 + enemy_px * 0.7 + conspe_px * 0.2 + rock_px * 0.3) / total
+        # Actual spectral input
+        actual = [
+            float((food_px * 0.1 + enemy_px * 0.05 + conspe_px * 0.8 + rock_px * 0.2) / total),
+            float((food_px * 0.2 + enemy_px * 0.1 + conspe_px * 0.5 + rock_px * 0.3) / total),
+            float((food_px * 0.8 + enemy_px * 0.3 + conspe_px * 0.3 + rock_px * 0.3) / total),
+            float((food_px * 0.4 + enemy_px * 0.7 + conspe_px * 0.2 + rock_px * 0.3) / total),
+        ]
 
-        I_uv = torch.full((self.n_ch,), float(uv_drive) * 10.0, device=self.device)
-        I_b = torch.full((self.n_ch,), float(blue_drive) * 10.0, device=self.device)
-        I_g = torch.full((self.n_ch,), float(green_drive) * 10.0, device=self.device)
-        I_r = torch.full((self.n_ch,), float(red_drive) * 10.0, device=self.device)
+        # --- FEP: two-compartment spectral prediction (Lee et al. 2026) ---
+        sensory = torch.tensor(actual, device=self.device)
+        prediction = self.prev_spectrum.clone()
+        pc_out = self.pc(sensory_drive=sensory, prediction_drive=prediction)
+        pe = pc_out['pe']
+        self._spectral_pe = pe.detach().cpu().tolist()
+        self.free_energy = pc_out['free_energy']
+        self.prev_spectrum.copy_(sensory)
 
-        for _ in range(10):  # reduced substeps (32 neurons)
+        # Drive spiking populations
+        I_uv = torch.full((self.n_ch,), actual[0] * 10.0, device=self.device)
+        I_b = torch.full((self.n_ch,), actual[1] * 10.0, device=self.device)
+        I_g = torch.full((self.n_ch,), actual[2] * 10.0, device=self.device)
+        I_r = torch.full((self.n_ch,), actual[3] * 10.0, device=self.device)
+
+        for _ in range(10):
             self.uv_pop(I_uv + torch.randn(self.n_ch, device=self.device) * 0.3)
             self.blue_pop(I_b + torch.randn(self.n_ch, device=self.device) * 0.3)
             self.green_pop(I_g + torch.randn(self.n_ch, device=self.device) * 0.3)
@@ -90,6 +112,10 @@ class SpikingColorVision(nn.Module):
         by_opponent = float((self.uv_rate.mean() + self.blue_rate.mean()) / 2
                             - (self.green_rate.mean() + self.red_rate.mean()) / 2)
 
+        # Spectral salience: precision-weighted PE magnitude
+        pi = pc_out['precision']
+        spectral_salience = float((pi * pe.abs()).sum())
+
         return {
             'uv': float(self.uv_rate.mean()),
             'blue': float(self.blue_rate.mean()),
@@ -97,6 +123,11 @@ class SpikingColorVision(nn.Module):
             'red': float(self.red_rate.mean()),
             'rg_opponent': rg_opponent,
             'by_opponent': by_opponent,
+            # FEP outputs
+            'spectral_pe': list(self._spectral_pe),
+            'spectral_precision': pc_out['precision'].detach().cpu().tolist(),
+            'spectral_salience': spectral_salience,
+            'free_energy': self.free_energy,
         }
 
     def reset(self):
@@ -106,3 +137,8 @@ class SpikingColorVision(nn.Module):
         self.blue_rate.zero_()
         self.green_rate.zero_()
         self.red_rate.zero_()
+        self.prev_spectrum.copy_(torch.tensor([0.3, 0.3, 0.4, 0.3],
+                                              device=self.device))
+        self.pc.reset()
+        self._spectral_pe = [0.0, 0.0, 0.0, 0.0]
+        self.free_energy = 0.0

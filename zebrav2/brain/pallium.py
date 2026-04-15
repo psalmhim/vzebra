@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from zebrav2.spec import DEVICE, N_PAL_S, N_PAL_D, N_TC, SUBSTEPS
 from zebrav2.brain.ei_layer import EILayer
+from zebrav2.brain.two_comp_column import TwoCompColumn
 
 class Pallium(nn.Module):
     def __init__(self, device=DEVICE):
@@ -44,6 +45,9 @@ class Pallium(nn.Module):
         self.register_buffer('rate_d', torch.zeros(self.pal_d.n_e, device=device))
         # Apical compartment (top-down prediction)
         self.register_buffer('apical_s', torch.zeros(self.pal_s.n_e, device=device))
+        # FEP: two-compartment pallial prediction (Lee et al. 2026)
+        # 2 channels: superficial (S) layer, deep (D) layer
+        self.pc = TwoCompColumn(n_channels=2, n_per_ch=4, substeps=8, device=device)
 
     def forward(self, tc_rate: torch.Tensor, goal_probs: torch.Tensor,
                 ACh_level: float = 0.5) -> dict:
@@ -70,10 +74,21 @@ class Pallium(nn.Module):
         rate_d, _, _, _ = self.pal_d(I_ff_d, substeps=SUBSTEPS)
         self.rate_s.copy_(rate_s)
         self.rate_d.copy_(rate_d)
+        # --- FEP: two-compartment pallial prediction (Lee et al. 2026) ---
+        sensory = torch.tensor([float(rate_s.mean()), float(rate_d.mean())],
+                                device=self.device)
+        prediction = torch.tensor([float(fb_drive.mean()), float(I_ff_d.mean())],
+                                   device=self.device)
+        att_signal = torch.tensor([ACh_level * 3.0, ACh_level * 2.0],
+                                   device=self.device)
+        self.pc.set_attention(att_signal)
+        pc_out = self.pc(sensory_drive=sensory, prediction_drive=prediction)
         return {
             'rate_S': rate_s, 'rate_D': rate_d,
             'pred_error': self.pred_error,
-            'free_energy': (self.pred_error**2).mean().item(),
+            'free_energy': pc_out['free_energy'],
+            'precision': pc_out['precision'].detach().cpu().tolist(),
+            'pe_column': pc_out['pe'].detach().cpu().tolist(),
         }
 
     def reset(self):
@@ -83,3 +98,4 @@ class Pallium(nn.Module):
         self.rate_s.zero_()
         self.rate_d.zero_()
         self.apical_s.zero_()
+        self.pc.reset()

@@ -33,13 +33,21 @@ GOAL_NAMES = ['FORAGE', 'FLEE', 'EXPLORE', 'SOCIAL']
 class TrainingEngine:
     """Headless training engine. UI-independent."""
 
-    def __init__(self, config=None):
+    def __init__(self, config=None, brain_config=None, body_config=None,
+                 world_config=None):
+        if isinstance(config, dict):
+            config = TrainingConfig(config)
         self.config = config or TrainingConfig()
         self.checkpoint_mgr = CheckpointManager(
             os.path.join(PROJECT_ROOT, 'zebrav2', 'checkpoints'))
         self.brain = None
         self.env = None
         self.pred_brain = None
+
+        # Platform configs (optional — override TrainingConfig defaults)
+        self.brain_config = brain_config
+        self.body_config = body_config
+        self.world_config = world_config
 
         # Metrics history (per round)
         self.round_history = []
@@ -60,10 +68,16 @@ class TrainingEngine:
         self.saved_replays = []   # list of {round, metrics, steps}
         self.max_replays = 5
 
+        # Platform Recorder (structured recording for post-hoc analysis)
+        self.recorder = None  # set via enable_recording()
+
     def _create_brain(self):
         personality_name = self.config.get('fish.personality_mode', 'default')
         personality = get_personality(personality_name)
-        brain = ZebrafishBrainV2(device=DEVICE, personality=personality)
+        brain = ZebrafishBrainV2(
+            device=DEVICE, personality=personality,
+            brain_config=self.brain_config,
+            body_config=self.body_config)
 
         # Load checkpoint if specified
         ckpt_path = self.config.get('training.load_checkpoint')
@@ -77,10 +91,17 @@ class TrainingEngine:
 
     def _create_env(self):
         cfg = self.config
+        max_steps = cfg.get('env.max_steps', 500)
+        if self.world_config:
+            max_steps = self.world_config.max_steps
         env = ZebrafishPreyPredatorEnv(
             render_mode=None,
             n_food=0,  # we spawn food manually in patches
-            max_steps=cfg.get('env.max_steps', 500))
+            max_steps=max_steps)
+        # Apply world config arena dimensions if available
+        if self.world_config:
+            env.arena_w = self.world_config.arena.width
+            env.arena_h = self.world_config.arena.height
         return env
 
     def _spawn_food_patches(self, env, n_total=20, seed=None):
@@ -184,6 +205,11 @@ class TrainingEngine:
             fy = float(rng.uniform(50, ah - 50))
             env.foods.append([fx, fy, 'small'])
 
+    def enable_recording(self, channels=None):
+        """Enable structured recording for all subsequent rounds."""
+        from zebrav2.recording import Recorder
+        self.recorder = Recorder(channels=channels)
+
     def _compute_fitness(self, survived, food_eaten, mean_efe, energy_final,
                           geo_coverage):
         """Compute fitness score from objectives config."""
@@ -214,6 +240,10 @@ class TrainingEngine:
         self.brain.reset()
         # Don't reset learned weights — keep from previous rounds
         self.brain._apply_personality()
+
+        # Start recorder for this round
+        if self.recorder is not None:
+            self.recorder.start()
 
         # Predator — always spawned; aggression depends on predator_ai setting
         predator_ai = cfg.get('env.predator_ai', 'none')
@@ -309,6 +339,8 @@ class TrainingEngine:
                 'energy': float(self.brain.energy),
                 'food_total': total_eaten,
                 'free_energy': float(efe),
+                'total_free_energy': float(out.get('total_free_energy', 0)),
+                'module_fe': {k: round(v, 4) for k, v in self.brain.get_module_free_energies().items()},
                 'DA': float(out['DA']),
                 'NA': float(out['NA']),
                 '5HT': float(out['5HT']),
@@ -344,12 +376,12 @@ class TrainingEngine:
                 'retina_R_type': [float(x) for x in env.brain_R[400::10]] if hasattr(env, 'brain_R') else [],
                 # Regional spike counts (for raster plots)
                 'spikes': {
-                    'sfgs_b': float(self.brain.tectum.sfgs_b.spike_E.sum()),
-                    'sfgs_d': float(self.brain.tectum.sfgs_d.spike_E.sum()),
-                    'sgc': float(self.brain.tectum.sgc.spike_E.sum()),
-                    'so': float(self.brain.tectum.so.spike_E.sum()),
-                    'tc': float(self.brain.thalamus.TC.rate.sum()),
-                    'trn': float(self.brain.thalamus.TRN.rate.sum()),
+                    'sfgs_b': float(self.brain.tectum.sfgs_b_L.spike_E.sum() + self.brain.tectum.sfgs_b_R.spike_E.sum()),
+                    'sfgs_d': float(self.brain.tectum.sfgs_d_L.spike_E.sum() + self.brain.tectum.sfgs_d_R.spike_E.sum()),
+                    'sgc':    float(self.brain.tectum.sgc_L.spike_E.sum()    + self.brain.tectum.sgc_R.spike_E.sum()),
+                    'so':     float(self.brain.tectum.so_L.spike_E.sum()     + self.brain.tectum.so_R.spike_E.sum()),
+                    'tc':     float(self.brain.thalamus_L.TC.rate.sum()      + self.brain.thalamus_R.TC.rate.sum()),
+                    'trn':    float(self.brain.thalamus_L.TRN.rate.sum()     + self.brain.thalamus_R.TRN.rate.sum()),
                     'pal_s': float(self.brain.pallium.pal_s.spike_E.sum()),
                     'pal_d': float(self.brain.pallium.pal_d.spike_E.sum()),
                     'amygdala': float(self.brain.amygdala.CeA.rate.sum()),
@@ -364,6 +396,15 @@ class TrainingEngine:
             self.current_step_data = step_data
             if self.on_step:
                 self.on_step(step_data)
+            # Structured recorder
+            if self.recorder is not None:
+                self.recorder.record_step(
+                    step_data,
+                    pos=(step_data['fish_x'], step_data['fish_y']),
+                    energy=step_data['energy'])
+                if env._eaten_now > 0:
+                    self.recorder.record_event('food_eaten', step=t,
+                                                count=env._eaten_now)
             # Record for replay (skip large arrays to save memory)
             self._recording.append({k: v for k, v in step_data.items()
                                      if k not in ('spikes', 'retina_L', 'retina_R',
@@ -384,6 +425,9 @@ class TrainingEngine:
                 break
 
         env.close()
+        # Stop recorder
+        if self.recorder is not None:
+            self.recorder.stop()
         survived = t + 1
         mean_efe = total_efe / max(1, survived)
         geo_coverage = float(np.mean(self.brain.geo_model.visit_count > 0))
@@ -620,6 +664,8 @@ class TrainingEngine:
                 'energy': float(focal_brain.energy),
                 'food_total': total_eaten[0],
                 'free_energy': float(efe),
+                'total_free_energy': float(focal_out.get('total_free_energy', 0)),
+                'module_fe': {k: round(v, 4) for k, v in focal_brain.get_module_free_energies().items()},
                 'DA': float(focal_out.get('DA', 0)),
                 'NA': float(focal_out.get('NA', 0)),
                 '5HT': float(focal_out.get('5HT', 0)),
@@ -659,12 +705,12 @@ class TrainingEngine:
                 'retina_R_type': ([float(x) for x in env.brain_R[400::10]]
                                   if hasattr(env, 'brain_R') else []),
                 'spikes': {
-                    'sfgs_b': float(focal_brain.tectum.sfgs_b.spike_E.sum()),
-                    'sfgs_d': float(focal_brain.tectum.sfgs_d.spike_E.sum()),
-                    'sgc': float(focal_brain.tectum.sgc.spike_E.sum()),
-                    'so': float(focal_brain.tectum.so.spike_E.sum()),
-                    'tc': float(focal_brain.thalamus.TC.rate.sum()),
-                    'trn': float(focal_brain.thalamus.TRN.rate.sum()),
+                    'sfgs_b': float(focal_brain.tectum.sfgs_b_L.spike_E.sum() + focal_brain.tectum.sfgs_b_R.spike_E.sum()),
+                    'sfgs_d': float(focal_brain.tectum.sfgs_d_L.spike_E.sum() + focal_brain.tectum.sfgs_d_R.spike_E.sum()),
+                    'sgc':    float(focal_brain.tectum.sgc_L.spike_E.sum()    + focal_brain.tectum.sgc_R.spike_E.sum()),
+                    'so':     float(focal_brain.tectum.so_L.spike_E.sum()     + focal_brain.tectum.so_R.spike_E.sum()),
+                    'tc':     float(focal_brain.thalamus_L.TC.rate.sum()      + focal_brain.thalamus_R.TC.rate.sum()),
+                    'trn':    float(focal_brain.thalamus_L.TRN.rate.sum()     + focal_brain.thalamus_R.TRN.rate.sum()),
                     'pal_s': float(focal_brain.pallium.pal_s.spike_E.sum()),
                     'pal_d': float(focal_brain.pallium.pal_d.spike_E.sum()),
                     'amygdala': float(focal_brain.amygdala.CeA.rate.sum()),
@@ -745,7 +791,10 @@ class TrainingEngine:
         personalities = assign_personalities(n_fish, mode='mixed')
         brains = []
         for i in range(n_fish):
-            brain = ZebrafishBrainV2(device=DEVICE, personality=personalities[i])
+            brain = ZebrafishBrainV2(
+                device=DEVICE, personality=personalities[i],
+                brain_config=self.brain_config,
+                body_config=self.body_config)
             # Load checkpoint for focal fish (brain 0) only
             if i == 0:
                 ckpt_path = self.config.get('training.load_checkpoint')
@@ -779,6 +828,10 @@ class TrainingEngine:
             elapsed = time.time() - t0
             metrics['elapsed_sec'] = elapsed
             self.round_history.append(metrics)
+
+            # Online learning: update focal fish MetaGoalWeights + SocialMemory
+            brains[0].on_episode_end(
+                metrics['fitness'], metrics.get('goal_distribution', {}))
 
             print(f"  Round {round_num}: survived={metrics['survived']}, "
                   f"food={metrics['food_eaten']} "
@@ -843,6 +896,10 @@ class TrainingEngine:
             metrics['elapsed_sec'] = elapsed
             self.round_history.append(metrics)
 
+            # Online learning: update MetaGoalWeights + SocialMemory weights
+            self.brain.on_episode_end(
+                metrics['fitness'], metrics.get('goal_distribution', {}))
+
             print(f"  Round {round_num}: survived={metrics['survived']}, "
                   f"food={metrics['food_eaten']}, fitness={metrics['fitness']:.0f}, "
                   f"EFE={metrics['mean_efe']:.4f} ({elapsed:.0f}s)")
@@ -855,6 +912,9 @@ class TrainingEngine:
                 path = self.checkpoint_mgr.save(
                     self.brain, round_num, metrics, self.config)
                 print(f"    Checkpoint saved: {path}")
+            # Autosave world knowledge every round (cheap, ~200KB)
+            if self.config.get('training.autosave_world', False):
+                self.checkpoint_mgr.save_world_only(self.brain, tag='latest', step=round_num)
 
         self.total_rounds_done += n_rounds
         self.running = False

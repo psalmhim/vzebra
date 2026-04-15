@@ -66,7 +66,7 @@ table th { color: #8b949e; }
 <body>
 
 <div class="header">
-    <h1>Zebrafish Brain v2</h1>
+    <h1>Zebrafish Brain v2 <button id="soundToggle" onclick="toggleSound()" style="background:none;border:1px solid #30363d;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:14px;vertical-align:middle;margin-left:8px;" title="Toggle sound effects">🔇</button></h1>
     <div style="display:flex;gap:8px;align-items:center">
         <button class="tab-btn active" onclick="switchTab('playground')">Playground</button>
         <button class="tab-btn" onclick="switchTab('training')">Training</button>
@@ -102,9 +102,17 @@ table th { color: #8b949e; }
                     <div style="display:flex;gap:6px;align-items:center;font-size:9px;color:#8b949e;">
                         <label><input type="checkbox" id="brain3dSpikes" checked style="margin-right:2px;">Spikes</label>
                         <label><input type="checkbox" id="brain3dShowAllConn" style="margin-right:2px;">Connections</label>
+                        <label><input type="checkbox" id="brain3dShowMesh" checked style="margin-right:2px;" onchange="toggleMesh(this.checked)">Mesh</label>
+                        <span style="margin-left:4px;">α</span><input type="range" id="nodeAlpha" min="5" max="100" value="85" step="5" style="width:50px;height:10px;" oninput="updateNodeAlpha(this.value)"><span id="nodeAlphaVal" style="width:24px;text-align:right;font-size:8px;">.85</span>
+                        <span style="margin-left:6px;font-size:8px;color:#8b949e;">View:</span>
+                        <button onclick="brainView('left')" style="font-size:8px;padding:1px 4px;background:#1a1a2e;color:#aaccff;border:1px solid #30363d;border-radius:3px;cursor:pointer;" title="Left eye view">L</button>
+                        <button onclick="brainView('right')" style="font-size:8px;padding:1px 4px;background:#1a1a2e;color:#ffccaa;border:1px solid #30363d;border-radius:3px;cursor:pointer;" title="Right eye view">R</button>
+                        <button onclick="brainView('dorsal')" style="font-size:8px;padding:1px 4px;background:#1a1a2e;color:#7ee787;border:1px solid #30363d;border-radius:3px;cursor:pointer;" title="Dorsal view">D</button>
+                        <button onclick="brainView('anterior')" style="font-size:8px;padding:1px 4px;background:#1a1a2e;color:#58a6ff;border:1px solid #30363d;border-radius:3px;cursor:pointer;" title="Anterior view">A</button>
                     </div>
                 </div>
-                <div id="brain3dContainer" style="flex:1;position:relative;overflow:hidden;background:#050510;min-height:0;">
+                <!-- XYZ sliders removed: PCA alignment handles orientation -->
+                <div id="brain3dContainer" style="flex:1;position:relative;overflow:hidden;background:#2a1a0a;min-height:0;">
                     <canvas id="brain3dCanvas" style="width:100%;height:100%;display:block;"></canvas>
                     <div id="brain3dHover" style="position:absolute;display:none;background:rgba(0,0,0,0.85);border:1px solid #30363d;border-radius:4px;padding:4px 8px;color:#c9d1d9;font-size:11px;pointer-events:none;z-index:10;"></div>
                 </div>
@@ -150,6 +158,10 @@ table th { color: #8b949e; }
             <div class="metric"><span>Heart Rate</span><span class="val" id="mHR">-</span></div>
             <div class="metric"><span>Surprise</span><span class="val" id="mSurprise">-</span></div>
             <div class="metric"><span>VAE Mem</span><span class="val" id="mVAE">-</span></div>
+        </div>
+        <div class="card" style="padding:10px;">
+            <h3>Free Energy <span style="font-weight:normal;color:#8b949e;font-size:9px" id="mTotalFE">F=0</span></h3>
+            <div id="feBars"></div>
         </div>
         <div class="card" style="padding:10px;">
             <h3>Fish Population</h3>
@@ -513,6 +525,142 @@ function switchTab(name) {
 
 let ws = null;
 const logBox = document.getElementById('logBox');
+
+// --- Sound system (Web Audio API) ---
+let _audioCtx = null;
+let _soundOn = false;
+let _fleeOsc = null;  // persistent oscillator for flee rumble
+
+function toggleSound() {
+    _soundOn = !_soundOn;
+    const btn = document.getElementById('soundToggle');
+    btn.textContent = _soundOn ? '\u{1F50A}' : '\u{1F507}';
+    if (_soundOn && !_audioCtx) {
+        _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (!_soundOn) stopFleeRumble();
+}
+
+function _ensureAudio() {
+    if (!_soundOn) return null;
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (_audioCtx.state === 'suspended') _audioCtx.resume();
+    return _audioCtx;
+}
+
+// Eat food: short high-pitched blip (440Hz, 50ms)
+function playEatBlip() {
+    const ctx = _ensureAudio();
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(440, ctx.currentTime);
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.05);
+}
+
+// Predator nearby (FLEE): low rumble/pulse (80Hz, repeating)
+function startFleeRumble() {
+    const ctx = _ensureAudio();
+    if (!ctx || _fleeOsc) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    // LFO pulses the volume at 3Hz
+    lfo.frequency.value = 3;
+    lfoGain.gain.value = 0.06;
+    lfo.connect(lfoGain);
+    lfoGain.connect(gain.gain);
+    osc.type = 'triangle';
+    osc.frequency.value = 80;
+    gain.gain.value = 0.06;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    lfo.start();
+    _fleeOsc = { osc, gain, lfo, lfoGain };
+}
+
+function stopFleeRumble() {
+    if (!_fleeOsc) return;
+    try {
+        _fleeOsc.osc.stop();
+        _fleeOsc.lfo.stop();
+        _fleeOsc.osc.disconnect();
+        _fleeOsc.lfo.disconnect();
+        _fleeOsc.gain.disconnect();
+        _fleeOsc.lfoGain.disconnect();
+    } catch (e) {}
+    _fleeOsc = null;
+}
+
+// Killed: descending tone (400->100Hz, 500ms)
+function playKilledTone() {
+    const ctx = _ensureAudio();
+    if (!ctx) return;
+    stopFleeRumble();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(400, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.5);
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.5);
+}
+
+// New round: ascending chime (300->600Hz, 200ms)
+function playNewRoundChime() {
+    const ctx = _ensureAudio();
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(300, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.2);
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.25);
+}
+
+// C-start escape: sharp click (white noise burst, 30ms)
+function playCstartClick() {
+    const ctx = _ensureAudio();
+    if (!ctx) return;
+    const bufferSize = ctx.sampleRate * 0.03;
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.8;
+    const src = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    src.buffer = buffer;
+    src.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.03);
+    src.start(ctx.currentTime);
+}
+
+// Legacy alias
+function playTing() { playEatBlip(); }
+
+// Sound state tracking
+let _prevGoal = null;
+let _prevKilled = false;
+let _prevCstartTimer = 0;
+
 const arenaCanvas = document.getElementById('arenaCanvas');
 const actx = arenaCanvas.getContext('2d');
 const rasterCanvas = document.getElementById('rasterCanvas');
@@ -672,15 +820,18 @@ for (let i = 0; i < 12; i++) {
     });
 }
 
-// Water particles (plankton drift)
+// Water particles (plankton — drift with gentle current)
 const particles = [];
-for (let i = 0; i < 15; i++) {
+for (let i = 0; i < 25; i++) {
     particles.push({
         x: Math.random(), y: Math.random(),
-        vx: (Math.random() - 0.5) * 0.0005,
-        vy: (Math.random() - 0.5) * 0.0003,
+        baseVx: 0.00004 + Math.random() * 0.00008,  // gentle rightward current
+        baseVy: -0.00001 + Math.random() * 0.00002,  // very slight vertical drift
+        phase: Math.random() * Math.PI * 2,           // wobble phase
+        wobbleAmp: 0.00002 + Math.random() * 0.00003, // wobble strength
+        wobbleFreq: 0.01 + Math.random() * 0.02,      // wobble speed
         size: 0.5 + Math.random() * 1.5,
-        opacity: 0.05 + Math.random() * 0.1
+        opacity: 0.04 + Math.random() * 0.08
     });
 }
 
@@ -691,11 +842,16 @@ function drawArena(d) {
     const aw = d.arena_w || 800, ah = d.arena_h || 600;
     const sx = cw / aw, sy = ch / ah;
 
-    // Background gradient (water)
+    // Background gradient (water) — dims with circadian light level
+    const ll = d.light_level != null ? d.light_level : 1.0;
     const grad = ctx.createLinearGradient(0, 0, 0, ch);
-    grad.addColorStop(0, '#081020');
-    grad.addColorStop(0.5, '#0a1830');
-    grad.addColorStop(1, '#0d2240');
+    // Night: darker blues. Day: normal blues.
+    const r0 = Math.round(8 * ll), g0 = Math.round(16 * ll), b0 = Math.round(32 * ll);
+    const r1 = Math.round(10 * ll), g1 = Math.round(24 * ll), b1 = Math.round(48 * ll);
+    const r2 = Math.round(13 * ll), g2 = Math.round(34 * ll), b2 = Math.round(64 * ll);
+    grad.addColorStop(0, `rgb(${r0},${g0},${b0})`);
+    grad.addColorStop(0.5, `rgb(${r1},${g1},${b1})`);
+    grad.addColorStop(1, `rgb(${r2},${g2},${b2})`);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, cw, ch);
 
@@ -714,11 +870,25 @@ function drawArena(d) {
     }
     ctx.globalAlpha = 1;
 
-    // Water particles (plankton drifting)
+    // Water particles (plankton drifting with current + wobble, avoid rocks)
     particles.forEach(p => {
-        p.x += p.vx; p.y += p.vy;
-        if (p.x < 0) p.x = 1; if (p.x > 1) p.x = 0;
-        if (p.y < 0) p.y = 1; if (p.y > 1) p.y = 0;
+        p.phase += p.wobbleFreq;
+        p.x += p.baseVx + Math.sin(p.phase) * p.wobbleAmp;
+        p.y += p.baseVy + Math.cos(p.phase * 0.7) * p.wobbleAmp * 0.5;
+        if (p.x > 1.02) { p.x = -0.02; p.y = Math.random(); }
+        if (p.x < -0.02) p.x = 1.02;
+        if (p.y < -0.02) p.y = 1.02;
+        if (p.y > 1.02) p.y = -0.02;
+        // Skip drawing if inside a rock
+        if (d.rocks) {
+            const px2 = p.x * aw, py2 = p.y * ah;
+            let inside = false;
+            for (const r of d.rocks) {
+                const dx = px2 - r[0], dy = py2 - r[1];
+                if (dx*dx + dy*dy < r[2]*r[2]) { inside = true; break; }
+            }
+            if (inside) { p.x += 0.05; return; }  // nudge past rock
+        }
         ctx.fillStyle = `rgba(150,200,255,${p.opacity})`;
         ctx.beginPath(); ctx.arc(p.x*cw, p.y*ch, p.size, 0, Math.PI*2); ctx.fill();
     });
@@ -838,38 +1008,27 @@ function drawArena(d) {
         });
     }
 
-    // === PREDATOR (tracks heading from velocity) ===
-    if (d.pred_x > 0) {
-        const px = d.pred_x*sx, py = d.pred_y*sy;
+    // === PREDATOR DRAWING FUNCTION ===
+    const drawPredator = (px, py, predH, energy, state, label) => {
         const ps = 16;
-        // Track predator heading from position delta
-        if (!drawArena._prevPredX) { drawArena._prevPredX = d.pred_x; drawArena._prevPredY = d.pred_y; drawArena._predH = 0; }
-        const pdx = d.pred_x - drawArena._prevPredX;
-        const pdy = d.pred_y - drawArena._prevPredY;
-        if (Math.abs(pdx) + Math.abs(pdy) > 0.5) {
-            drawArena._predH = Math.atan2(pdy, pdx);
-        }
-        drawArena._prevPredX = d.pred_x; drawArena._prevPredY = d.pred_y;
-        const predH = drawArena._predH;
-
         // Danger zone
         ctx.beginPath(); ctx.arc(px, py, ps*3, 0, Math.PI*2);
-        ctx.fillStyle = 'rgba(248,50,40,0.04)'; ctx.fill();
+        ctx.fillStyle = 'rgba(150,20,15,0.06)'; ctx.fill();
 
         ctx.save(); ctx.translate(px, py); ctx.rotate(predH);
         // Body
         ctx.beginPath(); ctx.ellipse(0, 0, ps*1.5, ps*0.7, 0, 0, Math.PI*2);
-        ctx.fillStyle = 'rgba(200,40,30,0.85)'; ctx.fill();
-        ctx.strokeStyle = 'rgba(255,80,60,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.fillStyle = 'rgba(120,15,10,0.9)'; ctx.fill();
+        ctx.strokeStyle = 'rgba(160,30,20,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
         // Tail
         ctx.beginPath();
         ctx.moveTo(-ps*1.3, 0); ctx.lineTo(-ps*2.2, -ps*0.8); ctx.lineTo(-ps*2.2, ps*0.8);
-        ctx.closePath(); ctx.fillStyle = 'rgba(180,30,20,0.7)'; ctx.fill();
+        ctx.closePath(); ctx.fillStyle = 'rgba(90,10,5,0.8)'; ctx.fill();
         // Dorsal fin
         ctx.beginPath();
         ctx.moveTo(-ps*0.3, -ps*0.6); ctx.lineTo(ps*0.3, -ps*1.2); ctx.lineTo(ps*0.8, -ps*0.6);
-        ctx.closePath(); ctx.fillStyle = 'rgba(200,40,30,0.6)'; ctx.fill();
-        // Eye (single, side-facing)
+        ctx.closePath(); ctx.fillStyle = 'rgba(100,12,8,0.7)'; ctx.fill();
+        // Eye
         ctx.fillStyle = '#ff0';
         ctx.beginPath(); ctx.arc(ps*0.8, -ps*0.2, 3, 0, Math.PI*2); ctx.fill();
         ctx.fillStyle = '#000';
@@ -879,26 +1038,45 @@ function drawArena(d) {
         ctx.beginPath(); ctx.moveTo(ps*1.4, -ps*0.1); ctx.lineTo(ps*0.9, ps*0.3); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(ps*1.4, ps*0.1); ctx.lineTo(ps*0.9, ps*0.3); ctx.stroke();
         ctx.restore();
-        ctx.fillStyle = 'rgba(255,80,60,0.7)'; ctx.font = 'bold 10px monospace';
-        ctx.fillText('PREDATOR', px-28, py+ps+14);
-
-        // Predator energy bar (below label)
-        const predE = Math.max(0, Math.min(1, (d.pred_energy||80)/100));
+        ctx.fillStyle = 'rgba(180,40,30,0.8)'; ctx.font = 'bold 9px monospace';
+        ctx.fillText(label || 'PREDATOR', px-24, py+ps+14);
+        // Energy bar
+        const predE = Math.max(0, Math.min(1, (energy||80)/100));
         const peBarW = 40, peBarH = 4, peBarY = py+ps+18;
         ctx.fillStyle = 'rgba(0,0,0,0.5)';
         ctx.fillRect(px-peBarW/2, peBarY, peBarW, peBarH);
         ctx.fillStyle = predE > 0.4 ? '#f0883e' : '#f85149';
         ctx.fillRect(px-peBarW/2, peBarY, peBarW*predE, peBarH);
-        ctx.strokeStyle = 'rgba(255,100,80,0.4)'; ctx.lineWidth = 0.5;
+        ctx.strokeStyle = 'rgba(150,40,30,0.4)'; ctx.lineWidth = 0.5;
         ctx.strokeRect(px-peBarW/2, peBarY, peBarW, peBarH);
-        // State label
-        ctx.fillStyle = 'rgba(255,150,120,0.6)'; ctx.font = '8px monospace';
-        ctx.fillText((d.pred_state||'') + ' ' + Math.round((d.pred_energy||0)) + '%', px-24, peBarY+12);
+        ctx.fillStyle = 'rgba(180,80,60,0.7)'; ctx.font = '8px monospace';
+        ctx.fillText((state||'') + ' ' + Math.round(energy||0) + '%', px-24, peBarY+12);
+    };
+
+    // Draw primary predator
+    if (d.pred_x > 0) {
+        // Track heading from position delta or use server-provided heading
+        if (!drawArena._prevPredX) { drawArena._prevPredX = d.pred_x; drawArena._prevPredY = d.pred_y; drawArena._predH = 0; }
+        let predH = d.pred_heading;
+        if (predH == null) {
+            const pdx = d.pred_x - drawArena._prevPredX;
+            const pdy = d.pred_y - drawArena._prevPredY;
+            if (Math.abs(pdx) + Math.abs(pdy) > 0.5) drawArena._predH = Math.atan2(pdy, pdx);
+            predH = drawArena._predH;
+        }
+        drawArena._prevPredX = d.pred_x; drawArena._prevPredY = d.pred_y;
+        drawPredator(d.pred_x*sx, d.pred_y*sy, predH, d.pred_energy, d.pred_state, 'PREDATOR');
+    }
+    // Draw extra predators
+    if (d.extra_predators) {
+        d.extra_predators.forEach((ep, i) => {
+            drawPredator(ep.x*sx, ep.y*sy, ep.heading||0, ep.energy, ep.state, 'PRED-' + (i+2));
+        });
     }
 
     // === FISH (with tail oscillation + FoV cones) ===
-    const drawFish = (fx, fy, heading, goal, energy, isFocal) => {
-        const goalColors = {FORAGE:'#7ee787', FLEE:'#f85149', EXPLORE:'#58a6ff', SOCIAL:'#3fb9a0'};
+    const drawFish = (fx, fy, heading, goal, energy, isFocal, eyeData) => {
+        const goalColors = {FORAGE:'#7ee787', FLEE:'#f85149', EXPLORE:'#58a6ff', SOCIAL:'#3fb9a0', SLEEP:'#8888cc', DEAD:'#661111'};
         const bodyColor = goalColors[goal] || '#58a6ff';
         const bL = isFocal ? 14 : 10, bW = isFocal ? 6 : 4;
 
@@ -906,28 +1084,63 @@ function drawArena(d) {
         ctx.translate(fx, fy);
         ctx.rotate(heading);
 
-        // FoV sight cones (left + right eye, 100° each, 200° total)
-        if (isFocal) {
-            const fovLen = 50;
+        // FoV sight cones — left eye (cyan) + right eye (magenta)
+        // Brightness reacts to detected objects in each eye
+        if (goal !== 'DEAD') {
+            const fovLen = isFocal ? 70 : 30;
             const fovHalf = Math.PI * 100 / 180;  // 100° per eye
-            // Left eye FoV (upper)
+            const ed = eyeData || {};
+            // Brighten FoV cone when objects detected in that eye
+            const lActive = (ed.left_food || 0) + (ed.pred_left ? 3 : 0);
+            const rActive = (ed.right_food || 0) + (ed.pred_right ? 3 : 0);
+            const lBoost = Math.min(0.3, lActive * 0.06);
+            const rBoost = Math.min(0.3, rActive * 0.06);
+            const fAlphaL = (isFocal ? 0.15 : 0.04) + lBoost;
+            const fAlphaR = (isFocal ? 0.15 : 0.04) + rBoost;
+            const eAlpha = isFocal ? 0.35 : 0.08;
+            // Left eye FoV (upper half — cyan)
             ctx.beginPath(); ctx.moveTo(0, 0);
             ctx.arc(0, 0, fovLen, -fovHalf, 0);
             ctx.closePath();
-            ctx.fillStyle = 'rgba(88,166,255,0.04)';
+            ctx.fillStyle = ed.pred_left
+                ? `rgba(255,80,80,${fAlphaL + 0.12})`
+                : `rgba(0,200,255,${fAlphaL})`;
             ctx.fill();
-            // Right eye FoV (lower)
+            // Right eye FoV (lower half — magenta)
             ctx.beginPath(); ctx.moveTo(0, 0);
             ctx.arc(0, 0, fovLen, 0, fovHalf);
             ctx.closePath();
-            ctx.fillStyle = 'rgba(88,166,255,0.04)';
+            ctx.fillStyle = ed.pred_right
+                ? `rgba(255,80,80,${fAlphaR + 0.12})`
+                : `rgba(255,100,200,${fAlphaR})`;
             ctx.fill();
-            // FoV edges
-            ctx.strokeStyle = 'rgba(88,166,255,0.1)'; ctx.lineWidth = 0.5;
+            // FoV edge lines
+            ctx.lineWidth = isFocal ? 1.2 : 0.5;
+            // Left eye outer edge (cyan)
+            ctx.strokeStyle = `rgba(0,200,255,${eAlpha})`;
             ctx.beginPath(); ctx.moveTo(0,0);
             ctx.lineTo(fovLen*Math.cos(-fovHalf), fovLen*Math.sin(-fovHalf)); ctx.stroke();
+            // Center line (between eyes) — the midline dividing L/R
+            ctx.strokeStyle = `rgba(255,255,255,${eAlpha * 0.6})`;
+            ctx.beginPath(); ctx.moveTo(0,0);
+            ctx.lineTo(fovLen, 0); ctx.stroke();
+            // Right eye outer edge (magenta)
+            ctx.strokeStyle = `rgba(255,100,200,${eAlpha})`;
             ctx.beginPath(); ctx.moveTo(0,0);
             ctx.lineTo(fovLen*Math.cos(fovHalf), fovLen*Math.sin(fovHalf)); ctx.stroke();
+            // Arc outline for clarity
+            ctx.strokeStyle = `rgba(0,200,255,${eAlpha * 0.5})`;
+            ctx.beginPath(); ctx.arc(0, 0, fovLen, -fovHalf, 0); ctx.stroke();
+            ctx.strokeStyle = `rgba(255,100,200,${eAlpha * 0.5})`;
+            ctx.beginPath(); ctx.arc(0, 0, fovLen, 0, fovHalf); ctx.stroke();
+            // Eye labels for focal (show detection count)
+            if (isFocal) {
+                ctx.font = 'bold 8px monospace';
+                ctx.fillStyle = lActive > 0 ? 'rgba(0,255,200,0.85)' : 'rgba(0,200,255,0.55)';
+                ctx.fillText(`L${lActive > 0 ? lActive : ''}`, fovLen*0.35, -fovLen*0.3);
+                ctx.fillStyle = rActive > 0 ? 'rgba(255,150,255,0.85)' : 'rgba(255,100,200,0.55)';
+                ctx.fillText(`R${rActive > 0 ? rActive : ''}`, fovLen*0.35, fovLen*0.38);
+            }
         }
 
         // Heartbeat glow
@@ -1008,7 +1221,12 @@ function drawArena(d) {
 
     // Draw focal fish
     if (d.fish_x) {
-        drawFish(d.fish_x*sx, d.fish_y*sy, d.fish_heading||0, d.goal, d.energy, true);
+        drawFish(d.fish_x*sx, d.fish_y*sy, d.fish_heading||0, d.goal, d.energy, true, {
+            left_food: d.left_eye_food || 0,
+            right_food: d.right_eye_food || 0,
+            pred_left: d.pred_in_left || false,
+            pred_right: d.pred_in_right || false,
+        });
     }
 
     // Draw conspecific fish
@@ -1089,6 +1307,20 @@ function drawArena(d) {
     ctx.font = '9px monospace';
     ctx.fillText(`${(d.heart_rate||2).toFixed(1)} Hz`, hrX+10, hrY+4);
 
+    // Circadian label (top-right of arena)
+    if (d.circ_label) {
+        const circColors = {DAY:'#ffdd66', DAWN:'#ffaa44', DUSK:'#cc7744', NIGHT:'#4466aa'};
+        const circIcons = {DAY:'\u2600', DAWN:'\u{1F305}', DUSK:'\u{1F307}', NIGHT:'\u{1F319}'};
+        ctx.font = '10px monospace';
+        ctx.fillStyle = circColors[d.circ_label] || '#888';
+        const lbl = (circIcons[d.circ_label] || '') + ' ' + d.circ_label;
+        ctx.fillText(lbl, cw - 80, 14);
+        if (d.is_sleeping) {
+            ctx.fillStyle = '#8888cc';
+            ctx.fillText('ZZZ', cw - 80, 26);
+        }
+    }
+
     // Spatial coverage mini-map (bottom-right)
     const mmW = 60, mmH = 45;
     const mmX = cw - mmW - 6, mmY = ch - mmH - 26;
@@ -1109,9 +1341,50 @@ function drawArena(d) {
         ctx.arc(mmX + (d.pred_x/aw)*mmW, mmY + (d.pred_y/ah)*mmH, 2, 0, Math.PI*2);
         ctx.fill();
     }
+    if (d.extra_predators) {
+        d.extra_predators.forEach(ep => {
+            ctx.fillStyle = 'rgba(255,60,50,0.5)';
+            ctx.beginPath();
+            ctx.arc(mmX + (ep.x/aw)*mmW, mmY + (ep.y/ah)*mmH, 1.5, 0, Math.PI*2);
+            ctx.fill();
+        });
+    }
     ctx.fillStyle = 'rgba(200,200,200,0.4)';
     ctx.font = '7px monospace';
     ctx.fillText('MAP', mmX+2, mmY+8);
+
+    // === DEATH OVERLAY ===
+    if (d.killed) {
+        // Dark red overlay
+        ctx.fillStyle = 'rgba(80, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, cw, ch);
+
+        // Skull / death marker at fish position
+        const dx = d.fish_x * (cw / aw);
+        const dy = d.fish_y * (ch / ah);
+        ctx.font = '32px serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ff4444';
+        ctx.fillText('\u2620', dx, dy + 10);
+
+        // KILLED text
+        ctx.font = 'bold 36px monospace';
+        ctx.fillStyle = '#ff3333';
+        ctx.textAlign = 'center';
+        ctx.shadowColor = '#000';
+        ctx.shadowBlur = 8;
+        ctx.fillText('KILLED', cw / 2, ch / 2 - 20);
+
+        // Countdown
+        ctx.font = '16px monospace';
+        ctx.fillStyle = '#cc8888';
+        ctx.shadowBlur = 0;
+        const cd = d.death_countdown || 0;
+        ctx.fillText(`New round in ${cd.toFixed(1)}s`, cw / 2, ch / 2 + 15);
+
+        ctx.textAlign = 'left';
+        ctx.shadowBlur = 0;
+    }
 }
 function log(msg) { logBox.textContent += msg + '\n'; logBox.scrollTop = logBox.scrollHeight; }
 
@@ -1147,12 +1420,55 @@ function updateStep(d) {
     document.getElementById('bar5HT').style.width = ((d['5HT']||0.5)*100) + '%';
     document.getElementById('barACh').style.width = ((d.ACh||0.5)*100) + '%';
 
+    // Free energy per-module bars
+    if (d.module_fe) {
+        const feEl = document.getElementById('feBars');
+        const totalFE = d.total_free_energy || d.free_energy || 0;
+        document.getElementById('mTotalFE').textContent = 'F=' + totalFE.toFixed(3);
+        const modules = [
+            {key:'retina', name:'Retina', color:'#e74c3c'},
+            {key:'olfaction', name:'Olfact', color:'#9b59b6'},
+            {key:'lateral_line', name:'LatLine', color:'#3498db'},
+            {key:'proprioception', name:'Proprio', color:'#1abc9c'},
+            {key:'vestibular', name:'Vestib', color:'#f39c12'},
+            {key:'color_vision', name:'Color', color:'#e67e22'},
+            {key:'thalamus_L', name:'Thal-L', color:'#2ecc71'},
+            {key:'thalamus_R', name:'Thal-R', color:'#27ae60'},
+            {key:'pallium', name:'Pallium', color:'#58a6ff'},
+            {key:'active_motor', name:'Motor', color:'#f85149'},
+        ];
+        let html = '';
+        modules.forEach(m => {
+            const val = d.module_fe[m.key] || 0;
+            const pct = Math.min(100, val * 200);
+            html += '<div class="neuromod-bar"><div class="fill" style="width:' + pct + '%;background:' + m.color + '"></div><div class="label" style="font-size:8px">' + m.name + '</div></div>';
+        });
+        feEl.innerHTML = html;
+    }
+
     // Arena canvas rendering (resize to container, handle DPI)
     const rect = arenaCanvas.getBoundingClientRect();
     if (rect.width > 10 && rect.height > 10) {
         arenaCanvas.width = rect.width;
         arenaCanvas.height = rect.height;
     }
+    // --- Sound effects ---
+    // Eat food: short blip
+    if (d.ate_food) playEatBlip();
+    // Killed: descending tone (trigger once on transition)
+    if (d.killed && !_prevKilled) playKilledTone();
+    // FLEE goal: low rumble while fleeing
+    if (d.goal === 'FLEE') { startFleeRumble(); }
+    else { stopFleeRumble(); }
+    // New round: ascending chime (transition from DEAD/killed to alive)
+    if (_prevKilled && !d.killed) playNewRoundChime();
+    // C-start escape: sharp click (trigger when timer starts)
+    const cst = d.cstart_timer || 0;
+    if (cst > 0 && _prevCstartTimer <= 0) playCstartClick();
+    _prevGoal = d.goal;
+    _prevKilled = !!d.killed;
+    _prevCstartTimer = cst;
+
     drawArena(d);
     // Retinal view
     drawRetina(d);
@@ -1531,6 +1847,98 @@ function hexToRGB(hex) {
 }
 
 // Brain 3D loaded from brain3d.js (Plotly.js scatter3d)
+
+// --- Node offset sliders (shift all neurons relative to mesh) ---
+function updateNodeOffset() {
+    const ox = parseFloat(document.getElementById('nodeOffX').value);
+    const oy = parseFloat(document.getElementById('nodeOffY').value);
+    const oz = parseFloat(document.getElementById('nodeOffZ').value);
+    document.getElementById('nodeOffXVal').textContent = ox;
+    document.getElementById('nodeOffYVal').textContent = oy;
+    document.getElementById('nodeOffZVal').textContent = oz;
+    if (brain3d.mesh) {
+        brain3d.mesh.position.set(ox, oy, oz);
+    }
+    // Also shift connections
+    if (brain3d.connGroup) {
+        brain3d.connGroup.position.set(ox, oy, oz);
+    }
+}
+function resetNodeOffset() {
+    document.getElementById('nodeOffX').value = 0;
+    document.getElementById('nodeOffY').value = 0;
+    document.getElementById('nodeOffZ').value = 0;
+    updateNodeOffset();
+}
+function saveNodeOffset() {
+    const ox = parseFloat(document.getElementById('nodeOffX').value);
+    const oy = parseFloat(document.getElementById('nodeOffY').value);
+    const oz = parseFloat(document.getElementById('nodeOffZ').value);
+    const info = `Node offset (Three.js): x=${ox}, y=${oy}, z=${oz}`;
+    console.log(info);
+    // Save to localStorage
+    localStorage.setItem('brain3d_node_offset', JSON.stringify({x: ox, y: oy, z: oz}));
+    // Show confirmation
+    const el = document.getElementById('savedOffsetInfo');
+    if (el) { el.textContent = `Saved: (${ox}, ${oy}, ${oz})`; setTimeout(() => el.textContent = '', 3000); }
+    // Also download as text file
+    const blob = new Blob([info + '\n'], {type: 'text/plain'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'node_offset.txt';
+    a.click();
+}
+function toggleMesh(show) {
+    if (brain3d.meshGroup) {
+        brain3d.meshGroup.visible = show;
+    }
+}
+function brainView(view) {
+    if (!brain3d.camera || !brain3d.controls) return;
+    const cam = brain3d.camera;
+    const ctrl = brain3d.controls;
+    const D = 500;  // camera distance
+    ctrl.autoRotate = false;
+    ctrl.target.set(0, 0, 0);
+    // Y axis = left(+)/right(-), X = anterior(-)/posterior(+), Z = dorsal(+)/ventral(-)
+    switch(view) {
+        case 'left':     // Left eye view: camera at +Y, looking at left hemisphere
+            cam.position.set(0, D, 0);
+            cam.up.set(0, 0, 1); break;
+        case 'right':    // Right eye view: camera at -Y, looking at right hemisphere
+            cam.position.set(0, -D, 0);
+            cam.up.set(0, 0, 1); break;
+        case 'dorsal':   // Top-down: camera at +Z, anterior = up
+            cam.position.set(0, 0, D);
+            cam.up.set(-1, 0, 0); break;
+        case 'anterior': // Front view: camera at -X (nose end), dorsal = up
+            cam.position.set(-D, 0, 0);
+            cam.up.set(0, 0, 1); break;
+    }
+    cam.lookAt(0, 0, 0);
+    ctrl.update();
+}
+function updateNodeAlpha(val) {
+    const a = val / 100;
+    document.getElementById('nodeAlphaVal').textContent = a.toFixed(2);
+    if (brain3d.mesh && brain3d.mesh.material) {
+        brain3d.mesh.material.opacity = a;
+        brain3d.mesh.material.transparent = true;
+        brain3d.mesh.material.needsUpdate = true;
+    }
+}
+// Restore saved offset from localStorage on page load
+(function() {
+    try {
+        const saved = JSON.parse(localStorage.getItem('brain3d_node_offset'));
+        if (saved) {
+            document.getElementById('nodeOffX').value = saved.x || 0;
+            document.getElementById('nodeOffY').value = saved.y || 0;
+            document.getElementById('nodeOffZ').value = saved.z || 0;
+            updateNodeOffset();
+        }
+    } catch(e) {}
+})();
 </script>
 <script src="/static/brain3d.js"></script>
 <script src="/static/atlas3d.js"></script>

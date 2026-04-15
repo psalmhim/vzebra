@@ -1,8 +1,11 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%% Virtual Zebrafish v2 — Architecture Design Paper
+%%% Virtual Zebrafish v2 --- Architecture Design Paper
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \documentclass[11pt,a4paper]{article}
 
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{textcomp}
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{graphicx}
@@ -305,7 +308,7 @@ GABA$_B$ & I slow & 1.0\,ms & 80\,ms & LTS interneurons \\
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.95\textwidth]{plots/paper/fig_phase1_izhikevich.png}
+\includegraphics[width=0.95\textwidth]{../plots/paper/fig_phase1_izhikevich.png}
 \caption{Phase 1: Izhikevich neuron dynamics. Voltage traces for RS, FS, IB, and CH
   cell types under constant current injection, showing spike-frequency adaptation,
   fast non-adapting firing, intrinsic bursting, and chattering patterns.}
@@ -386,7 +389,7 @@ the E/I circuit parameters~\cite{wang1996}.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.90\textwidth]{plots/paper/fig_phase2_ei_layer.png}
+\includegraphics[width=0.90\textwidth]{../plots/paper/fig_phase2_ei_layer.png}
 \caption{Phase 2: E/I layer dynamics. Excitatory (blue) and inhibitory (red) population
   activity over 100 steps, showing sparse coding ($<$25\% active), emergent gamma-band
   oscillations, and sustained activity after input offset (working memory).}
@@ -486,16 +489,18 @@ The optic tectum receives RGC input in lamina-specific fashion~\cite{robles2014}
 
 \begin{equation}\label{eq:tectal_layers}
 \begin{aligned}
-  \text{SFGS-b}_{(300E+75I)}: &\quad \text{ON sustained RGCs} + \text{top-down from pallium} \\
-  \text{SFGS-d}_{(300E+75I)}: &\quad \text{OFF transient RGCs} + \text{lateral from SFGS-b} \\
-  \text{SGC}_{(75E+25I)}:     &\quad \text{ON-OFF looming RGCs} \to \text{Mauthner trigger} \\
-  \text{SO}_{(75E+25I)}:      &\quad \text{direction RGCs} \to \text{optic flow register}
+  \text{SFGS-b}_{L/R\;(450E+150I)\times 2}: &\quad \text{ON sustained RGCs (contralateral eye)} + \text{top-down from pallium} \\
+  \text{SFGS-d}_{L/R\;(450E+150I)\times 2}: &\quad \text{OFF transient RGCs} + \text{lateral from SFGS-b} \\
+  \text{SGC}_{L/R\;(150E+50I)\times 2}:     &\quad \text{ON-OFF looming RGCs} \to \text{Mauthner trigger} \\
+  \text{SO}_{L/R\;(150E+50I)\times 2}:      &\quad \text{direction RGCs} \to \text{optic flow register}
 \end{aligned}
 \end{equation}
 
 Inter-layer connectivity within tectum follows the biological pattern:
 SFGS-b $\to$ SFGS-d (feature integration), SFGS-b/d $\to$ SGC (looming gating),
 SGC $\to$ SAC (stratum album centrale, efferent output).
+
+Each tectal layer is duplicated into left (\texttt{\_L}) and right (\texttt{\_R}) hemispheric populations. Following the biological optic chiasm, the left eye drives the right tectal stack exclusively (\texttt{sfgs\_b\_R}, \texttt{sfgs\_d\_R}, \texttt{sgc\_R}, \texttt{so\_R}), and the right eye drives the left tectal stack (\texttt{\_L}), enforcing contralateral retino-tectal projection throughout. Total tectum: $4\,\text{layers} \times 2\,\text{hemispheres} = 8$ EI populations, $4{,}800$ neurons.
 
 \subsection{Topographic Mapping with Type Specificity}
 
@@ -510,7 +515,7 @@ stronger SGC connections for reliable C-start triggering~\cite{temizer2015}).
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.95\textwidth]{plots/paper/fig_phase3_tectum.png}
+\includegraphics[width=0.95\textwidth]{../plots/paper/fig_phase3_tectum.png}
 \caption{Phase 3: Optic tectum activity heatmap. Four tectal layers (SFGS-b, SFGS-d, SGC, SO)
   respond to retinal input with type-selective responses: ON cells, OFF cells, looming,
   and direction-selective channels.}
@@ -533,7 +538,7 @@ loom trigger = False when enemy size is stable;
 has been filled (at least one prior frame processed).
 
 %===================================================================
-\section{Phase 4: Motor Pathway — D1/D2 BG and Named Reticulospinal Neurons}\label{sec:phase4}
+\section{Phase 4: Motor Pathway --- D1/D2 BG and Named Reticulospinal Neurons}\label{sec:phase4}
 
 \subsection{D1/D2 Basal Ganglia}
 
@@ -677,7 +682,7 @@ $\text{motor}_R > \text{motor}_L$ $\to$ $\tau_\text{out} > 0$ (turn right).
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.90\textwidth]{plots/paper/fig_phase4_bg.png}
+\includegraphics[width=0.90\textwidth]{../plots/paper/fig_phase4_bg.png}
 \caption{Phase 4: Basal ganglia dynamics. D1 and D2 striatal activity, GPi inhibition gate,
   and disinhibited output under DA modulation, showing action selection via
   direct/indirect pathway competition.}
@@ -728,7 +733,7 @@ Total & & 55 & & \\
 \end{tabular}
 \end{table}
 
-\subsection{Dopamine (DA) — Reward and Value}
+\subsection{Dopamine (DA) --- Reward and Value}
 
 Maintained from v1 with one key update: the RPE signal now uses the
 eligibility-trace-weighted synaptic activity rather than instantaneous
@@ -739,7 +744,7 @@ population rate, ensuring the DA pulse modulates recently active synapses:
   \text{DA}(t) = \sigma(3\,\text{RPE}(t)) + 0.01\,\xi.
 \end{equation}
 
-\subsection{Noradrenaline (NA) — Arousal and Signal-to-Noise}
+\subsection{Noradrenaline (NA) --- Arousal and Signal-to-Noise}
 
 The locus coeruleus (LC) projects diffusely to all brain areas.
 NA modulates the gain (signal-to-noise ratio) of all excitatory synapses
@@ -756,7 +761,7 @@ signals are amplified but so is noise.
 Low NA (calm) reduces gain: the system is less reactive but more stable.
 This implements the Yerkes-Dodson curve: optimal arousal for optimal performance.
 
-\subsection{Serotonin (5-HT) — Patience and Habituation}
+\subsection{Serotonin (5-HT) --- Patience and Habituation}
 
 The raphe nucleus projects to tectum and habenula.
 5-HT rises during sustained behavioral states and suppresses goal urgency,
@@ -776,7 +781,7 @@ The habenula $\to$ raphe pathway implements punishment-driven 5-HT suppression:
 repeated failure to find food suppresses 5-HT, increasing goal-switching
 urgency (learned helplessness)~\cite{amo2014}.
 
-\subsection{Acetylcholine (ACh) — Attention and Plasticity Gain}
+\subsection{Acetylcholine (ACh) --- Attention and Plasticity Gain}
 
 The basal forebrain (nucleus basalis homolog in zebrafish) projects to
 pallium and thalamus.
@@ -799,7 +804,7 @@ during sleep and anesthesia (low ACh).
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.85\textwidth]{plots/paper/fig_phase5_neuromod.png}
+\includegraphics[width=0.85\textwidth]{../plots/paper/fig_phase5_neuromod.png}
 \caption{Phase 5: Four-axis neuromodulation over 100 steps.
   DA spikes on reward delivery; NA rises with threat; 5-HT falls during sustained flee;
   ACh tracks circadian wakefulness and fatigue.}
@@ -836,16 +841,18 @@ sensory channels to the pallium~\cite{crick1984}.
 \begin{equation}\label{eq:thalamus}
 \boxed{
 \begin{aligned}
-  I_\text{TC}(t) &= \mathbf{W}_\text{tect\to TC}\,\mathbf{h}_\text{tectum}
-    + \mathbf{W}_\text{pal\to TC}\,\mathbf{h}_\text{pallium}
-    - g_\text{TRN}\,\mathbf{h}_\text{TRN}, \\
-  I_\text{TRN}(t) &= \mathbf{W}_\text{TC\to TRN}\,\mathbf{h}_\text{TC}
-    + \mathbf{W}_\text{pal\to TRN}\,\mathbf{h}_\text{pallium}, \\
-  \mathbf{h}_\text{TC} &= \text{Izhikevich-TC}(I_\text{TC}), \\
-  \mathbf{h}_\text{TRN} &= \text{Izhikevich-FS}(I_\text{TRN}).
+  I_{\text{TC}}^{s}(t) &= \mathbf{W}_{\text{tect}_{s}\to \text{TC}_{s}}\,\mathbf{h}_{\text{tectum}_{s}}
+    + \mathbf{W}_{\text{pal}\to \text{TC}}\,\mathbf{h}_{\text{pallium}}
+    - g_\text{TRN}\,\mathbf{h}_{\text{TRN}_{s}}, \quad s \in \{L, R\} \\
+  I_{\text{TRN}}^{s}(t) &= \mathbf{W}_{\text{TC}_{s}\to \text{TRN}_{s}}\,\mathbf{h}_{\text{TC}_{s}}
+    + \mathbf{W}_{\text{pal}\to \text{TRN}}\,\mathbf{h}_{\text{pallium}}, \\
+  \mathbf{h}_{\text{TC}_{s}} &= \text{Izhikevich-TC}(I_{\text{TC}}^{s}), \\
+  \mathbf{h}_{\text{TRN}_{s}} &= \text{Izhikevich-FS}(I_{\text{TRN}}^{s}).
 \end{aligned}
 }
 \end{equation}
+Two thalamic nuclei (\texttt{thalamus\_L} and \texttt{thalamus\_R}), each comprising $n_\text{TC}=300$ TC neurons and $n_\text{TRN}=80$ TRN neurons, relay tectal output with preserved laterality. \texttt{thalamus\_L} receives input from \texttt{tect\_L} (right visual hemifield); \texttt{thalamus\_R} receives input from \texttt{tect\_R} (left visual hemifield). Thalamic output is concatenated $[\text{TC}_R \| \text{TC}_L] \in \mathbb{R}^{600}$ before entering the pallium, ensuring the left and right halves represent opposite visual hemifields.
+
 The TC neurons use LTS-type Izhikevich: they switch between burst mode
 (during low input = sleep) and tonic relay mode (during strong input = wake).
 Sleep$\to$wake transition is triggered by NA from locus coeruleus:
@@ -867,10 +874,10 @@ The pallium replaces v1's PC\_per (120 neurons) + PC\_int (30 neurons)
 with a two-layer E/I structure:
 \begin{equation}\label{eq:pallium}
 \begin{aligned}
-  \text{Pallium-S (superficial):} &\quad 400\,\text{RS} + 100\,\text{FS}
-    \quad\text{(receives thalamic relay)} \\
-  \text{Pallium-D (deep):}        &\quad 150\,\text{IB} + 50\,\text{FS}
-    \quad\text{(goal representation, projects to BG + RS)}
+  \text{Pallium-S (superficial):} &\quad 1200\,\text{RS} + 400\,\text{FS}
+    \quad\text{(receives thalamic relay, } n=1600\text{)} \\
+  \text{Pallium-D (deep):}        &\quad 600\,\text{IB} + 200\,\text{FS}
+    \quad\text{(goal representation, projects to BG + RS, } n=800\text{)}
 \end{aligned}
 \end{equation}
 
@@ -890,7 +897,7 @@ directly corresponding to the predictive coding framework of v1.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.90\textwidth]{plots/paper/fig_phase6_thalamus_pallium.png}
+\includegraphics[width=0.90\textwidth]{../plots/paper/fig_phase6_thalamus_pallium.png}
 \caption{Phase 6: Thalamo-pallial loop. TC relay, TRN gating, Pallium-S (superficial),
   and Pallium-D (deep) activity showing attentional switching and working memory
   sustained activity after visual input offset.}
@@ -979,7 +986,7 @@ weight structure while normalizing the absolute scale.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.85\textwidth]{plots/paper/fig_phase7_stdp.png}
+\includegraphics[width=0.85\textwidth]{../plots/paper/fig_phase7_stdp.png}
 \caption{Phase 7: Three-factor STDP. Eligibility trace accumulation following
   causal pre$\to$post spike pairing, DA-gated consolidation producing LTP,
   and homeostatic scaling preventing runaway weights.}
@@ -996,7 +1003,7 @@ weight structure while normalizing the absolute scale.
 (iv) Eligibility trace decay over 50 silent steps must match
 $\exp(-50 \cdot 0.001 / 0.500) \approx 0.905 \pm 0.05$.
 (v) Homeostatic scaling must reduce overactive weights initialized at 1.5
-after 200 high-rate steps; all weights remain within $[w_\min,\, w_\max]$.
+after 200 high-rate steps; all weights remain within $[w_{\min},\, w_{\max}]$.
 (vi) ACh\,=\,2.0 must produce $>2\times$ the weight update of ACh\,=\,0.1.
 (vii) \texttt{reset()} must zero all traces ($< 10^{-9}$)
 (verified in \texttt{step06\_temporal\_dynamics.py}).
@@ -1037,22 +1044,66 @@ This is precisely the cortico-striato-thalamo-cortical (CSTC) loop
 believed to implement planning and goal-directed action selection
 in vertebrates~\cite{redgrave1999}.
 
-\subsection{Predictive Coding Integration}
+\subsection{Predictive Coding Integration: Two-Compartment Columns}
 
-The two-compartment neuron from v1 is retained for pallium and thalamus:
-soma integrates feedforward, apical integrates feedback.
-The prediction error $\varepsilon = v_a - v_s$ is now computed from true
-spike rates rather than continuous activations:
+Every sensory, thalamic, pallial, and motor module now contains a
+\textbf{TwoCompColumn} --- a micro-column of Izhikevich two-compartment
+neurons implementing the predictive coding framework of
+Lee, Lee \& Park (2026).  Each neuron has:
+\begin{itemize}[nosep]
+  \item \textbf{Apical dendrite} ($V_a$): integrates top-down prediction
+        with slow dynamics ($\tau_a = 0.65$).
+  \item \textbf{Soma} ($V_s$): integrates bottom-up sensory evidence
+        via Izhikevich spiking dynamics.
+  \item \textbf{Prediction error}: $\varepsilon = V_a - \tilde{V}_s$
+        (within-neuron, not between populations), where
+        $\tilde{V}_s = (V_s - V_\text{rest})/(V_\theta - V_\text{rest})$.
+  \item \textbf{Bias = precision}: somatic excitability modulation
+        $b = b_0 + \pi \cdot g + \alpha_\text{att} \cdot m_\text{att}$,
+        where $\pi = \sigma(\gamma)$ is the learned precision.
+\end{itemize}
+
+The apical-to-soma coupling is bounded via a sigmoid gate
+(Lee et al.~2026, Eq.~3):
 \begin{equation}
-  \varepsilon^{(l)}(t) = \bar{s}_a^{(l)}(t) - \bar{s}_s^{(l)}(t),
+  f_\text{apical}(V_a) = \tfrac{1}{2}\bigl(\sigma(V_a) - \tfrac{1}{2}\bigr)
+  \in [-0.25,\, 0.25].
 \end{equation}
-where $\bar{s}$ is a 20\,ms exponential moving average of spike trains.
-The free energy $F = \sum_l \frac{1}{2}\pi_l \|\varepsilon^{(l)}\|^2$
-drives feedback weight updates (Eq.~\ref{eq:neuromod_plasticity}, W\_FB term).
+Precision is learned online via the update rule (Bogacz 2017, Eq.~7):
+\begin{equation}
+  \frac{d\gamma}{dt} = \alpha_\pi \bigl(|\varepsilon| - \beta\bigr),
+\end{equation}
+with novelty-driven precision dips when $\Delta|\varepsilon|$ exceeds threshold.
+Brain-level variational free energy is the sum across all modules:
+\begin{equation}\label{eq:total_fe}
+  F_\text{brain} = \sum_{m} \sum_{i} \frac{1}{2}\,\pi_i^{(m)}\,
+  \bigl(\varepsilon_i^{(m)}\bigr)^2,
+\end{equation}
+aggregating 148 two-compartment neurons across 10 modules:
+
+\begin{center}\small
+\begin{tabular}{lclc}
+\toprule
+Module & Channels & Sensory (soma) & Neurons \\
+\midrule
+Retina      & 4 (L/R ON, L/R OFF) & current frame rates   & 16 \\
+Olfaction   & 2 (food, alarm)     & actual concentration  & 8  \\
+Lateral line& 3 (ant, post, threat)& flow \& canal rates  & 12 \\
+Proprioception& 4 (spd, hdg, wall, coll) & body state     & 16 \\
+Vestibular  & 2 (turn, speed)     & vestibular input      & 8  \\
+Color vision& 4 (UV, B, G, R)     & spectral composition  & 16 \\
+Thalamus $\times$2& 2 (relay, gate) & TC \& TRN rates     & 16 \\
+Pallium     & 2 (S, D layers)     & layer activity        & 8  \\
+Active motor& 8 (proprioceptive)  & body proprioception   & 48 \\
+\midrule
+\textbf{Total} & & & \textbf{148} \\
+\bottomrule
+\end{tabular}
+\end{center}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.80\textwidth]{plots/paper/fig_phase8_goals.png}
+\includegraphics[width=0.80\textwidth]{../plots/paper/fig_phase8_goals.png}
 \caption{Phase 8: EFE-driven goal selection over 100 steps. Stacked area plot shows
   FORAGE (green), FLEE (red), EXPLORE (blue), and SOCIAL (purple) goal probabilities
   responding to food detection, predator proximity, and neuromodulatory state.}
@@ -1101,7 +1152,7 @@ As the fish enters place field $i$, the phase offset $\phi_i$ decreases:
   \phi_i(t) = \phi_0 - \beta\,a_i(\mathbf{p}(t)),
   \quad \beta = \pi,
 \end{equation}
-so that cells fire $\sim 180°$ earlier per theta cycle as the fish moves
+so that cells fire $\sim 180^{\circ}$ earlier per theta cycle as the fish moves
 through the field center.
 Cells at different positions fire at different phases within one theta cycle,
 encoding a \emph{sequence} of upcoming positions---the basis for
@@ -1131,7 +1182,7 @@ offline replay transfers navigational memories from hippocampus to cortex~\cite{
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.90\textwidth]{plots/paper/fig_phase9_place_cells.png}
+\includegraphics[width=0.90\textwidth]{../plots/paper/fig_phase9_place_cells.png}
 \caption{Phase 9: Theta-phase place cells. Left: arena coverage map after
   600 steps (colors = place field centers). Right: food-value and risk-value
   overlaid on the arena, showing learned spatial reward predictions.}
@@ -1470,7 +1521,7 @@ File & Coverage & Assertions & Status \\
 \end{tabular}
 \end{table}
 
-\noindent Key verifications: causal STDP (LTP when $\Delta t_\text{pre\to post} = 2$\,ms),
+\noindent Key verifications: causal STDP (LTP when $\Delta t_{\text{pre}\to\text{post}} = 2$\,ms),
 eligibility trace decay ratio $0.905 \pm 0.05$ matching $\exp(-50 \cdot 0.001/0.500)$,
 DA-scaled weight updates, binocular depth estimation returning finite distances for
 food in the overlap zone, circadian night melatonin exceeding day melatonin,
@@ -1643,7 +1694,7 @@ All tests auto-generate figures:
   ``Whole-brain serial-section electron microscopy in larval zebrafish,''
   \textit{Nature}, vol.~545, pp.~345--349, 2017.
 \bibitem{fremaux2016}
-  N.~Frémauxm, W.~Gerstner,
+  N.~Fr\'{e}mauxm, W.~Gerstner,
   ``Neuromodulated spike-timing-dependent plasticity, and theory of three-factor learning rules,''
   \textit{Frontiers in Neural Circuits}, vol.~9, p.~85, 2016.
 \bibitem{friston2010}
@@ -1663,7 +1714,7 @@ All tests auto-generate figures:
   ``The self-tuning neuron: Synaptic scaling of excitatory synapses,''
   \textit{Cell}, vol.~135, no.~3, pp.~422--435, 2008.
 \bibitem{wang1996}
-  X.-J.~Wang, G.~Buzsáki,
+  X.-J.~Wang, G.~Buzs\'{a}ki,
   ``Gamma oscillation by synaptic inhibition in a hippocampal interneuronal network model,''
   \textit{Journal of Neuroscience}, vol.~16, no.~20, pp.~6402--6413, 1996.
 \bibitem{okeefe1993}
@@ -1787,10 +1838,669 @@ A real-time training and visualization platform was developed using FastAPI, Web
 \item \textbf{Multi-agent mode}: Server-side stepping of 5 fish brains with distinct personalities (bold, shy, explorer, social, balanced)
 \end{itemize}
 
+\subsection{Hemispheric Visual Architecture and Active-Inference Gaze}
+
+The optic tectum was refactored from four unified EI layers to eight hemispheric populations (\texttt{sfgs\_b\_L/R}, \texttt{sfgs\_d\_L/R}, \texttt{sgc\_L/R}, \texttt{so\_L/R}), each with $n_e = 450$ excitatory (CH/IB) and $n_i = 150$ inhibitory (FS) neurons, implementing the biological optic chiasm: left-eye RGCs project exclusively to the right tectal stack (\texttt{tect\_R}), and right-eye RGCs to \texttt{tect\_L}. Two independent thalamic nuclei (\texttt{thalamus\_L}/\texttt{R}, each TC=300, TRN=80) relay hemispheric tectal output to the pallium with preserved laterality. Thalamic output is concatenated $[\text{TC}_R \| \text{TC}_L]$ before entering the pallium, ensuring correct sign for the voluntary turn signal.
+
+A \texttt{SpikingSaccade} module implements gaze control as an active inference policy. Gaze target $\theta^* \in [-0.5, 0.5]$\,rad is determined by behavioral goal: $0.3\phi_\text{food}$ (FORAGE), $0.2\phi_\text{enemy}$ (FLEE), or $0.4\sin(0.08\,t)$ (EXPLORE sinusoidal scan, period $\approx 79$ steps). An earlier gaze-EMA-based EXPLORE formula ($0.5\sin(\theta_g \cdot 3)$) was replaced after discovering it creates a positive-feedback attractor: for small $\theta_g$, $\sin(3x)\approx 3x$, so $\theta^* \approx 1.5\theta_g$; with $\alpha=0.1$ update, $\theta_g(t) \approx 1.05\theta_g(t{-}1)$, diverging to $\pm 0.5$\,rad. The open-loop time-based formula eliminates this instability.
+
+Per-hemifield prediction errors drive epistemic gaze toward uncertain hemifields:
+\begin{equation}
+  \varepsilon_{L/R} = r_\text{RGC}^\text{motion} + r_\text{loom} + 5\,|\Delta\text{TC}_{R/L}|,
+\end{equation}
+where $|\Delta\text{TC}|$ is the single-step thalamic rate change (novelty signal). Pallium prediction error was considered but rejected: the dense random Xavier initialization of $\mathbf{W}_{\text{TC}\to\text{pal}} \in \mathbb{R}^{1200\times 300}$ distributes pallium activity uniformly across all 1200 neurons with no spatial L/R structure (measured asymmetry: 1.7\%). The thalamic delta retains spatial organization because the TC populations are physically separated by hemisphere. Seven unit tests validate the complete hemispheric system: optic-chiasm segregation, thalamic laterality, top-down amplification ($11.8\times$), PE-driven gaze direction, novelty-gaze coupling, and full-brain integration.
+
 \subsection{Atlas-Constrained Neuron Placement}
 
-Each of the 9,938 model neurons is assigned a 3D position sampled from a whole-brain calcium imaging atlas (subject~12; 47,010 cells; 73 brain regions). The mapping subdivides shared atlas regions spatially: optic tectum (lTeO/rTeO) is split into four dorso-ventral layers for SFGS-b, SFGS-d, SGC, and SO; subpallium (lSP/rSP) is subdivided medially for amygdala, centrally for basal ganglia, and laterally for habit network. Unused atlas regions are recruited for biologically appropriate modules: pretectum (lPrT/rPrT) for the predictive network, preoptic area (lPO/rPO) for the insular cortex, and raphe (lRa/rRa) for serotonergic neurons.
+All 13,766 model neurons are assigned 3D positions from the MPIN zebrafish whole-brain calcium imaging atlas (subject~12; 47,010~cells; 72~bilateral regions from the MPIN-Atlas Combined Brain Regions dataset). The atlas defines 36 anatomical structures per hemisphere (prefix \texttt{l}/\texttt{r}): tectum (lTeO/rTeO), thalamus (lTh/rTh), pallium (lP/rP), subpallium (lSP/rSP), cerebellum (lCb/rCb), habenula (lHb/rHb), olfactory bulb (lOB/rOB), pretectum (lPrT/rPrT), motor stripes, raphe, reticular formation, and spinal structures. Of the 72 atlas regions, 61 have recorded cells in subject~12; the retina (lR/rR) lacks cell recordings and is placed at estimated voxel coordinates anterior to the tectum with appropriate bilateral Y-separation ($\Delta y \approx 390$~vox).
 
-Connectivity is derived from the atlas connectome (10,244,937 synaptic connections), sampled to 2,111 representative model-level edges via region-to-region frequency counting. The resulting 3D visualization enables interactive exploration of the model's neural architecture in its biological spatial context.
+Coordinate axes: $x$ = anterior$\to$posterior (lOB at $x=144$, lNX at $x=961$), $y$ = left$\to$right (midline $\approx 310$~vox), $z$ = ventral$\to$dorsal. Bilateral structures are naturally separated along $y$: tectum ($\Delta y \approx 208$~vox), thalamus ($\Delta y \approx 84$~vox), retina ($\Delta y \approx 391$~vox).
+
+Each brain module is mapped to its anatomically appropriate atlas region: tectum layers to lTeO/rTeO (sublayers separated by $z$-shifts of $\pm 8$--$18$~vox), thalamus populations to lTh/rTh, pallium and place cells to lP/rP, basal ganglia and amygdala to lSP/rSP, lateral line and vestibular to lMON/rMON, CPG and proprioception to lNX/rNX. Neurons are sampled as Gaussian clouds (spread 5--25~vox) around each region's centroid. The 8 hemispheric tectal layers and 4 bilateral thalamic populations are positioned on their correct anatomical side (left/right), while midline structures (habenula, cerebellum, raphe, hypothalamus) use the average of left and right hemisphere centroids.
+
+Connectivity is derived from the atlas connectome (10,244,937 synaptic connections among the 47,010 recorded cells), sampled to 3,500 representative model-level edges. An additional 400 edges enforce contralateral retino-tectal projections (left retina $\to$ right tectum and vice versa), and 100 edges encode the tectum $\to$ thalamus/pallium visual hierarchy. The resulting 3D visualization in the web dashboard enables interactive exploration of the model's neural architecture in its biological spatial context.
+
+%% ================================================================
+%% Vision System Evaluation (April 2026)
+%% ================================================================
+\subsection{Vision System Evaluation}\label{sec:vision_eval}
+
+The 11-stage neurobiological pipeline implemented in the web demo
+(\texttt{zebrav2/web/server.py}) was subjected to a comprehensive evaluation
+comprising 94 automated tests across 31 categories. The pipeline replaces
+game-logic \texttt{if/else} decision rules with a rate-coded neural cascade
+that mirrors the signal flow of \texttt{BrainV2} (\texttt{brain\_v2.py}):
+
+\begin{equation}\label{eq:vision_pipeline}
+\underset{\text{Stage 1}}{\text{Retina}_{L/R}}
+\;\xrightarrow{\text{chiasm}}\;
+\underset{\text{Stage 2}}{\text{Tectum}_{L/R}}
+\;\to\;
+\underset{\text{Stage 3}}{\text{Thalamus}}
+\;\to\;
+\underset{\text{Stage 4}}{\text{Pallium}}
+\;\to\;
+\underset{\text{Stage 8}}{\text{EFE Goal}}
+\;\to\;
+\underset{\text{Stage 9}}{\text{BG Gate}}
+\;\to\;
+\underset{\text{Stage 10}}{\text{Motor}}
+\end{equation}
+
+\noindent with parallel pathways through the amygdala (Stage~5),
+neuromodulatory nuclei (Stage~6), place cells (Stage~7), and
+homeostatic circuits (Stage~11).
+
+\subsubsection{Test Methodology}
+
+Each test follows a controlled-stimulus protocol:
+(i) the simulation state is reset to a known configuration
+(fish position, heading, energy, neural state);
+(ii) one or more stimuli (food, predator, conspecific) are placed at
+precise angular positions and distances relative to the fish;
+(iii) the pipeline is stepped 1--15 times;
+(iv) output variables (retinal counts, spike activations, goal selection,
+heading changes, speed profiles) are compared against biologically
+motivated expectations.
+
+Test code: \texttt{zebrav2/tests/test\_vision\_evaluation.py}.
+
+\subsubsection{Test Categories and Results}
+
+Table~\ref{tab:vision_eval} summarizes all 31 evaluation categories.
+
+\begin{table}[H]
+\centering
+\caption{Vision system evaluation: 94 tests across 31 categories (100\% pass rate).}
+\label{tab:vision_eval}
+\small
+\begin{tabular}{clcc}
+\toprule
+\# & Category & Tests & Status \\
+\midrule
+ 1 & Retinal field of view (bilateral $\pm100^\circ$)  & 6 & 6/6 \\
+ 2 & Distance sensitivity (retinal gradient)            & 3 & 3/3 \\
+ 3 & Object type discrimination (food/pred/conspec)     & 2 & 2/2 \\
+ 4 & Optic chiasm contralateral crossing                & 2 & 2/2 \\
+ 5 & Blind spot compensation (lateral line)             & 3 & 3/3 \\
+ 6 & Thalamic gating (NA $\times$ ACh modulation)       & 2 & 2/2 \\
+ 7 & Multi-object scenes (bilateral, saturation)        & 3 & 3/3 \\
+ 8 & Vision-driven goal selection (EFE 5 goals)         & 5 & 5/5 \\
+ 9 & Looming \& C-start escape reflex                   & 3 & 3/3 \\
+10 & Full angular sweep ($360^\circ$ at $15^\circ$ step)& 2 & 2/2 \\
+11 & Heading rotation invariance                        & 1 & 1/1 \\
+12 & Pallium L/R contrast $\to$ turn direction          & 2 & 2/2 \\
+13 & Neuromodulation effects on vision                  & 2 & 2/2 \\
+14 & Starvation anxiety \& food memory                  & 2 & 2/2 \\
+15 & Multi-predator scenarios                           & 2 & 2/2 \\
+16 & Edge cases (wall, low energy, overlap)             & 3 & 3/3 \\
+17 & Binocular depth perception (frontal $\pm20^\circ$) & 5 & 5/5 \\
+18 & Binocular rivalry (inter-tectal competition)       & 4 & 4/4 \\
+19 & Orienting response (tectal attention saccade)      & 7 & 7/7 \\
+20 & Place cells \& spatial memory (theta, familiarity) & 4 & 4/4 \\
+21 & Cerebellum forward model (prediction error)        & 3 & 3/3 \\
+22 & Basal ganglia D1/D2 gating (go/no-go)             & 3 & 3/3 \\
+23 & Circadian cycle (day/night/dawn, ACh, motility)    & 5 & 5/5 \\
+24 & Goal lock / BG attractor persistence               & 3 & 3/3 \\
+25 & Serotonin (5-HT) patience                          & 3 & 3/3 \\
+26 & Social goal \& conspecific steering                 & 3 & 3/3 \\
+27 & Rock shelter \& sleep behavior                      & 3 & 3/3 \\
+28 & Multi-predator escape vectors                       & 2 & 2/2 \\
+29 & Energy--motility curve (inverted-U)                 & 2 & 2/2 \\
+30 & CPG \& reticulospinal scaling                       & 3 & 3/3 \\
+31 & Pipeline execution speed                            & 1 & 1/1 \\
+\midrule
+   & \textbf{Total}                                     & \textbf{94} & \textbf{94/94} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Selected Quantitative Results}
+
+\paragraph{Retinal field of view.}
+Each eye covers a $100^\circ$ field of view (FoV), yielding a $200^\circ$
+total binocular field with a $160^\circ$ rear blind spot. A $360^\circ$ sweep
+at $15^\circ$ increments confirms detection at all 13 angles within
+$[-90^\circ, +90^\circ]$ and zero detection at all 12 angles beyond $\pm100^\circ$.
+Boundary tests verify detection at $99^\circ$ (inside) and non-detection at $101^\circ$ (outside).
+
+\paragraph{Distance gradient.}
+Retinal activation follows a linear distance-attenuation profile within
+the $250$\,px maximum range:
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lccccc}
+\toprule
+Distance (px) & 50 & 100 & 150 & 200 & 250 \\
+\midrule
+Retinal activation & 1.00 & 0.80 & 0.60 & 0.40 & 0.20 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent Food beyond 260\,px is undetected.
+Predator looming (SGC response) follows a quadratic proximity profile:
+$\text{SGC}(d=30) = 1.96$, $\text{SGC}(d=90) = 0.58$, $\text{SGC}(d=150) = 0$.
+
+\paragraph{Optic chiasm.}
+Consistent with zebrafish anatomy (100\% contralateral decussation),
+food in the left visual field ($-45^\circ$) activates the right tectum
+preferentially: SFGS-b$_R = 0.660$ vs.\ SFGS-b$_L = 0.180$ (ratio $3.67\times$).
+The symmetric test (right-field food) yields SFGS-b$_L = 0.660$ vs.\ SFGS-b$_R = 0.180$.
+
+\paragraph{Object type discrimination.}
+Predators produce $1.57\times$ the retinal activation of food at equal distance
+($d=100$\,px), reflecting a $2.0\times$ salience weight for threat stimuli.
+Conspecifics produce $0.36\times$ the activation of food ($0.3\times$ weight).
+
+\paragraph{Thalamic gating.}
+Noradrenaline (NA) modulates the thalamic relay gain by $3.8\times$:
+thalamocortical (TC) output is 0.069 at NA$\,=\,0.1$ (drowsy) vs.\ 0.262
+at NA$\,=\,0.9$ (aroused). Circadian acetylcholine (ACh) further gates vision:
+TC$_\text{day} = 0.120$ vs.\ TC$_\text{night} = 0.017$ ($6.9\times$ reduction).
+
+\paragraph{Blind spot compensation.}
+A predator directly behind the fish ($180^\circ$, $d = 80$\,px) is undetectable
+by the retina but activates the lateral line at 0.700
+(omnidirectional mechanoreception, range $150$\,px).
+This lateral-line signal alone drives FLEE in 15/15 consecutive steps,
+demonstrating effective blind-spot compensation.
+
+\paragraph{Mauthner C-start reflex.}
+A predator at $d = 35$\,px (looming $= 0.59 > 0.5$ threshold) triggers
+the 4-step motor sequence with characteristic speed profile:
+$[0.09, 0.25, 1.10, 0.95]$ (normalized), producing a peak burst speed
+of $3.5\times$ base. A predator at $d = 180$\,px (looming $= 0$) produces
+no C-start, confirming the threshold gate.
+
+\paragraph{EFE goal selection.}
+The Expected Free Energy (EFE) framework correctly selects among five goals:
+\begin{itemize}[nosep]
+  \item Visible food + moderate hunger $\to$ FORAGE
+  \item Close predator $\to$ FLEE (overrides FORAGE even with food present)
+  \item No stimuli $\to$ SOCIAL/EXPLORE (low-urgency default)
+  \item Deep night (circadian phase $0.95$) $\to$ SLEEP
+  \item Three surrounding predators $\to$ FLEE with amygdala trace $= 0.758$
+\end{itemize}
+
+\paragraph{Pallium-driven turn control.}
+Food in the left visual field ($-60^\circ$) produces a heading change of
+$-12.0^\circ$ (leftward); food at $+60^\circ$ produces $+12.0^\circ$ (rightward).
+This is computed via the pallium deep-layer left/right contrast
+$(\text{Pal-D}_R - \text{Pal-D}_L) \times 0.3$, gated by the basal ganglia
+D1/D2 pathway.
+
+\paragraph{Neuromodulatory feedback.}
+Amygdala fear traces show episodic persistence: peak activation $= 1.198$
+during threat, decaying to 0.601 after 10 steps of threat removal
+(decay ratio $0.50$, consistent with LTP-like trace).
+Eating food produces a dopamine (DA) reward signal from $0.500$ to $0.652$
+($+30\%$), driven by positive reward prediction error (RPE).
+
+\paragraph{Starvation anxiety and food memory.}
+In the absence of food, starvation anxiety rises from 0.082 to 0.368
+over 80 steps, driven by exponential-moving-average integration of
+predicted future energy deficit and food scarcity
+($\text{steps\_since\_food} / 80$). Eating food stores a hippocampal
+food-memory trace $(\hat{x}, \hat{y})$ that biases foraging under anxiety
+via a recency-weighted signal ($\tau = 100$ steps).
+
+\paragraph{Binocular depth perception.}
+Zebrafish larvae possess a $\sim\!20^\circ$ frontal binocular convergence zone
+where both eyes' fields overlap, enabling stereo disparity-based distance
+estimation critical for prey capture~\cite{bianco2011}.
+The pipeline implements this as a binocular zone ($|{\theta_\text{rel}}| < 20^\circ$):
+objects within this zone produce distance and confidence estimates, while objects
+outside receive only monocular distance attenuation.
+
+Food at $5^\circ$ off-center, $d = 80$\,px yields
+$\hat{d}_\text{food} = 80.0$\,px with confidence $= 0.680$.
+A predator at $10^\circ$, $d = 60$\,px yields
+$\hat{d}_\text{pred} = 60.0$\,px with confidence $= 0.700$.
+Food at $60^\circ$ (outside the binocular zone) returns no depth estimate,
+confirming the angular boundary.
+
+An approach-gain mechanism modulates swim speed based on binocular distance:
+food within 50\,px ($d < 50$, confidence $> 0.3$) reduces speed to $0.6\times$
+for precise prey capture; food within 100\,px reduces speed to $0.8\times$;
+food beyond 100\,px or outside the binocular zone maintains $1.0\times$ speed.
+
+\paragraph{Binocular rivalry (inter-tectal competition).}
+When conflicting stimuli activate both tectal hemispheres, the intertectal
+commissure mediates mutual suppression via a winner-take-all
+mechanism~\cite{nikolaou2012}. Let $T_L = \text{SFGS-b}_L + \text{SFGS-d}_L +
+\text{SO}_L$ and $T_R$ analogously. Rivalry activates when
+$\min(T_L, T_R) > 0.5$ (both hemispheres above threshold) and
+$|T_L - T_R| > 0.3$ (sufficient asymmetry). The dominant hemisphere
+suppresses the weaker by $\min(0.4, |T_L - T_R| \cdot 0.15)$, reducing
+its SFGS-b and SO output.
+
+Four tests validate rivalry behavior:
+\begin{enumerate}[nosep]
+  \item \textbf{Asymmetric bilateral food}: close food in left eye ($d = 50$\,px)
+    vs.\ far food in right eye ($d = 150$\,px) produces inter-tectal suppression
+    of the weaker side.
+  \item \textbf{Balanced bilateral food}: equal-distance food in both eyes
+    ($d = 80$\,px each) produces suppression $< 0.1$ (no rivalry).
+  \item \textbf{Food vs.\ predator}: food in left eye, predator in right eye
+    (with $2\times$ retinal weight) --- the predator side dominates
+    (suppression $= 0.073$, dominant $= $ L tectum from right-eye predator).
+  \item \textbf{Empty arena}: no rivalry activation (both sides below threshold).
+\end{enumerate}
+
+\paragraph{Orienting response (tectal attention saccade).}
+In all vertebrates, the optic tectum (superior colliculus) drives reflexive
+orienting toward novel stimuli~\cite{nikolaou2012}. The pipeline implements this
+as a change-detection mechanism: the difference between current and previous-step
+retinal activation $\Delta_L = \max(0, r_L^t - r_L^{t-1})$,
+$\Delta_R = \max(0, r_R^t - r_R^{t-1})$ produces a novelty contrast signal
+$\Delta_R - \Delta_L$ that drives a reflexive turn. Key properties:
+
+\begin{itemize}[nosep]
+  \item \textbf{Directional}: novel food at $+50^\circ$ (right eye) produces
+    orient$_\text{dir} = +0.053$\,rad/step (rightward turn); food at $-50^\circ$
+    produces $-0.053$\,rad/step (leftward).
+  \item \textbf{Threat-amplified}: a novel predator ($2\times$ retinal weight)
+    produces $+0.078$\,rad/step, $1.5\times$ stronger than food.
+  \item \textbf{NA-modulated}: arousal amplifies orienting:
+    orient$(NA{=}0.9) / \text{orient}(NA{=}0.1) = 1.35\times$.
+  \item \textbf{Habituating}: persistent stimulus causes orienting to decay from
+    $0.053$ to $< 0.001$\,rad/step over 10 steps (serotonin-like habituation),
+    with recovery after stimulus removal (habituation decays at $0.92\times$/step).
+  \item \textbf{Goal-independent}: the signal is injected into voluntary turn
+    before goal-specific motor programs, ensuring it fires as a bottom-up
+    pre-attentive reflex.
+\end{itemize}
+
+\paragraph{Place cells and spatial memory.}
+Place cell activity is modulated by an 8\,Hz theta rhythm
+($\theta = 0.5 + 0.5\sin(t \cdot 0.25)$), producing a measured oscillation
+range of $0.469$ across 50 steps (min\,$= 0.311$, max\,$= 0.781$).
+Familiarity builds via an EMA integrator ($\tau = 50$) driven by food
+olfaction: after 40 steps near a food source, place familiarity
+reaches $0.302$ (vs.\ baseline $0.0$). Eating food creates a hippocampal
+memory trace $(\hat{x}, \hat{y})$ with age $= 0$; the memory persists across
+subsequent steps and the age counter increments monotonically ($1 \to 11$
+over 10 steps), enabling recency-weighted replay under starvation anxiety.
+
+\paragraph{Cerebellum forward model.}
+The cerebellum computes prediction error (PE) between predicted and actual
+motor commands: $\text{PE} = |a_\text{turn} - \hat{a}_\text{turn}| +
+|a_\text{speed} - \hat{a}_\text{speed}|$, with predictions updated via
+EMA ($\tau = 5$). An abrupt motor change (predator appearance during
+foraging) produces cerebellum activation $= 2.500$ (vs.\ baseline $0.3$).
+Over 40 steps of constant exploration, early PE ($0.621$) adapts to
+late PE ($0.300$), confirming that the forward model learns the current
+motor program. During C-start, cerebellum output is overridden to $2.5$
+(maximum alerting signal).
+
+\paragraph{Basal ganglia D1/D2 gating.}
+The direct (D1, go) and indirect (D2, no-go) pathways are differentially
+modulated by dopamine. During FORAGE: $\text{D1} = 1.125 > \text{D2} = 0.217$
+(gate open). DA modulation: at DA$\,{=}\,0.2$, D1$\,{=}\,1.011$ and
+D2$\,{=}\,0.234$; at DA$\,{=}\,0.9$, D1$\,{=}\,1.284$ and D2$\,{=}\,0.187$,
+confirming that DA enhances the direct pathway and suppresses the indirect
+pathway. The resultant BG gate modulates motor amplitude: speed at
+DA$\,{=}\,0.1$ is $0.089$ vs.\ $0.100$ at DA$\,{=}\,0.9$.
+
+\paragraph{Circadian cycle.}
+The circadian clock (period $= 6000$ steps) produces five distinct phases.
+Day (phase $0.5$) yields light\,$= 1.0$; night (phase $0.95$) yields
+light\,$= 0.1$; dawn (phase $0.25$) yields intermediate light\,$= 0.87$.
+ACh tracks the light level with a slow time constant ($\tau = 30$):
+ACh$_\text{day} = 0.882$ vs.\ ACh$_\text{night} = 0.432$ ($2.0\times$ reduction).
+Motility is reduced at night: speed$_\text{day} = 0.056$ vs.\
+speed$_\text{night} = 0.015$ ($3.7\times$ reduction), reflecting combined
+effects of low ACh gating and sleep-state motility suppression.
+
+\paragraph{Goal lock and BG attractor persistence.}
+The basal ganglia attractor mechanism holds a selected goal for $\sim\!10$
+steps, preventing rapid switching. When goal\_lock is set to 10, the
+locked goal persists for 8/8 subsequent steps despite no supporting stimuli.
+The timer decrements by 1 each step ($10 \to 9$). Goal switching triggers
+habenula frustration accumulation on the abandoned goal (e.g., EXPLORE
+frustration increases by $+0.1$ when switching to FLEE).
+
+\paragraph{Serotonin (5-HT) patience.}
+5-HT accumulates during calm states (no amygdala activation): from
+baseline $0.300$ to $0.384$ over 60 steps without threat
+(accumulation rate $+0.005$/step). Under sustained threat (close predator
+for 30 steps), 5-HT decreases from $0.600$ to $0.431$
+(depletion rate $-0.02$/step). 5-HT feeds into G$_\text{flee}$ as
+$+0.1 \times \text{5-HT}$, mildly suppressing the flee response
+and promoting patience.
+
+\paragraph{Social goal and conspecifics.}
+The SOCIAL goal activates when conspecifics are visible and
+no food or threat is present: with a conspecific at $80$\,px,
+SOCIAL is selected in 20/20 steps (strong attractor in the absence of
+competing drives). The fish steers toward the nearest conspecific
+(heading change: $0.000 \to 0.080$\,rad over 5 steps, turn rate
+$= 0.05 \times$ angular error). Retinal conspecific salience ($0.250$)
+is lower than food ($0.700$) at equal distance, reflecting the $0.3\times$
+weight for social stimuli.
+
+\paragraph{Rock shelter and sleep.}
+During SLEEP, the fish navigates toward the nearest rock shelter:
+distance decreases from $100.0$ to $99.3$\,px over 15 steps
+(gentle approach with goal speed $= 0.3$). Near the shelter,
+the fish enters quiescent mode (speed $= 0.05$, minimal sinusoidal drift).
+SLEEP restores energy: $50.0 \to 51.0$ over 40 steps (net gain
+$+0.025$/step: $+0.03$ recovery $-0.005$ metabolic cost).
+Rock collision detection pushes the fish to the rock boundary
+(center distance $48$\,px for a rock of radius $40$\,px).
+
+\paragraph{Multi-predator escape.}
+With two predators flanking the fish at $\pm40^\circ$ ($d = 80$\,px each),
+the pipeline correctly selects FLEE. With three predators at $120^\circ$
+spacing ($d = 60$\,px), the fish selects FLEE with a sustained speed
+of $0.257$ (reduced by the BG gate under the multi-threat scenario).
+
+\paragraph{Energy--motility curve.}
+The inverted-U motility function $m = \max(0.15, 4e(1-e))$ produces
+peak motility at $e = 0.5$ (50\% energy). Measured speed at 50\% energy
+($0.240$) exceeds speed at 95\% energy ($0.029$, near-satiated lethargy).
+At minimal energy (10\%), the motility floor of $0.15$ prevents the fish
+from freezing completely (speed\,$= 0.084$).
+
+\paragraph{CPG and reticulospinal.}
+The central pattern generator (CPG) at $\sim\!6$\,Hz produces rhythmic
+speed modulation: measured range $[0.178, 0.222]$ with variation $0.045$
+during sustained swimming. CPG activation scales with speed
+(slow: $0.427$, fast: $0.749$). The reticulospinal descending command
+spikes during C-start ($1.767$, vs.\ baseline $\sim\!0.3$), reflecting
+the Mauthner cell burst activation.
+
+\paragraph{Performance.}
+In a complex scene (10 food items + 3 predators + 4 conspecifics),
+the pipeline executes at 0.060\,ms/step ($16{,}628$ steps/sec on Apple M-series),
+well within the $6.67$\,ms budget for $150$\,Hz real-time simulation.
+
+\subsubsection{Pipeline Parameters}
+
+Table~\ref{tab:vision_params} lists the key parameters governing the vision pipeline.
+
+\begin{table}[H]
+\centering
+\caption{Vision pipeline parameters.}
+\label{tab:vision_params}
+\small
+\begin{tabular}{lr}
+\toprule
+Parameter & Value \\
+\midrule
+Field of view per eye                & $100^\circ$ \\
+Total binocular FoV                  & $200^\circ$ \\
+Rear blind spot                      & $160^\circ$ \\
+Food detection range                 & 250\,px \\
+Predator visual range                & 200\,px \\
+Predator detection range (incl.\ LL) & 300\,px \\
+Lateral line range (omnidirectional) & 150\,px \\
+Looming C-start threshold            & 0.5 \\
+Retinal predator weight              & $2.0\times$ \\
+Retinal conspecific weight           & $0.3\times$ \\
+Thalamic NA gate center              & 0.4 \\
+Retinal saturation ceiling           & 5.0 \\
+Binocular convergence zone           & $\pm20^\circ$ (frontal) \\
+Approach gain (close food)           & $0.6\times$ ($d < 50$\,px) \\
+Rivalry suppression range            & 0--40\% \\
+Rivalry activation threshold         & $\min(T_L, T_R) > 0.5$ \\
+Orienting gain                       & $0.08 \times (1 + 0.5\,\text{NA})$ \\
+Orienting max                        & $\pm0.15$\,rad/step \\
+Habituation rate                     & $+0.15$/novel event \\
+Habituation decay                    & $0.92\times$/step \\
+EFE goals                            & 5 (FORAGE/FLEE/EXPLORE/SOCIAL/SLEEP) \\
+BG goal lock duration                & 10 steps \\
+BG D1 DA gain                        & $+0.5 \times \text{DA}$ \\
+BG D2 DA suppression                 & $-0.3 \times \text{DA}$ \\
+Circadian period                     & 6000 steps \\
+Circadian dawn phase                 & 0.20 \\
+Circadian dusk phase                 & 0.75 \\
+ACh time constant ($\tau$)           & 30 steps \\
+Theta frequency                      & $0.25$\,rad/step ($\approx 8$\,Hz) \\
+Place familiarity $\tau$             & 50 steps \\
+Food memory decay                    & $\tau = 100$ steps (recency) \\
+Cerebellum prediction $\tau$         & 5 steps \\
+5-HT accumulation rate               & $+0.005$/step (calm) \\
+5-HT depletion rate                  & $-0.02$/step (threat) \\
+Conspecific retinal weight            & $0.3\times$ \\
+CPG frequency                        & $\sim 6$\,Hz \\
+Motility function                    & $\max(0.15,\; 4e(1{-}e))$ \\
+Energy recovery (SLEEP)              & $+0.03$/step \\
+Energy cost (active)                 & $-0.02$/step \\
+Energy cost (SLEEP)                  & $-0.005$/step \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Comparison: Game Logic vs.\ Neural Pipeline}
+
+Table~\ref{tab:game_vs_neural} contrasts the previous game-logic implementation
+with the current neurobiological pipeline across key behavioral dimensions.
+
+\begin{table}[H]
+\centering
+\caption{Game logic vs.\ neural pipeline for behavioral control.}
+\label{tab:game_vs_neural}
+\small
+\begin{tabular}{lll}
+\toprule
+Aspect & Before (Game Logic) & After (Neural Pipeline) \\
+\midrule
+Decision      & \texttt{if/else} thresholds & EFE winner-take-all (5 goals) \\
+Spike data    & Generated retroactively     & \textit{Is} the computation (causal) \\
+Fear          & Binary ($d_\text{pred} < 140$\,px) & Amygdala trace with episodic LTP \\
+Turn control  & Direct heading assignment    & Pallium L/R contrast $\times$ BG gate \\
+Escape        & $v = 3.0$                   & Mauthner 4-step C-start sequence \\
+Sleep         & \texttt{is\_sleeping} flag   & Circadian ACh $\to$ low EFE$_\text{sleep}$ \\
+Neuromod.     & Static ($\text{DA} = 0.5 + \sin$) & Dynamic: DA$\,{=}\,\sigma$(RPE), NA$\,{=}\,f$(amyg) \\
+Frustration   & None                        & Habenula per-goal accumulator \\
+Starvation    & Energy $<$ threshold         & Predictive anxiety (EMA of future deficit) \\
+Food memory   & None                        & Hippocampal replay under stress \\
+Depth percep. & None                        & Binocular zone ($\pm20^\circ$) stereo disparity \\
+Rivalry       & None                        & Inter-tectal WTA via commissure \\
+Orienting     & None                        & Tectal novelty $\to$ saccade + habituation \\
+Place cells   & None                        & Theta-modulated familiarity + hippocampal replay \\
+Cerebellum    & None                        & Forward model PE (turn $+$ speed adaptation) \\
+BG gating     & Action always permitted     & D1/D2 go/no-go gate ($\times$ DA modulation) \\
+Social        & Schooling heuristic         & Conspecific retinal $\to$ EFE SOCIAL goal \\
+Circadian     & Binary day/night flag       & Continuous light $\to$ ACh $\to$ motility curve \\
+5-HT patience & None                        & Accumulator: calm $\to$ patience, threat $\to$ impulsive \\
+CPG rhythm    & Constant speed              & $6$\,Hz oscillation, scales with motor command \\
+Motility      & Fixed multiplier            & Inverted-U: $4e(1{-}e)$ with floor $0.15$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ================================================================
+\subsection{Module Interaction Tests}\label{sec:module_interaction_tests}
+
+Nine cross-module integration tests validate cascading effects across
+neuromodulatory and hormonal subsystems.
+
+\paragraph{HPA axis cascade (3 tests).}
+Sustained amygdala activation ($\alpha > 0.25$) triggers cortisol
+accumulation ($\text{cortisol} > 0.3$), which in turn suppresses
+dopamine ($\text{DA factor} < 0.9$), reduces place cell learning rate
+($\text{LR factor} < 0.8$), and sensitizes the amygdala
+($\text{sens.\ factor} > 1.1$).
+
+\paragraph{Oxytocin social buffering (2 tests).}
+Proximity to 4 conspecifics elevates OXT ($> 0.2$), producing social
+trust boost ($> 0.05$), fear extinction ($> 0.08$), and SOCIAL EFE
+bias ($< -0.01$). With 6 crowded foragers, AVP rises ($> 0.1$)
+with competition drive ($> 0.02$).
+
+\paragraph{MetaGoal REINFORCE (1 test).}
+After 5 simulated episodes with positive fitness, goal bias parameters
+remain bounded in $[-0.5, 0.5]$ and modulator weights in $[0.1, 3.0]$.
+
+\paragraph{SocialMemory precision-EMA (2 tests).}
+Alarm precision rises after confirmed threats (weight increases toward
+upper bound 3.0) and food cue precision after confirmed feeding
+(weight increases toward upper bound). Target weights track
+hit/miss outcomes within 20-step and 30-step windows respectively.
+
+\paragraph{Disorder presets (1 test).}
+All 8 disorder phenotype presets (wildtype, hypodopamine, ASD,
+schizophrenia, anxiety, depression, ADHD, PTSD) apply successfully
+and produce measurably different neuromodulatory profiles from
+baseline.
+
+% ================================================================
+\subsection{Spatial Atlas Synchronization Tests}\label{sec:atlas_sync_tests}
+
+Six tests verify that \texttt{spatial\_registry.py} and
+\texttt{generate\_brain\_atlas.py} share the same 72-region bilateral
+atlas (47{,}010 cells, regions 0--35 left, 36--71 right):
+(i)~atlas CSV loads with matched cell/label counts;
+(ii)~all \texttt{label\_map} regions have cells in atlas;
+(iii)~centroids fall within valid voxel bounds;
+(iv)~\texttt{generate\_positions()} returns correct tensor shape;
+(v)~\texttt{distance\_weight\_mask()} returns non-degenerate weights;
+(vi)~14 canonical region mappings match between both code paths
+(tectum$\to$29/65, cerebellum$\to$1/37, pallium$\to$22/58,
+thalamus$\to$30/66, hypothalamus$\to$17/53, habenula$\to$16/52,
+subpallium$\to$28/64, etc.).
+
+% ================================================================
+\subsection{Spiking vs.\ Rate-Coded Structural Agreement}\label{sec:spiking_rate_tests}
+
+Thirty-two tests compare the spiking brain (\texttt{brain\_v2.py})
+and the rate-coded web demo (\texttt{server.py}). The two
+implementations differ fundamentally (Izhikevich spiking vs.\ analytic
+rate code), so full numerical agreement is not expected. Instead,
+tests validate structural correspondence across six categories:
+
+\paragraph{Pipeline stage correspondence (3 tests).}
+All 12 server stages (0--11) verified; 11/11 neural stages mapped to
+spiking modules; all listed classes imported in \texttt{brain\_v2.py}.
+
+\paragraph{Neuromodulator dynamics (4 tests).}
+DA/NA/5-HT/ACh present in both; DA formula $\sigma(3\cdot\text{RPE})$
+shared; NA formula $0.3 + 0.5\alpha_\text{amyg} + 0.2\,\text{CMS}$
+shared; EMA tau ratios $< 4\times$ (NA: $1.79\times$, 5-HT:
+$1.60\times$, ACh: $3.00\times$).
+
+\paragraph{EFE formula structure (5 tests).}
+Goals overlap (FORAGE/FLEE/EXPLORE/SOCIAL); $G_\text{forage}$ core
+$0.2U - 0.8\,p_\text{food} + 0.15$; $G_\text{flee}$ uses CMS and
+$p_\text{enemy}$; sign convention (lower $G$ = more preferred);
+uncertainty $U = 1 - 0.5(\text{CMS} + 0.3)$.
+
+\paragraph{Behavioral benchmarks (8 tests).}
+Food ahead $\to$ FORAGE; predator left/behind $\to$ FLEE; empty
+arena $\to$ EXPLORE/FORAGE; conspecific $\to$ valid goal; low energy
+$\to$ FORAGE bias; close predator overrides foraging.
+
+\paragraph{Signal range profiling (4 tests).}
+200-step mixed-scene profiling: neuromodulators bounded $[0, 1.5]$;
+DA rises after food reward; NA rises with threat; 5-HT rises under
+calm.
+
+\paragraph{Structural module checks (8 tests).}
+Both return DA/NA/5HT/ACh; both implement episodic amygdala, theta
+place cells, cerebellum prediction error, D1/D2 basal ganglia,
+lateral line, olfaction; starvation formula
+$\max(0, (0.75 - e_\text{ratio}) / 0.75)$ matches.
+
+%===================================================================
+\section{Software Platform Architecture}\label{sec:platform}
+%===================================================================
+
+The v2 codebase is organized as an installable Python package
+(\texttt{pyproject.toml}) with three orthogonal configuration dataclasses,
+a fluent researcher API, and pluggable perturbation/recording subsystems.
+
+\subsection{Dataclass Configuration Hierarchy}
+
+All simulation parameters are consolidated into three root dataclasses:
+
+\begin{itemize}[nosep]
+  \item \textbf{BrainConfig} --- 7 sub-dataclasses ($>$200 parameters):
+    neuromodulation (DA/NA/5HT/ACh baselines, decay, learning rates),
+    plasticity (STDP A$_\pm$, $w_{\min/\max}$, top-down gain),
+    active inference (EFE weights, $\beta$, habit blend),
+    ablation (39 boolean region toggles),
+    theta-phase place cell parameters,
+    fidelity level (\texttt{spiking} | \texttt{rate\_coded}),
+    and personality preset.
+  \item \textbf{BodyConfig} --- motor (CPG 14 synaptic weights, reticulospinal gate,
+    speed scaling), sensory (lateral-line ranges, olfaction thresholds),
+    and metabolism (energy start, drain rate, starvation threshold).
+  \item \textbf{WorldConfig} --- arena geometry (width, height, food/rock counts)
+    and visual physics (FoV, max distance, retinal intensity scale,
+    per-object-type visual radii and type codes).
+\end{itemize}
+
+Every config supports \texttt{to\_dict()} / \texttt{from\_dict()} for JSON serialization,
+enabling reproducible experiment specification.
+
+\subsection{VirtualZebrafish Facade}
+
+\texttt{VirtualZebrafish} provides a fluent, chainable researcher API:
+
+\begin{verbatim}
+fish = VirtualZebrafish.load("pretrained")
+result = (fish
+    .lesion("habenula")
+    .set_personality("bold")
+    .inject("haloperidol", dose=1.0)
+    .run(steps=2000))
+\end{verbatim}
+
+\noindent
+Key features:
+\begin{itemize}[nosep]
+  \item \textbf{Lesion/Enable}: toggles any of 39 brain regions via \texttt{AblationConfig}
+  \item \textbf{Drug injection}: 6 pre-defined drugs (haloperidol, fluoxetine,
+    scopolamine, amphetamine, propranolol, buspirone) with
+    dose-dependent DA/NA/5HT/ACh multipliers and time decay
+  \item \textbf{Disorder phenotypes}: wildtype, hypodopamine, ASD, schizophrenia,
+    anxiety, depression, ADHD, PTSD---each modifies specific
+    neuromodulator baselines and circuit gains
+  \item \textbf{Optogenetic stimulation}: pulse/ramp/sine patterns targeting
+    named brain regions
+  \item \textbf{Fidelity switching}: seamless toggle between spiking
+    (full \texttt{ZebrafishBrainV2}, 6800+ neurons) and rate-coded
+    ($\sim$100$\times$ faster) pipelines
+\end{itemize}
+
+\subsection{Distance-Dependent Spatial Priors on STDP Pathways}
+
+The \texttt{SpatialRegistry} assigns atlas-derived 3D positions to all neurons
+and modulates initial STDP weight matrices by inter-region Euclidean distance:
+
+\begin{equation}
+  w_{ij} \leftarrow w_{ij} \bigl[(1 - s) + s \cdot e^{-d_{ij}/\lambda}\bigr]
+\end{equation}
+
+\noindent
+where $d_{ij}$ is the pairwise distance between neuron $i$ in the source region
+and neuron $j$ in the target, $\lambda$ is the length constant (80--150\,$\mu$m),
+and $s \in [0,1]$ is the blending strength.  Applied pathways:
+
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Pathway} & $\lambda$ ($\mu$m) & $s$ \\
+\midrule
+Tectum $\to$ Thalamus (L/R) & 80 & 0.4 \\
+Thalamus $\to$ Pallium-S     & 120 & 0.3 \\
+Pallium-S $\to$ Pallium-D    & 60 & 0.3 \\
+Pallium $\to$ Tectum (top-down) & 150 & 0.2 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Recording and Batch Execution}
+
+The \texttt{Recorder} module captures per-step neural traces
+(neuromodulators, spike rates, goal selection, free energy) as structured
+channels, exportable to NumPy arrays for offline analysis.
+\texttt{BatchRunner} executes parameter sweeps in parallel, returning
+pandas-compatible results for systematic ablation/drug/personality studies.
 
 \end{document}
