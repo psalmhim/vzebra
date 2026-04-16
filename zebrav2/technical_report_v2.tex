@@ -1175,6 +1175,28 @@ an external exploration schedule.
 
 \begin{figure}[H]
 \centering
+\includegraphics[width=0.95\textwidth]{plots/v2_paper/fig_apc.pdf}
+\caption{Action-perception cycle diagnostics over 400 steps.
+(a) Iterative inference reduces free energy within each step:
+median $F$ across inference passes $1\!\to\!3$ (shaded IQR, gray
+traces individual time points).  Mean reduction $\Delta F \approx 0.035$
+per step.
+(b) Adaptive blend $\alpha_\text{AI}$ (orange, left axis) tracks
+mean motor precision $\bar{\pi}$ (navy, right axis); $\alpha$ stays
+within $[0.43, 0.56]$ in steady state, well above the fixed baseline
+$\alpha = 0.3$ (gray dashed) when precision is healthy.
+(c) Spontaneity $\xi$ (crimson): baseline $\xi = 0.05$ from neural
+noise; rises above the $0.3$ threshold (red shaded) when habenula
+helplessness or phasic-DA exploration is engaged.
+(d) $\dot{F} = dF/dt$ (purple): when surprise rises above
+$0.05$ (dashed), the current goal is penalised in the WTA selector;
+coloured bands at the bottom indicate goal identity
+(FORAGE, FLEE, EXPLORE, SOCIAL).}
+\label{fig:apc}
+\end{figure}
+
+\begin{figure}[H]
+\centering
 \includegraphics[width=0.80\textwidth]{../plots/paper/fig_phase8_goals.png}
 \caption{Phase 8: EFE-driven goal selection over 100 steps. Stacked area plot shows
   FORAGE (green), FLEE (red), EXPLORE (blue), and SOCIAL (purple) goal probabilities

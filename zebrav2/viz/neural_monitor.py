@@ -133,8 +133,10 @@ class NeuralMonitorV2:
         # Build raster row from v2 spiking layers
         row = np.zeros(self.RASTER_NEURONS, dtype=np.float32)
 
-        # Tectum SFGS-b E spikes (20 subsampled) — raw spike counts
-        sfgsb_spikes = self._t2np(brain.tectum.sfgs_b.spike_E)
+        # Tectum SFGS-b E spikes (20 subsampled) — bilateral sum
+        sfgsb_L = self._t2np(brain.tectum.sfgs_b_L.spike_E)
+        sfgsb_R = self._t2np(brain.tectum.sfgs_b_R.spike_E)
+        sfgsb_spikes = np.concatenate([sfgsb_L, sfgsb_R])
         n = len(sfgsb_spikes)
         step_s = max(1, n // 20)
         row[:20] = np.clip(sfgsb_spikes[::step_s][:20] / 5.0, 0, 1)
@@ -160,9 +162,13 @@ class NeuralMonitorV2:
         d1_rate = self._t2np(brain.bg.d1_rate)
         row[60:70] = d1_rate[::12][:10]
 
-        # Thalamus TC rates (10 subsampled from 80)
-        tc_rate = self._t2np(brain.thalamus.tc_rate)
-        row[70:80] = tc_rate[::8][:10]
+        # Thalamus TC rates (10 subsampled) — bilateral concat
+        tc_L = self._t2np(brain.thalamus_L.TC.rate)
+        tc_R = self._t2np(brain.thalamus_R.TC.rate)
+        tc_rate = np.concatenate([tc_L, tc_R])
+        n = len(tc_rate)
+        step_tc = max(1, n // 10)
+        row[70:80] = tc_rate[::step_tc][:10]
 
         self._raster_buf[self._raster_ptr] = row
         self._raster_ptr = (self._raster_ptr + 1) % self.RASTER_HISTORY
@@ -190,28 +196,46 @@ class NeuralMonitorV2:
         mx = R_2d.max() + 1e-8
         self.surface.blit(self._heatmap(R_2d / mx, hm, hm, self._hot), (hm + 14, y1))
 
-        # Tectum SFGS-b / SFGS-d (small heatmaps)
+        # Tectum SFGS-b L/R (small heatmaps, bilateral)
         sm = 70
         ox = 2 * (hm + 8)
-        self._lbl("SFGS-b", ox, 2, font=self.font_md)
-        sb = self._t2np(brain.tectum.sfgs_b.get_rate_e())
-        n = len(sb)
+        self._lbl("SFGS-b L", ox, 2, font=self.font_md)
+        sb_L = self._t2np(brain.tectum.sfgs_b_L.get_rate_e())
+        n = len(sb_L)
         side = int(np.sqrt(n)) or 1
-        sb_2d = sb[:side * side].reshape(side, -1)
+        sb_2d = sb_L[:side * side].reshape(side, -1)
         mx = sb_2d.max() + 1e-8
-        self.surface.blit(self._heatmap(sb_2d / mx, sm, hm // 2), (ox, y1))
+        self.surface.blit(self._heatmap(sb_2d / mx, sm // 2, hm // 2), (ox, y1))
 
-        self._lbl("SFGS-d", ox + sm + 4, 2, font=self.font_md)
-        sd = self._t2np(brain.tectum.sfgs_d.get_rate_e())
-        n = len(sd)
+        self._lbl("R", ox + sm // 2 + 2, 2, font=self.font_md)
+        sb_R = self._t2np(brain.tectum.sfgs_b_R.get_rate_e())
+        n = len(sb_R)
         side = int(np.sqrt(n)) or 1
-        sd_2d = sd[:side * side].reshape(side, -1)
-        mx = sd_2d.max() + 1e-8
-        self.surface.blit(self._heatmap(sd_2d / mx, sm, hm // 2), (ox + sm + 4, y1))
+        sb_2d = sb_R[:side * side].reshape(side, -1)
+        mx = sb_2d.max() + 1e-8
+        self.surface.blit(self._heatmap(sb_2d / mx, sm // 2, hm // 2), (ox + sm // 2 + 2, y1))
 
-        # SGC + SO (below tectum pair)
-        self._lbl("SGC", ox, y1 + hm // 2 + 4, font=self.font_sm)
-        sgc = self._t2np(brain.tectum.sgc.get_rate_e())
+        self._lbl("SFGS-d L", ox + sm + 8, 2, font=self.font_md)
+        sd_L = self._t2np(brain.tectum.sfgs_d_L.get_rate_e())
+        n = len(sd_L)
+        side = int(np.sqrt(n)) or 1
+        sd_2d = sd_L[:side * side].reshape(side, -1)
+        mx = sd_2d.max() + 1e-8
+        self.surface.blit(self._heatmap(sd_2d / mx, sm // 2, hm // 2), (ox + sm + 8, y1))
+
+        self._lbl("R", ox + sm + 8 + sm // 2 + 2, 2, font=self.font_md)
+        sd_R = self._t2np(brain.tectum.sfgs_d_R.get_rate_e())
+        n = len(sd_R)
+        side = int(np.sqrt(n)) or 1
+        sd_2d = sd_R[:side * side].reshape(side, -1)
+        mx = sd_2d.max() + 1e-8
+        self.surface.blit(self._heatmap(sd_2d / mx, sm // 2, hm // 2), (ox + sm + 8 + sm // 2 + 2, y1))
+
+        # SGC L/R + SO L/R (below tectum pair)
+        self._lbl("SGC L", ox, y1 + hm // 2 + 4, font=self.font_sm)
+        sgc_L = self._t2np(brain.tectum.sgc_L.get_rate_e())
+        sgc_R = self._t2np(brain.tectum.sgc_R.get_rate_e())
+        sgc = np.concatenate([sgc_L, sgc_R])
         n = len(sgc)
         side = int(np.sqrt(n)) or 1
         sgc_2d = sgc[:side * side].reshape(side, -1)
@@ -219,8 +243,10 @@ class NeuralMonitorV2:
         self.surface.blit(self._heatmap(sgc_2d / mx, sm // 2, sm // 2),
                           (ox, y1 + hm // 2 + 14))
 
-        self._lbl("SO", ox + sm // 2 + 4, y1 + hm // 2 + 4, font=self.font_sm)
-        so = self._t2np(brain.tectum.so.get_rate_e())
+        self._lbl("SO L/R", ox + sm // 2 + 4, y1 + hm // 2 + 4, font=self.font_sm)
+        so_L = self._t2np(brain.tectum.so_L.get_rate_e())
+        so_R = self._t2np(brain.tectum.so_R.get_rate_e())
+        so = np.concatenate([so_L, so_R])
         n = len(so)
         side = int(np.sqrt(n)) or 1
         so_2d = so[:side * side].reshape(side, -1)
@@ -240,12 +266,27 @@ class NeuralMonitorV2:
         pygame.draw.rect(self.surface, ec, (6, y2 + 18, int(120 * ef), 10))
         self._lbl(f"Energy: {energy:.0f}%", 6, y2 + 30)
 
-        # Free energy
+        # Free energy + APC diagnostics
         fe = out.get('free_energy', 0.0)
         self._lbl(f"F: {fe:.4f}", 6, y2 + 42)
         loom = "LOOMING!" if out.get('looming', False) else ""
         if loom:
             self._lbl(loom, 80, y2 + 42, color=(255, 50, 50), font=self.font_md)
+
+        # Action-perception cycle (dF/dt, spontaneity, blend)
+        dF = out.get('fe_gradient', 0.0)
+        spon = out.get('spontaneity', 0.0)
+        blend = out.get('ai_blend', 0.3)
+        # dF/dt: purple when rising (goal penalty), blue when falling
+        dF_color = (200, 100, 220) if dF > 0.05 else (100, 180, 220)
+        self._lbl(f"dF/dt: {dF:+.3f}", 6, y2 + 54,
+                  color=dF_color, font=self.font_sm)
+        # spontaneity: red when noise active (>0.3)
+        spon_color = (255, 80, 80) if spon > 0.3 else (160, 160, 160)
+        self._lbl(f"spon: {spon:.2f}", 70, y2 + 54,
+                  color=spon_color, font=self.font_sm)
+        self._lbl(f"α: {blend:.2f}", 120, y2 + 54,
+                  color=(255, 180, 80), font=self.font_sm)
 
         # Pallium-S / Pallium-D heatmaps
         self._lbl("PAL-S", 150, y2 - 12, font=self.font_md)
@@ -264,15 +305,23 @@ class NeuralMonitorV2:
         mx = pd_2d.max() + 1e-8
         self.surface.blit(self._heatmap(pd_2d / mx, 60, 80), (240, y2))
 
-        # TC / TRN
-        self._lbl("TC", 315, y2 - 12, font=self.font_md)
-        tc = self._t2np(brain.thalamus.tc_rate)
-        tc_2d = tc.reshape(-1, 1)
-        mx = tc_2d.max() + 1e-8
-        self.surface.blit(self._heatmap(tc_2d / mx, 20, 80), (315, y2))
+        # TC L/R + TRN L/R
+        self._lbl("TC L", 310, y2 - 12, font=self.font_md)
+        tc_L = self._t2np(brain.thalamus_L.TC.rate)
+        tc_L_2d = tc_L.reshape(-1, 1)
+        mx = tc_L_2d.max() + 1e-8
+        self.surface.blit(self._heatmap(tc_L_2d / mx, 10, 80), (310, y2))
+
+        self._lbl("R", 324, y2 - 12, font=self.font_md)
+        tc_R = self._t2np(brain.thalamus_R.TC.rate)
+        tc_R_2d = tc_R.reshape(-1, 1)
+        mx = tc_R_2d.max() + 1e-8
+        self.surface.blit(self._heatmap(tc_R_2d / mx, 10, 80), (324, y2))
 
         self._lbl("TRN", 340, y2 - 12, font=self.font_md)
-        trn = self._t2np(brain.thalamus.trn_rate)
+        trn_L = self._t2np(brain.thalamus_L.TRN.rate)
+        trn_R = self._t2np(brain.thalamus_R.TRN.rate)
+        trn = np.concatenate([trn_L, trn_R])
         trn_2d = trn.reshape(-1, 1)
         mx = trn_2d.max() + 1e-8
         self.surface.blit(self._heatmap(trn_2d / mx, 15, 80), (340, y2))
