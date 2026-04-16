@@ -5,6 +5,7 @@ Uses v1 EFE policy selection (preserved) with v2 spiking substrate.
 """
 import os
 import math
+from collections import deque
 import numpy as np
 import torch
 import torch.nn as nn
@@ -230,6 +231,13 @@ class ZebrafishBrainV2(nn.Module):
         self._last_ai_motor = None         # last active inference motor output
         self._prop_cache = None            # cached proprioception from previous step
         self._last_pred_surprise = 0.0    # predictive network surprise from previous step
+        # Free energy gradient: tracks dF/dt for closed-loop goal modulation
+        # Rising F → current goal failing → switch.  Falling F → goal working → persist.
+        self._fe_history = deque(maxlen=10)
+        self._fe_gradient = 0.0
+        # Spontaneity: anti-FEP mechanism (see _compute_spontaneity)
+        # Real organisms don't always minimize F — they explore, play, get frustrated
+        self._spontaneity = 0.0
         # Ablation set loaded from self.cfg.ablation (habenula + insula off by default)
         # Spatial registry: assign atlas-derived positions to all neurons
         from zebrav2.brain.spatial_registry import SpatialRegistry
@@ -718,6 +726,17 @@ class ZebrafishBrainV2(nn.Module):
             _cb_contrib = _ec.surprise_explore_weight * (self._last_pred_surprise - _ec.surprise_threshold) * float(_mw[6])
             G_explore -= _cb_contrib
             _mc[6] = _cb_contrib
+        # --- Action-perception cycle: F-gradient goal modulation ---
+        # If total free energy is RISING under current goal, that goal is
+        # failing to reduce surprise → penalize it in EFE (Friston 2010:
+        # "action and perception are both in the service of minimizing F").
+        # Conversely, falling F → current goal is working → no penalty.
+        _fe_goal_penalty = 0.0
+        if self._fe_gradient > 0.05 and self._step_count > 10:
+            _fe_goal_penalty = 0.3 * self._fe_gradient
+            _goals = [G_forage, G_flee, G_explore, G_social]
+            _goals[self.current_goal] += _fe_goal_penalty  # higher G = less preferred
+            G_forage, G_flee, G_explore, G_social = _goals
         # Analytic EFE → bias for spiking goal selector
         # Add learned goal_bias (autograd flows for REINFORCE)
         G_base = torch.tensor([G_forage, G_flee, G_explore, G_social], device=self.device)
@@ -1064,11 +1083,32 @@ class ZebrafishBrainV2(nn.Module):
         )
         self._last_ai_motor = ai_motor
 
-        # Blend active inference motor with reactive motor
-        # ai_blend controls the mix (0 = fully reactive, 1 = fully AI)
-        _blend = self.active_motor.ai_blend
+        # --- Adaptive active inference blend ---
+        # The blend is NOT fixed — it depends on the brain's current state:
+        #   High precision → trust PE-driven motor more (proper active inference)
+        #   High spontaneity → less mechanistic (anti-FEP exploration/play)
+        # This implements the tension between exploiting a generative model
+        # (active inference) and breaking free of it (spontaneity).
+        _mean_pi = float(self.active_motor.column.precision.mean())
+        self._spontaneity = self._compute_spontaneity()
+        _base_blend = self.active_motor.ai_blend  # 0.3 default
+        _precision_bonus = 0.4 * _mean_pi          # 0 to ~0.4 at full precision
+        _spontaneity_penalty = self._spontaneity * 0.3
+        _blend = _base_blend + _precision_bonus - _spontaneity_penalty
+        _blend = max(0.1, min(0.8, _blend))
+
         turn = (1.0 - _blend) * turn + _blend * ai_motor['turn']
         speed = (1.0 - _blend) * speed + _blend * (ai_motor['speed'] * 1.5)
+
+        # Spontaneous motor perturbation: when spontaneity is high, inject
+        # stochastic noise that violates FE minimization.  Biological basis:
+        # default mode network, hippocampal replay → random exploration,
+        # habenula frustration → try something new (Hikosaka 2010).
+        if self._spontaneity > 0.3:
+            _noise_scale = (self._spontaneity - 0.3) * 0.7
+            turn += (np.random.random() - 0.5) * _noise_scale
+            speed += (np.random.random() - 0.3) * _noise_scale * 0.5
+
         turn = float(np.clip(turn, -1.0, 1.0))
         speed = max(0.0, speed)
 
@@ -1341,6 +1381,15 @@ class ZebrafishBrainV2(nn.Module):
         # Store pallium-S rate for top-down attention next step
         self._prev_pal_rate_s.copy_(pal_out['rate_S'].detach())
 
+        # --- Action-perception cycle: track free energy gradient ---
+        # dF/dt > 0 → current policy failing (surprise rising)
+        # dF/dt < 0 → current policy working (surprise falling)
+        # Used NEXT step for F-based goal modulation and spontaneity
+        _total_fe = self._aggregate_free_energy(pal_out, ai_motor, saccade_out)
+        self._fe_history.append(_total_fe)
+        if len(self._fe_history) >= 2:
+            self._fe_gradient = self._fe_history[-1] - self._fe_history[-2]
+
         return {
             'turn': float(turn),
             'speed': float(speed),
@@ -1349,8 +1398,7 @@ class ZebrafishBrainV2(nn.Module):
             'DA': self.neuromod.DA.item(), 'NA': nm['NA'],
             '5HT': nm['5HT'], 'ACh': nm['ACh'],
             'free_energy': pal_out['free_energy'],
-            'total_free_energy': self._aggregate_free_energy(
-                pal_out, ai_motor, saccade_out),
+            'total_free_energy': _total_fe,
             'looming': tect_out['looming'],
             'bg_gate': bg_out['gate'],
             'amygdala': self.amygdala_alpha,
@@ -1372,9 +1420,12 @@ class ZebrafishBrainV2(nn.Module):
             'hab_helplessness': hab_out['helplessness'],
             'novelty': self._novelty_ema,
             'exploration_phase': self._exploration_phase,
-            # Active inference motor diagnostics
+            # Action-perception cycle diagnostics
             'ai_free_energy': ai_motor['free_energy'],
             'ai_blend': _blend,
+            'ai_convergence': ai_motor.get('inference_convergence', 0.0),
+            'fe_gradient': self._fe_gradient,
+            'spontaneity': self._spontaneity,
             'gaze_free_energy': saccade_out.get('gaze_free_energy', 0.0),
             'gaze_precision': saccade_out.get('gaze_precision', 1.0),
         }
@@ -1420,6 +1471,61 @@ class ZebrafishBrainV2(nn.Module):
             'pallium':       self.pallium.pc.free_energy,
             'active_motor':  self.active_motor.column.free_energy,
         }
+
+    # ------------------------------------------------------------------
+    # Spontaneity: anti-FEP mechanism
+    # ------------------------------------------------------------------
+
+    def _compute_spontaneity(self) -> float:
+        """Compute spontaneity factor that opposes pure FE minimization.
+
+        Real organisms don't always minimize free energy.  Exploration,
+        play, frustration, curiosity, and neural noise all produce behavior
+        that TEMPORARILY INCREASES prediction error.  This is not a bug —
+        it's essential for avoiding local minima in the FE landscape and
+        for discovering new behavioral strategies.
+
+        Biological basis:
+          - Default mode network: spontaneous mentation during disengagement
+          - Hippocampal sharp-wave ripples: random replay → novel actions
+          - Habenula: frustration / learned helplessness → try something new
+            (Hikosaka 2010, "The habenula: from stress evasion to value-based
+            decision-making")
+          - Dopamine: phasic DA bursts encourage exploration beyond FE minimum
+            (Friston et al. 2012, "Dopamine, affordance and active inference")
+          - Play behavior: juvenile zebrafish exhibit spontaneous non-functional
+            swimming patterns (Dreosti et al. 2015)
+
+        Returns:
+            float [0, 1]: 0 = fully mechanistic (pure FEP), 1 = fully spontaneous
+        """
+        s = 0.0
+
+        # 1. Habenula frustration → break the action-perception loop
+        #    When goals repeatedly fail (high helplessness), stop trying
+        #    to minimize F and explore randomly instead.
+        hab_help = float(getattr(self.habenula, 'helplessness', 0.0))
+        s += hab_help * 0.4
+
+        # 2. Boredom: F is stable (flat gradient) + low novelty
+        #    The world is predictable but not rewarding → spontaneous exploration
+        if abs(self._fe_gradient) < 0.02 and self._novelty_ema < 0.3:
+            s += 0.25
+
+        # 3. High DA → exploration beyond current FE minimum
+        #    Phasic DA signals "try something new" — overrides FEP
+        da = self.neuromod.DA.item()
+        if da > 0.6:
+            s += (da - 0.6) * 0.8
+
+        # 4. Social context → playful / less mechanistic behavior
+        if self.current_goal == GOAL_SOCIAL:
+            s += 0.15
+
+        # 5. Neural noise baseline: intrinsic stochasticity in all circuits
+        s += 0.05
+
+        return min(1.0, max(0.0, s))
 
     def set_perturbations(self, pm):
         """Attach a PerturbationManager for drug/stimulation effects."""
@@ -1489,6 +1595,9 @@ class ZebrafishBrainV2(nn.Module):
         self._novelty_ema = 1.0
         self._surprise_history = []
         self._exploration_phase = True
+        self._fe_history.clear()
+        self._fe_gradient = 0.0
+        self._spontaneity = 0.0
         self.goal_probs = torch.tensor([0.25, 0.25, 0.25, 0.25], device=self.device)
         self.current_goal = GOAL_EXPLORE
         self.goal_persistence = 0

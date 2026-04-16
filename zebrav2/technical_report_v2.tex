@@ -1101,6 +1101,78 @@ Active motor& 8 (proprioceptive)  & body proprioception   & 48 \\
 \end{tabular}
 \end{center}
 
+\subsection{Action-Perception Cycle}
+
+The model implements Friston's (2011) full action-perception cycle:
+motor commands are proprioceptive \emph{predictions} that the spinal
+reflex arc acts to fulfil.  The cycle runs within each time step via
+iterative inference:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Predict}: Generate goal-dependent proprioceptive predictions
+        $\boldsymbol{\mu}^{(0)}$ (top-down $\to$ apical dendrite of
+        48 active-motor two-compartment neurons).
+  \item \textbf{Sense}: Encode actual proprioception
+        $\mathbf{y}$ (bottom-up $\to$ soma).
+  \item \textbf{Infer}: For $k = 1 \ldots K$ passes ($K=3$):
+        \begin{equation}\label{eq:apc_update}
+          \boldsymbol{\varepsilon}^{(k)} = V_a^{(k)} - \tilde{V}_s, \qquad
+          \boldsymbol{\mu}^{(k)} \leftarrow \boldsymbol{\mu}^{(k-1)}
+            - \eta_\text{act}\,\boldsymbol{\varepsilon}^{(k)},
+        \end{equation}
+        where $\eta_\text{act}=0.15$.  Each pass runs the TwoCompColumn
+        forward, updating apical beliefs and precision simultaneously.
+  \item \textbf{Act}: Motor output = reflex-arc readout of final PE:
+        $\delta\theta = 0.6\,\varepsilon_\text{heading}
+                       + 0.4\,\varepsilon_\text{turn\_rate}$;
+        $v = \mu_\text{speed} + 1.5\,\varepsilon_\text{speed}$.
+\end{enumerate}
+
+\paragraph{Adaptive blend.}
+The active-inference motor is blended with the reactive motor via
+a precision-dependent blend factor:
+\begin{equation}\label{eq:ai_blend}
+  \alpha_\text{AI} = \text{clamp}\bigl(
+    \alpha_0 + 0.4\,\bar{\pi}_\text{motor} - 0.3\,\xi,\;
+    0.1,\; 0.8 \bigr),
+\end{equation}
+where $\alpha_0=0.3$ is the base blend, $\bar{\pi}_\text{motor}$ is
+the mean precision of the active-motor column, and $\xi \in [0,1]$
+is the \emph{spontaneity} factor (see below).  High precision $\Rightarrow$
+the generative model is trusted $\Rightarrow$ more active inference.
+
+\paragraph{Free-energy gradient goal modulation.}
+The temporal derivative of brain-level free energy,
+$\dot{F} = F_t - F_{t-1}$, modulates goal selection:
+if $\dot{F} > 0.05$ (surprise rising under the current goal), the
+current goal's EFE is penalised by $0.3\,\dot{F}$, encouraging
+the WTA goal selector to switch.  This closes the loop: free energy
+drives not only perception (belief updating) but also action (goal
+switching).
+
+\paragraph{Spontaneity: anti-FEP mechanism.}
+Real organisms do not always minimise free energy.
+Spontaneous exploration, play, frustration-driven switching, and
+intrinsic neural noise all produce behaviour that temporarily
+\emph{increases} prediction error.  We model this as:
+\begin{equation}\label{eq:spontaneity}
+  \xi = \text{clamp}\!\bigl(
+    0.4\,h_\text{hab} + 0.25\,\mathbb{1}_{|\dot{F}|<0.02,\,\nu<0.3}
+    + 0.8\max(0, \text{DA}-0.6) + 0.15\,\mathbb{1}_\text{social}
+    + 0.05,\; 0,\; 1 \bigr),
+\end{equation}
+where $h_\text{hab}$ is habenula helplessness (Hikosaka 2010),
+$\nu$ is novelty, and $\text{DA}$ is the dopamine level.
+High spontaneity (i) reduces the active-inference blend via
+Eq.~\ref{eq:ai_blend}, falling back to reactive control,
+and (ii) injects stochastic motor noise when $\xi > 0.3$:
+$\delta\theta \mathrel{+}= \mathcal{U}(-0.5, 0.5)\,\cdot\,0.7(\xi - 0.3)$.
+
+This creates a natural tension between the mechanistic FEP drive
+(precision-weighted PE minimisation) and the organism's need to break
+free of local minima---mediated by neuromodulatory state rather than
+an external exploration schedule.
+
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.80\textwidth]{../plots/paper/fig_phase8_goals.png}

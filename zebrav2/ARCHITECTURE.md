@@ -161,10 +161,25 @@
 
 | Module | Type | Neurons | Function |
 |--------|------|---------|----------|
+| Active Inference Motor | **SNN (Izh 2-comp)** | **48** | Action-perception cycle: 8 proprioceptive channels × 6 neurons, iterative inference (3 passes/step) |
 | Reticulospinal | Rate model | 21/side | Named neurons (Mauthner, MiD2/3, RoM2, MeM, CaD) |
 | Mauthner cell | Rate | 1/side | C-start escape (looming trigger, 4-step sequence) |
 | Spinal CPG | **SNN (LIF)** | **32** | Half-centre oscillator (8 V2a + 4 V0d + 4 MN per side) |
 | Wall avoidance | Analytic | — | Angle-to-center proportional correction |
+
+#### Action-Perception Cycle (Friston 2011)
+
+Motor commands are proprioceptive **predictions** (μ) — the body moves to fulfil them via the spinal reflex arc. Within each step, 3 iterative inference passes refine predictions:
+
+```
+μ^(k) ← μ^(k-1) − η_act × ε^(k)    (η_act = 0.15)
+```
+
+**Adaptive blend**: `α_AI = clamp(0.3 + 0.4*π̄ − 0.3*ξ, 0.1, 0.8)` where π̄ = mean motor precision, ξ = spontaneity.
+
+**FE-gradient goal modulation**: rising F penalizes current goal (dF > 0.05 → +0.3·dF to EFE).
+
+**Spontaneity** (anti-FEP): habenula frustration, boredom, DA exploration, play — temporarily breaks FE minimization.
 
 #### Final Motor Command
 
@@ -248,6 +263,30 @@ speed = goal_speed × allostatic_fatigue_cap
 | W_FB learning | Feedback PE | Analytic | ΔW_FB = -η × h_upper^T × ε (anti-Hebbian) |
 | Spiking prediction | Predictive Net | **SNN (80+80+32)** | Retinal → latent → predicted next frame |
 | Surprise signal | Predictive Net | **SNN** | MSE of prediction error → epistemic value |
+
+#### Adaptive EFE Parameters (MetaGoalWeights)
+
+| Component | Parameters | Update Rule | Range |
+|-----------|-----------|-------------|-------|
+| Goal bias | 4 scalars (b_FORAGE…b_SOCIAL) | REINFORCE, mean log-prob, normalized advantage | [-0.5, 0.5] |
+| Modulation weights | 8 scalars (wm, social, geo, novelty, vae, circ, cb, urgency) | Fitness-correlation heuristic, active sources only | [0.1, 3.0] |
+| Fitness baseline | EMA (τ=0.95), bootstrapped from first episode | — | — |
+| Advantage normalization | Running variance EMA (τ=0.95) | Prevents scale-dependent gradient | — |
+
+Updates run once per episode at `brain.on_episode_end(fitness)`. All parameters saved in checkpoint under `meta_goal` key.
+
+#### Social Memory (SocialMemory)
+
+| Weight | Init | Update Rule | Converges To |
+|--------|------|-------------|--------------|
+| w_alarm | 1.0 | Precision-EMA over 20-step horizon window | 0.2 (false alarms) – 3.0 (reliable) |
+| w_food_cue | 1.0 | Precision-EMA over 30-step horizon window | 0.2 (useless) – 3.0 (reliable) |
+| w_competition | 1.0 | (future: episode fitness correlation) | [0.2, 3.0] |
+
+Social state inference:
+- `speed < 0.30` → eating (food cue trigger)
+- `speed > 1.50` → fleeing (alarm trigger)
+- ≥2 non-fleeing within 100px → competition penalty on G_FORAGE
 
 #### Predictive Coding (Pallium)
 
@@ -372,5 +411,7 @@ speed = goal_speed × allostatic_fatigue_cap
 |----------|--------|
 | Hebbian STDP | 3 episodes, weights converged |
 | Online RL | Critic value +113% (0.023 → 0.049) |
+| MetaGoalWeights | Goal biases + 8 modulation weights, REINFORCE + correlation |
+| SocialMemory | Alarm/food-cue precision-EMA, competition aversion |
 | Classifier | **96.2%** accuracy |
 | Curriculum | **3/3 stages PASS** |

@@ -875,6 +875,46 @@ $v = v_\text{goal}(0.5 + 0.5\,g_\text{BG})$.
 As STDP improves pallium-D representations, the voluntary contribution
 improves automatically.
 
+\paragraph{Active Inference Motor Controller}
+
+An \texttt{ActiveInferenceMotor} module (48 Izhikevich two-compartment
+neurons, 8 proprioceptive channels) implements the full action-perception
+cycle of Friston~(2011).  Motor commands are proprioceptive
+\emph{predictions}: the body moves to fulfil them via the spinal
+reflex arc, minimising proprioceptive PE.
+Within each time step the module runs $K=3$ iterative inference passes:
+\begin{equation}\label{eq:apc}
+  \boldsymbol{\mu}^{(k)} \leftarrow \boldsymbol{\mu}^{(k-1)}
+    - \eta_\text{act}\,\boldsymbol{\varepsilon}^{(k)},
+  \qquad \eta_\text{act}=0.15,
+\end{equation}
+where $\boldsymbol{\mu}$ are goal-dependent proprioceptive predictions
+and $\boldsymbol{\varepsilon}$ is the apical--somatic PE from the
+TwoCompColumn (Eq.~\ref{eq:pe}).  Each pass updates apical beliefs
+and precision simultaneously, allowing predictions to converge before
+motor output is committed.
+
+The active-inference motor is blended with the reactive motor via
+an adaptive, precision-dependent weight:
+$\alpha_\text{AI} = \text{clamp}(0.3 + 0.4\bar\pi - 0.3\xi,\; 0.1,\; 0.8)$,
+where $\bar\pi$ is the mean motor-column precision and $\xi$ is a
+\emph{spontaneity} factor (Eq.~\ref{eq:spontaneity}).
+High precision means the generative model is trusted---more active
+inference.  High spontaneity reduces mechanistic control and injects
+stochastic motor noise, reflecting the biological observation that
+organisms do not always minimise free energy: habenula frustration,
+dopamine-driven exploration, boredom, and social play all produce
+behaviour that temporarily \emph{increases} prediction error.
+
+The temporal derivative of brain-level free energy,
+$\dot{F} = F_t - F_{t-1}$, closes the loop at the goal level:
+if $\dot{F} > 0.05$ (surprise rising), the current goal's EFE is
+penalised by $0.3\dot{F}$, encouraging the spiking WTA goal selector
+to switch strategies.  Free energy thus drives perception
+(belief updating), action (motor PE minimisation), \emph{and}
+policy selection (goal switching)---the three faces of active
+inference \citep{friston2010,parr2022}.
+
 \paragraph{Mauthner C-Start and T-Start Escape Circuits}
 
 Separate left and right Mauthner cells ($\text{M}_L$, $\text{M}_R$)
@@ -1190,6 +1230,29 @@ under stress \citep{stephan2016}.
 The insula integrates heart rate, arousal, and emotional valence,
 providing a meta-level awareness of the organism's internal state
 that modulates goal selection and behavioral urgency.
+
+\paragraph{Spontaneity: Anti-FEP Mechanism}
+
+A scalar spontaneity factor $\xi \in [0,1]$ models the biological
+observation that organisms do not always minimise free energy.
+Exploration, play, frustration-driven switching, and intrinsic neural
+noise all produce behaviour that temporarily \emph{increases}
+prediction error---essential for escaping local minima in the FE
+landscape \citep{friston2012,schwartenbeck2013}:
+\begin{equation}\label{eq:spontaneity}
+  \xi = \text{clamp}\!\bigl(
+    \underbrace{0.4\,h_\text{hab}}_\text{frustration}
+    + \underbrace{0.25\,\mathbb{1}_{|\dot{F}|<0.02}}_\text{boredom}
+    + \underbrace{0.8\max(0, \text{DA}-0.6)}_\text{exploration}
+    + \underbrace{0.15\,\mathbb{1}_\text{social}}_\text{play}
+    + 0.05,\; 0,\; 1 \bigr),
+\end{equation}
+where $h_\text{hab}$ is habenula helplessness \citep{hikosaka2010},
+$\dot{F}$ is the brain-level free energy gradient, and DA is the
+dopamine level.  The spontaneity factor reduces the active-inference
+motor blend (Eq.~\ref{eq:apc}) and injects stochastic motor noise
+when $\xi > 0.3$, creating a natural tension between mechanistic
+PE minimisation and the organism's need for behavioral flexibility.
 
 \subsection{Learning}\label{sec:learning}
 

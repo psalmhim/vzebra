@@ -162,6 +162,12 @@ table th { color: #8b949e; }
         <div class="card" style="padding:10px;">
             <h3>Free Energy <span style="font-weight:normal;color:#8b949e;font-size:9px" id="mTotalFE">F=0</span></h3>
             <div id="feBars"></div>
+            <div id="apcDiag" style="display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;margin-top:6px;padding-top:5px;border-top:1px solid #21262d;font-size:10px;">
+                <div class="metric" style="padding:1px 0;"><span style="color:#8b949e;">dF/dt</span><span class="val" id="mFeGrad">0.000</span></div>
+                <div class="metric" style="padding:1px 0;"><span style="color:#8b949e;">Spont. &#x03BE;</span><span class="val" id="mSpont">0.05</span></div>
+                <div class="metric" style="padding:1px 0;"><span style="color:#8b949e;">AI blend &#x03B1;</span><span class="val" id="mAiBlend">0.30</span></div>
+                <div class="metric" style="padding:1px 0;"><span style="color:#8b949e;">Convergence</span><span class="val" id="mAiConv">0.000</span></div>
+            </div>
         </div>
         <div class="card" style="padding:10px;">
             <h3>Fish Population</h3>
@@ -1467,6 +1473,24 @@ function updateStep(d) {
         });
         feEl.innerHTML = html;
     }
+
+    // Action-perception cycle diagnostics
+    const feGrad = d.fe_gradient || 0;
+    const spont = d.spontaneity || 0;
+    const aiBlend = d.ai_blend || 0;
+    const aiConv = d.ai_convergence || 0;
+    const feGradEl = document.getElementById('mFeGrad');
+    const spontEl = document.getElementById('mSpont');
+    const aiBlendEl = document.getElementById('mAiBlend');
+    const aiConvEl = document.getElementById('mAiConv');
+    feGradEl.textContent = feGrad.toFixed(3);
+    feGradEl.className = 'val' + (feGrad > 0.05 ? ' bad' : (feGrad > 0.01 ? ' warn' : ''));
+    spontEl.textContent = spont.toFixed(2);
+    spontEl.className = 'val' + (spont > 0.5 ? ' bad' : (spont > 0.2 ? ' warn' : ''));
+    aiBlendEl.textContent = aiBlend.toFixed(2);
+    aiBlendEl.className = 'val';
+    aiConvEl.textContent = aiConv.toFixed(3);
+    aiConvEl.className = 'val' + (Math.abs(aiConv) < 0.01 ? '' : (aiConv < 0 ? '' : ' warn'));
 
     // Arena canvas rendering (resize to container, handle DPI)
     const rect = arenaCanvas.getBoundingClientRect();

@@ -1407,6 +1407,10 @@ def _idle_demo_step():
         # Free energy (simulated from prediction errors)
         'free_energy': round(abs(retina_L - retina_R) * 0.05 + n.get('starvation_anxiety', 0) * 0.15, 4),
         'total_free_energy': round(abs(retina_L - retina_R) * 0.05 + n.get('starvation_anxiety', 0) * 0.15 + max_looming * 0.1, 4),
+        'fe_gradient': 0.0,
+        'spontaneity': 0.05,
+        'ai_blend': 0.3,
+        'ai_convergence': 0.0,
         'module_fe': {
             'retina': round(abs(retina_L - retina_R) * 0.03, 4),
             'olfaction': round(olf_food * 0.02, 4),
