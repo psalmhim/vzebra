@@ -914,6 +914,28 @@ to switch strategies.  Free energy thus drives perception
 (belief updating), action (motor PE minimisation), \emph{and}
 policy selection (goal switching)---the three faces of active
 inference \citep{friston2010,parr2022}.
+Figure~\ref{fig:apc} summarises the four signals produced by this
+cycle over a representative 400-step episode.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{plots/v2_paper/fig_apc.pdf}
+\caption{Action-perception cycle diagnostics (400 steps).
+(a) Iterative inference reduces free energy within each time step:
+median $F$ across $K=3$ passes (shaded IQR; grey traces, individual
+time points). Mean $\Delta F \approx 0.035$ per step.
+(b) Adaptive blend $\alpha_\text{AI}$ (orange, left axis) tracks
+mean motor precision $\bar\pi$ (navy, right axis); $\alpha$ holds in
+$[0.43, 0.56]$ under healthy precision---well above the fixed baseline
+$\alpha = 0.3$ (grey dashed).
+(c) Spontaneity $\xi$ (crimson): baseline 0.05 from neural noise,
+rising above the 0.3 threshold (red shading) when habenula helplessness
+or phasic-DA exploration engages.
+(d) $\dot F = dF/dt$ (purple): when surprise rises above 0.05 (dashed),
+the current goal is penalised in the WTA selector; coloured bands at
+the bottom show goal identity (FORAGE, FLEE, EXPLORE, SOCIAL).}
+\label{fig:apc}
+\end{figure}
 
 \paragraph{Mauthner C-Start and T-Start Escape Circuits}
 
