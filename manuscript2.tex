@@ -937,6 +937,34 @@ the bottom show goal identity (FORAGE, FLEE, EXPLORE, SOCIAL).}
 \label{fig:apc}
 \end{figure}
 
+\paragraph{APC Ablation.}
+To quantify the contribution of iterative active inference, we compared
+$K\!=\!3$ inference passes (APC ON) against a single-pass baseline
+($K\!=\!1$, fixed $\alpha\!=\!0.3$, no spontaneity) over $n\!=\!5$
+matched seeds (300 steps each).  Results (Table~\ref{tab:apc_ablation})
+show a 78\% reduction in mean free energy
+($\bar{F} = 0.007$ vs.\ $0.032$, $p < 0.05$) with no regression in
+food intake ($8.00 \pm 2.28$ vs.\ $8.40 \pm 2.42$) or survival
+(both 300/300 steps).  The iterative inference loop thus reduces
+surprise more effectively without behavioural cost.
+
+\begin{table}[H]
+\centering
+\caption{APC ablation: iterative inference ($K\!=\!3$) vs.\ single-pass
+  ($K\!=\!1$). $n\!=\!5$ seeds, 300 steps. $\bar{F}$ = mean free energy.}
+\label{tab:apc_ablation}
+\begin{tabular}{lccc}
+\toprule
+Condition & Food & Survival & $\bar{F}$ \\
+\midrule
+APC OFF ($K\!=\!1$, $\alpha\!=\!0.3$) & $8.40 \pm 2.42$ & 300/300 & 0.032 \\
+APC ON  ($K\!=\!3$, adaptive $\alpha$) & $8.00 \pm 2.28$ & 300/300 & \textbf{0.007} \\
+\midrule
+$\Delta$ & $-0.40$ & $0$ & $-0.025$ ($-78\%$) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \paragraph{Mauthner C-Start and T-Start Escape Circuits}
 
 Separate left and right Mauthner cells ($\text{M}_L$, $\text{M}_R$)
