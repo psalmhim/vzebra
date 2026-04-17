@@ -7,6 +7,7 @@ Runs matched seeds with:
 
 Reports mean food and survival; verifies APC does not regress baseline.
 """
+import gc
 import os
 import sys
 import time
@@ -65,6 +66,14 @@ def run_condition(name, setup_fn):
         results.append(r)
         print(f"  [{name}] seed {i+1}/{N_SEEDS}  "
               f"survived={r['survived']}  food={r['food']}  F={r['fe_mean']:.3f}")
+        del brain
+        gc.collect()
+        try:
+            import torch
+            if hasattr(torch.mps, 'empty_cache'):
+                torch.mps.empty_cache()
+        except Exception:
+            pass
     dt = time.time() - t0
     survivals = [r['survived'] for r in results]
     foods = [r['food'] for r in results]
