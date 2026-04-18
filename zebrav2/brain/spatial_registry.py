@@ -1,16 +1,25 @@
 """
 Spatial neuron registry: assigns 3D atlas positions to every neuron in the v2 brain.
 
-Each brain region's neurons get positions from the zebrafish calcium imaging atlas
-(subject 12, 58K cells, micron coordinates). Connections between regions are
-weighted by physical distance: closer neurons → stronger initial weights.
+Each brain region's neurons get positions from the 72-region bilateral zebrafish
+atlas (subject 12, 47010 cells, voxel coordinates).  CSV files:
+    subject_12_CellXYZ.csv     — (x, y, z) voxel per cell
+    subject_12_region_num.csv  — region number 0-71 per cell
+
+Region numbering matches generate_brain_atlas.py:
+    left hemisphere 0-35, right hemisphere 36-71 (right = left + 36)
+
+Connections between regions are weighted by physical distance:
+    closer neurons → stronger initial weights.
 
 Usage:
     registry = SpatialRegistry(device='mps')
     registry.assign_positions(brain)  # assigns .positions to each layer
-    mask = registry.distance_mask('tectum', 'thalamus', lambda_um=100.0)
+    mask = registry.distance_mask('tectum', 'thalamus', lambda_vx=100.0)
 """
 import os
+import ast
+import csv
 import math
 import numpy as np
 import torch
@@ -23,35 +32,77 @@ class SpatialRegistry:
         self.device = device
         self._atlas_xyz = None
         self._atlas_labels = None
-        self._region_positions = {}  # region_name → (N, 3) tensor in microns
+        self._region_positions = {}  # region_name → (N, 3) tensor in voxels
 
-        # Atlas label → brain region mapping
-        # Labels from cell_label_indices_s12.npy (0-36)
+        # 72-region bilateral atlas label map
+        # Keys = abstract brain region names used by the v2 brain
+        # Values = list of atlas region numbers (left/right)
+        # 72-region bilateral atlas label map (synced with generate_brain_atlas.py)
+        # Keys = abstract brain region names, Values = atlas region numbers
+        # Left hemisphere 0-35, Right hemisphere 36-71 (right = left + 36)
         self.label_map = {
-            'tectum':       [0, 30],
-            'cerebellum':   [1, 36],
-            'pallium':      [2],
-            'thalamus':     [3, 5],
-            'tegmentum':    [4, 15],
-            'hypothalamus': [12, 13, 14],
-            'medulla':      [23, 29, 31],
-            'reticular':    [25, 26],
-            'habenula':     [8],
-            'subpallium':   [11],
-            'preoptic':     [18],
-            'olfactory':    [17, 32],
-            'spinal':       [21],
-            'raphe':        [33],
-            'pretectum':    [27],
+            # Core regions
+            'tectum':           [29, 65],       # lTeO / rTeO
+            'cerebellum':       [1, 37],        # lCb / rCb
+            'pallium':          [22, 58],       # lP / rP
+            'thalamus':         [30, 66],       # lTh / rTh
+            'tegmentum':        [11, 47],       # lT / rT
+            'hypothalamus':     [17, 53],       # lHi / rHi
+            'medulla':          [0, 36],        # lMON / rMON
+            'reticular':        [12, 48, 13, 49, 14, 50],  # aRF + imRF + pRF
+            'habenula':         [16, 52],       # lHb / rHb
+            'subpallium':       [28, 64],       # lSP / rSP
+            'preoptic':         [25, 61],       # lPO / rPO
+            'olfactory':        [20, 56],       # lOB / rOB
+            'spinal':           [35, 71],       # lNX / rNX
+            'raphe':            [10, 46],       # lRa / rRa
+            'pretectum':        [26, 62],       # lPrT / rPrT
+            'posterior_tuberculum': [24, 60],   # lPT / rPT (reticulospinal)
+            'posterior_rf':     [14, 50],       # lpRF / rpRF (habit, NA)
+            'hindbrain':        [0, 36, 12, 48, 13, 49, 14, 50],
+
+            # Fine-grained sub-regions (for brain_v2 modules)
+            'tectum_L':         [29],           # left TeO only
+            'tectum_R':         [65],           # right TeO only
+            'thalamus_L':       [30],           # left Th only
+            'thalamus_R':       [66],           # right Th only
+            'amygdala':         [28, 64],       # SP (amygdala homolog)
+            'basal_ganglia':    [28, 64],       # SP (D1/D2/GPi)
+            'place_cells':      [22, 58],       # Pallium (hippocampal homolog)
+            'classifier':       [29, 65],       # Tectum-anchored visual classifier
+            'goal_selector':    [25, 61],       # PO / preoptic
+            'reticulospinal':   [24, 60],       # PT (posterior tuberculum)
+            'lateral_line':     [0, 36],        # MON
+            'vestibular':       [0, 36],        # MON (vestibular portion)
+            'color_vision':     [29, 65],       # TeO (spectral layers)
+            'saccade':          [26, 62],       # PrT (pretectum)
+            'predictive':       [26, 62],       # PrT (predictive coding)
+            'critic':           [11, 47],       # Tegmentum (VTA/SNc homolog)
+            'habit':            [14, 50],       # pRF (habit network)
+            'insula':           [17, 53],       # Hypothalamus (interoceptive cortex)
+            'circadian':        [17, 53],       # Hypothalamus (SCN homolog)
+            'sleep_wake':       [17, 53],       # Hypothalamus (VLPO homolog)
+            'allostasis':       [17, 53],       # Hypothalamus (allostatic regulation)
+            'ipn':              [11, 47],       # T (tegmentum — IPN is ventral)
+            'cpg_L':            [35],           # NX left (spinal CPG)
+            'cpg_R':            [71],           # NX right (spinal CPG)
         }
 
     def _load_atlas(self):
+        """Load the 72-region bilateral CSV atlas (voxel coordinates)."""
         if self._atlas_xyz is not None:
             return
-        self._atlas_xyz = np.load(
-            os.path.join(ATLAS_DIR, 'cell_xyz_s12.npy')).astype(np.float32)
-        self._atlas_labels = np.load(
-            os.path.join(ATLAS_DIR, 'cell_label_indices_s12.npy'))
+        self._atlas_xyz = np.loadtxt(
+            os.path.join(ATLAS_DIR, 'subject_12_CellXYZ.csv'),
+            delimiter=',', skiprows=1, dtype=np.float32)
+
+        region_nums = []
+        with open(os.path.join(ATLAS_DIR, 'subject_12_region_num.csv')) as f:
+            reader = csv.reader(f)
+            next(reader)  # skip header
+            for row in reader:
+                region_nums.append(ast.literal_eval(row[0])[0])
+        self._atlas_labels = np.array(region_nums, dtype=np.int32)
 
     def _get_region_stats(self, labels):
         """Get centroid and spread for a set of atlas labels."""
@@ -144,25 +195,52 @@ class SpatialRegistry:
         Stores positions as .spatial_pos attribute on each module.
         """
         mappings = {
-            # module_name: (region_name, n_neurons, optional_offset)
-            # Retinae (most anterior, laterally separated)
-            'retina_L':      ('olfactory', 1000, [0, -30, 0]),  # olfactory region = anterior
-            'retina_R':      ('olfactory', 1000, [0, 30, 0]),
-            'tectum.sfgs_b': ('tectum', (brain.tectum.sfgs_b_L.n_e + brain.tectum.sfgs_b_L.n_i) * 2, [0, 0, 20]),
-            'tectum.sfgs_d': ('tectum', (brain.tectum.sfgs_d_L.n_e + brain.tectum.sfgs_d_L.n_i) * 2, [0, 0, 0]),
-            'tectum.sgc':    ('tectum', (brain.tectum.sgc_L.n_e + brain.tectum.sgc_L.n_i) * 2, [0, 0, -15]),
-            'tectum.so':     ('tectum', (brain.tectum.so_L.n_e + brain.tectum.so_L.n_i) * 2, [0, 0, -30]),
-            'thalamus.TC':   ('thalamus', brain.thalamus_L.TC.n + brain.thalamus_R.TC.n, None),
-            'thalamus.TRN':  ('thalamus', brain.thalamus_L.TRN.n + brain.thalamus_R.TRN.n, [0, 0, 10]),
-            'pallium.pal_s': ('pallium', brain.pallium.pal_s.n_e + brain.pallium.pal_s.n_i, None),
-            'pallium.pal_d': ('pallium', brain.pallium.pal_d.n_e + brain.pallium.pal_d.n_i, [0, 0, -15]),
-            'amygdala':      ('subpallium', 50, [0, 0, -20]),
-            'habenula':      ('habenula', 50, None),
-            'cerebellum':    ('cerebellum', 270, None),
-            'bg':            ('subpallium', 760, None),
-            'place':         ('pallium', 128, [15, 0, 0]),
-            'critic':        ('tegmentum', 68, None),
-            'insula':        ('hypothalamus', 34, None),
+            # key: (atlas_region_name, n_neurons, offset_um)
+            # -- Retinae (anterior, bilaterally separated) --
+            'retina_L':              ('olfactory',    1000, [0, -40,  0]),
+            'retina_R':              ('olfactory',    1000, [0,  40,  0]),
+            # -- Tectum layers (bilateral, each hemisphere separately) --
+            'tectum.sfgs_b_L':       ('tectum', brain.tectum.sfgs_b_L.n_e + brain.tectum.sfgs_b_L.n_i, [0, -50,  20]),
+            'tectum.sfgs_b_R':       ('tectum', brain.tectum.sfgs_b_R.n_e + brain.tectum.sfgs_b_R.n_i, [0,  50,  20]),
+            'tectum.sfgs_d_L':       ('tectum', brain.tectum.sfgs_d_L.n_e + brain.tectum.sfgs_d_L.n_i, [0, -50,   0]),
+            'tectum.sfgs_d_R':       ('tectum', brain.tectum.sfgs_d_R.n_e + brain.tectum.sfgs_d_R.n_i, [0,  50,   0]),
+            'tectum.sgc_L':          ('tectum', brain.tectum.sgc_L.n_e + brain.tectum.sgc_L.n_i,       [0, -50, -15]),
+            'tectum.sgc_R':          ('tectum', brain.tectum.sgc_R.n_e + brain.tectum.sgc_R.n_i,       [0,  50, -15]),
+            'tectum.so_L':           ('tectum', brain.tectum.so_L.n_e + brain.tectum.so_L.n_i,         [0, -50, -30]),
+            'tectum.so_R':           ('tectum', brain.tectum.so_R.n_e + brain.tectum.so_R.n_i,         [0,  50, -30]),
+            # -- Thalamus (bilateral) --
+            'thalamus.tc_L':         ('thalamus', brain.thalamus_L.TC.n,  [0, -25,  0]),
+            'thalamus.tc_R':         ('thalamus', brain.thalamus_R.TC.n,  [0,  25,  0]),
+            'thalamus.trn_L':        ('thalamus', brain.thalamus_L.TRN.n, [0, -25, 10]),
+            'thalamus.trn_R':        ('thalamus', brain.thalamus_R.TRN.n, [0,  25, 10]),
+            # -- Pallium --
+            'pallium.pal_s':         ('pallium', brain.pallium.pal_s.n_e + brain.pallium.pal_s.n_i, None),
+            'pallium.pal_d':         ('pallium', brain.pallium.pal_d.n_e + brain.pallium.pal_d.n_i, [0, 0, -15]),
+            # -- Basal ganglia --
+            'bg':                    ('subpallium', 760, None),
+            # -- Limbic --
+            'amygdala':              ('subpallium',  50, [0, 0, -20]),
+            'habenula':              ('habenula',    50, None),
+            # -- Cerebellum --
+            'cerebellum':            ('cerebellum', 270, None),
+            # -- Hypothalamus / internal state --
+            'insula':                ('hypothalamus', 34, None),
+            # -- Motor --
+            'critic':                ('tegmentum',   68, None),
+            'place':                 ('pallium',    128, [15, 0, 0]),
+            # -- Sensory --
+            'lateral_line':          ('medulla',     24, None),
+            'olfaction':             ('olfactory',   28, [0, 0, -10]),
+            'vestibular':            ('medulla',      6, [0, 0, 10]),
+            'proprioception':        ('spinal',       8, [5, 0, 0]),
+            'color_vision':          ('tectum',      32, [0, 0, 30]),
+            # -- Temporal / state --
+            'circadian':             ('hypothalamus', 6, [-20, 0, 0]),
+            'sleep_wake':            ('hypothalamus', 4, [-25, 0, 0]),
+            'working_memory':        ('pallium',     40, [20, 0, 0]),
+            'saccade':               ('pretectum',    6, [10, 0, 0]),
+            'pretectum':             ('pretectum',   60, None),
+            'ipn':                   ('tegmentum',   24, [0, 0, -10]),
         }
 
         brain._spatial_registry = self
@@ -192,6 +270,14 @@ class SpatialRegistry:
         mask = self.distance_weight_mask(region_a, region_b, lambda_um)
         if mask is None:
             return weight_matrix
+        # Handle dimension mismatch: weight shape may differ from position count
+        w_shape = weight_matrix.data.shape
+        if mask.shape != w_shape:
+            # Resize mask via bilinear interpolation to match weight matrix
+            mask = torch.nn.functional.interpolate(
+                mask.unsqueeze(0).unsqueeze(0),
+                size=w_shape, mode='bilinear', align_corners=False
+            ).squeeze(0).squeeze(0)
         with torch.no_grad():
             blended = weight_matrix.data * (1 - strength + strength * mask)
             weight_matrix.data.copy_(blended)

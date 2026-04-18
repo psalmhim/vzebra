@@ -43,7 +43,8 @@ class ReticulospinalSystem(nn.Module):
         'CaD5', 'CaD6',
     ]  # 21 neurons per side
 
-    def __init__(self, device=DEVICE):
+    def __init__(self, device=DEVICE,
+                 g_gap=0.15, gap_decay=0.85):
         super().__init__()
         self.device = device
         self.n_rs = len(self.NEURON_NAMES)  # 21
@@ -55,6 +56,21 @@ class ReticulospinalSystem(nn.Module):
         # Motor output buffers
         self.register_buffer('motor_turn',  torch.tensor(0.0, device=device))
         self.register_buffer('motor_speed', torch.tensor(1.0, device=device))
+
+        # --- Gap junction (electrical synapse) parameters ---
+        # Club endings on M-cell are mixed synapses: chemical + electrical.
+        # Gap junctions provide fast, subthreshold depolarization that lowers
+        # the effective C-start threshold.  g_gap scales the coupling current;
+        # gap_state decays between inputs (gap_decay).
+        # Pereda & Faber (2011): "Roles of goldfish Mauthner cell electrical
+        # synapses in circuit function"
+        self.g_gap = g_gap          # coupling conductance (0-1)
+        self.gap_decay = gap_decay  # temporal decay of gap state
+        self._gap_state_L = 0.0     # accumulated gap coupling, left M-cell
+        self._gap_state_R = 0.0     # accumulated gap coupling, right M-cell
+        # Effective C-start threshold: lowered when gap junctions are active
+        self._cstart_base_threshold = 0.05  # standard SGC threshold
+        self._cstart_gap_threshold = 0.04   # ~20% lower when gap-facilitated
 
         # --- Mauthner (C-start) state machines — one per side ---
         # refrac: countdown to zero; while > 0 the cell cannot fire.
@@ -144,6 +160,28 @@ class ReticulospinalSystem(nn.Module):
         if self.mauthner_refrac_R > 0: self.mauthner_refrac_R -= 1
         if self.tstart_refrac      > 0: self.tstart_refrac     -= 1
 
+        # --- Gap junction dynamics ---
+        # Subthreshold sensory input accumulates via electrical coupling.
+        # Left M-cell receives gap current from RIGHT sensory (contralateral).
+        # Split SGC into L/R halves for lateralized gap drive.
+        half = len(sgc_rate) // 2
+        sgc_L_mean = sgc_rate[:half].mean().item() if half > 0 else sgc_mean
+        sgc_R_mean = sgc_rate[half:].mean().item() if half > 0 else sgc_mean
+        # Contralateral: R sensory → L M-cell gap, L sensory → R M-cell gap
+        self._gap_state_L = (self._gap_state_L * self.gap_decay
+                             + self.g_gap * sgc_R_mean)
+        self._gap_state_R = (self._gap_state_R * self.gap_decay
+                             + self.g_gap * sgc_L_mean)
+        # Effective C-start threshold: gap coupling lowers it
+        gap_facilitation_L = min(1.0, self._gap_state_L * 5.0)  # 0-1
+        gap_facilitation_R = min(1.0, self._gap_state_R * 5.0)
+        cstart_thresh_L = (self._cstart_base_threshold
+                           - gap_facilitation_L * (self._cstart_base_threshold
+                                                   - self._cstart_gap_threshold))
+        cstart_thresh_R = (self._cstart_base_threshold
+                           - gap_facilitation_R * (self._cstart_base_threshold
+                                                   - self._cstart_gap_threshold))
+
         # ----------------------------------------------------------
         # 2. C-start: serve ongoing motor sequence (highest priority)
         # ----------------------------------------------------------
@@ -172,8 +210,11 @@ class ReticulospinalSystem(nn.Module):
 
         # ----------------------------------------------------------
         # 4. Check for new C-start trigger (looming + SGC above threshold)
+        #    Gap junctions lower threshold: 0.05 → 0.04 when facilitated
         # ----------------------------------------------------------
-        if looming and sgc_mean > 0.05:
+        # Use lateralized thresholds: threat from one side lowers THAT side's threshold
+        _effective_thresh = min(cstart_thresh_L, cstart_thresh_R)
+        if looming and sgc_mean > _effective_thresh:
             # Determine which M-cell to fire based on threat laterality.
             # M-cells are contralateral: threat on RIGHT → fire LEFT M-cell
             #                            threat on LEFT  → fire RIGHT M-cell
@@ -285,6 +326,8 @@ class ReticulospinalSystem(nn.Module):
             'tstart': tstart,
             'rate_L': self.rate_L,
             'rate_R': self.rate_R,
+            'gap_state_L': self._gap_state_L,
+            'gap_state_R': self._gap_state_R,
         }
 
     # ------------------------------------------------------------------
@@ -303,3 +346,6 @@ class ReticulospinalSystem(nn.Module):
         self.rate_R.zero_()
         self.motor_turn.zero_()
         self.motor_speed.fill_(1.0)
+        # Gap junction state
+        self._gap_state_L = 0.0
+        self._gap_state_R = 0.0

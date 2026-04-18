@@ -4,9 +4,9 @@
 
 | Property | Value |
 |----------|-------|
-| Total SNN neurons | 7,006 (Izhikevich) + 160 (LIF) |
-| Total modules | 29 |
-| SNN modules | 22 |
+| Total SNN neurons | 7,090 (Izhikevich) + 160 (LIF) |
+| Total modules | 31 |
+| SNN modules | 24 |
 | Rate/analytic modules | 7 |
 | Neuron model | Izhikevich (midpoint integration, 1ms timestep) |
 | Cell types | RS, IB, FS, CH, LTS, TC, MSN (7 types) |
@@ -162,8 +162,8 @@
 | Module | Type | Neurons | Function |
 |--------|------|---------|----------|
 | Active Inference Motor | **SNN (Izh 2-comp)** | **48** | Action-perception cycle: 8 proprioceptive channels × 6 neurons, iterative inference (3 passes/step) |
-| Reticulospinal | Rate model | 21/side | Named neurons (Mauthner, MiD2/3, RoM2, MeM, CaD) |
-| Mauthner cell | Rate | 1/side | C-start escape (looming trigger, 4-step sequence) |
+| Reticulospinal | Rate model | 21/side | Named neurons (Mauthner, MiD2/3, RoM2, MeM, CaD), gap junction coupling |
+| Mauthner cell | Rate | 1/side | C-start escape (looming trigger, 4-step sequence), gap junction facilitation (threshold 0.05→0.04) |
 | Spinal CPG | **SNN (LIF)** | **32** | Half-centre oscillator (8 V2a + 4 V0d + 4 MN per side) |
 | Wall avoidance | Analytic | — | Angle-to-center proportional correction |
 
@@ -204,6 +204,8 @@ speed = goal_speed × allostatic_fatigue_cap
 | Habenula | **SNN** | **50** | LHb(30 RS) + MHb(20 RS) | Disappointment, per-goal frustration, strategy switch |
 | Cerebellum | **SNN** | **270** | GC(200 RS) + PC(50 IB) + DCN(20 RS) | Forward model, parallel fiber LTD, prediction error |
 | Insular Cortex | **SNN** | **34** | 3×10 channels + 4 valence (RS) | Hunger/fatigue/stress encoding, heart rate, valence |
+| Pretectum | **SNN** | **60** | 30 RS per hemisphere | OKR, direction-selective, retinal slip → image stabilization |
+| IPN | **SNN** | **24** | vIPN(12 RS) + dIPN(12 RS) | Habenula relay, behavioral inhibition, DA/5-HT feedback |
 
 #### Amygdala Detail
 
@@ -332,12 +334,12 @@ Social state inference:
 | Goal Selection | Goal Selector (4) | — | — | EFE computation | 2 |
 | Action Gating | — | — | BG (760) | — | 1 |
 | Motor | — | CPG (32) | RS (42) | Wall avoidance | 3 |
-| Subcortical | Amygdala (50), Habenula (50), Cerebellum (270), Insula (34) | — | — | — | 4 |
+| Subcortical | Amygdala (50), Habenula (50), Cerebellum (270), Insula (34), Pretectum (60), IPN (24) | — | — | — | 6 |
 | Learning | Critic (68), Predictive (192), Habit (40) | — | — | W_FB, ELBO | 5 |
 | Memory | — | — | Place Cells (128) | Predator Model, Allostasis, World Model | 4 |
 | Neuromod | — | — | DA/NA/5-HT/ACh | — | 1 |
 | World Model | — | — | — | VAE (8600 params) | 1 |
-| **Total** | **6,688 neurons** | **160 neurons** | **2,930 neurons** | **7 modules** | **28 files** |
+| **Total** | **6,772 neurons** | **160 neurons** | **2,930 neurons** | **7 modules** | **30 files** |
 
 ---
 
@@ -345,7 +347,7 @@ Social state inference:
 
 | Paradigm | Where Used | Key Modules |
 |----------|-----------|-------------|
-| **SNN (Izhikevich)** | Sensory→motor processing, fear, goal selection, value, prediction, habits, interoception, forward model, disappointment | Tectum, Thalamus, Pallium, Amygdala, Goal Selector, Cerebellum, Habenula, RL Critic, Predictive Net, Habit Net, Insula |
+| **SNN (Izhikevich)** | Sensory→motor processing, fear, goal selection, value, prediction, habits, interoception, forward model, disappointment, OKR, behavioral inhibition | Tectum, Thalamus, Pallium, Amygdala, Goal Selector, Cerebellum, Habenula, RL Critic, Predictive Net, Habit Net, Insula, Pretectum, IPN |
 | **SNN (LIF)** | Scene classification, rhythmic locomotion | Classifier, Spinal CPG |
 | **Active Inference** | Goal selection (EFE), belief state (VAE), predictive coding (pallium PE), visual prediction (predictive net), exploration drive (surprise) | EFE engine, VAE World Model, Pallium W_FB, Predictive Net, Cerebellum |
 | **Reinforcement Learning** | Value estimation (TD), reward prediction error (DA), habit formation (Hebbian), strategy switching (frustration) | RL Critic, Neuromod DA, Habit Network, Habenula |

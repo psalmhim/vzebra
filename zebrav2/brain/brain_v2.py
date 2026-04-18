@@ -53,6 +53,8 @@ from zebrav2.brain.active_motor import ActiveInferenceMotor
 from zebrav2.brain.social_memory import SocialMemory
 from zebrav2.brain.hpa_axis import HPAAxis
 from zebrav2.brain.oxytocin import OxytocinSystem
+from zebrav2.brain.pretectum import SpikingPretectum
+from zebrav2.brain.ipn import SpikingIPN
 
 GOAL_FORAGE, GOAL_FLEE, GOAL_EXPLORE, GOAL_SOCIAL = 0, 1, 2, 3
 
@@ -189,6 +191,10 @@ class ZebrafishBrainV2(nn.Module):
         # Stress hormone (HPA/HPI axis) + social bonding (oxytocin/vasopressin)
         self.hpa = HPAAxis()
         self.oxt = OxytocinSystem()
+        # Pretectum: optokinetic response (OKR) from direction-selective retinal input
+        self.pretectum = SpikingPretectum(device=device)
+        # Interpeduncular nucleus: habenula relay → behavioral inhibition + DA feedback
+        self.ipn = SpikingIPN(device=device)
         # EFE state (adapted from v1)
         self.goal_probs = torch.tensor([0.25, 0.25, 0.25, 0.25], device=device)
         self.current_goal = GOAL_EXPLORE
@@ -339,6 +345,13 @@ class ZebrafishBrainV2(nn.Module):
         # Classify scene
         cls_out = self.classifier.classify(L, R)
         self._cls_probs = cls_out['probs'].detach()
+
+        # Pretectum: optokinetic response from direction-selective RGC input
+        # DS rates are mean direction-selective activity per eye
+        _ds_L = float(rgc_out['L_ds'].mean()) if rgc_out['L_ds'].numel() > 0 else 0.0
+        _ds_R = float(rgc_out['R_ds'].mean()) if rgc_out['R_ds'].numel() > 0 else 0.0
+        _eye_vel = self.saccade.gaze_offset * 0.5  # rough eye velocity proxy
+        pretect_out = self.pretectum(_ds_L, _ds_R, eye_velocity=_eye_vel)
 
         # Fish position: from place cell centroid (no GT reads)
         pc_rate = self.place.rate
@@ -1155,6 +1168,19 @@ class ZebrafishBrainV2(nn.Module):
         else:
             hab_out = _hab_null
 
+        # IPN: habenula relay → behavioral inhibition + DA/5-HT modulation
+        # Receives MHb (aversion) and LHb (disappointment) rates from habenula
+        _ipn_null = {'behavioral_inhibition': 0.0, 'da_feedback': 0.0,
+                     'raphe_drive': 0.0, 'aversion_memory': 0.0,
+                     'vipn_rate': 0.0, 'dipn_rate': 0.0, 'speed_multiplier': 1.0}
+        if self._active('habenula'):
+            ipn_out = self.ipn(
+                mhb_rate=hab_out.get('mhb_rate', 0.0),
+                lhb_rate=hab_out.get('lhb_rate', 0.0),
+                aversion=self.amygdala_alpha)
+        else:
+            ipn_out = _ipn_null
+
         nm = self.neuromod.update(
             reward=reward, amygdala_alpha=self.amygdala_alpha,
             cms=self.cms, flee_active=(self.current_goal == GOAL_FLEE),
@@ -1173,6 +1199,10 @@ class ZebrafishBrainV2(nn.Module):
                 self.neuromod.DA.mul_(1.0 - hab_out['da_suppression'])
             if hab_out['ht5_suppression'] > _nm.habenula_ht5_suppression_gate:
                 self.neuromod.HT5.mul_(1.0 - hab_out['ht5_suppression'])
+            # IPN DA feedback: sustained aversion → additional DA suppression
+            if ipn_out['da_feedback'] < -0.05:
+                self.neuromod.DA.mul_(1.0 + ipn_out['da_feedback'])  # da_feedback is negative
+                self.neuromod.DA.clamp_(0.0, 1.0)
 
         # ── Perturbation: apply drug multipliers to neuromodulators ──
         if self._perturbations is not None:
@@ -1259,6 +1289,9 @@ class ZebrafishBrainV2(nn.Module):
         # Apply sensory module outputs to the already-computed motor commands
         # Vestibular postural correction: counteract over-rotation during sharp turns
         turn += vest_out['postural_correction'] * 0.15
+        # Pretectum OKR: compensatory gaze stabilization (image slip → counter-rotation)
+        # Small contribution (0.05) to avoid overriding intentional turns
+        turn += pretect_out['okr_velocity'] * 0.05
         # Saccade gaze micro-adjustment: active vision (only during non-flee)
         if saccade_out['saccade_active'] and self.current_goal != GOAL_FLEE:
             turn += saccade_out['gaze_offset'] * 0.1
@@ -1270,6 +1303,9 @@ class ZebrafishBrainV2(nn.Module):
             pass
         # Sleep-wake: reduce responsiveness when drowsy (melatonin-driven)
         speed *= sw_out['responsiveness']
+        # IPN behavioral inhibition: aversion → slow down (not during active flee)
+        if self.current_goal != GOAL_FLEE and self._active('habenula'):
+            speed *= ipn_out['speed_multiplier']
         speed = max(_mc_cfg.speed_min_clamp, min(_mc_cfg.speed_max_clamp, speed))
         # Proprioception: collision detected → trigger stuck recovery
         if prop_out['collision']:
@@ -1428,6 +1464,16 @@ class ZebrafishBrainV2(nn.Module):
             'spontaneity': self._spontaneity,
             'gaze_free_energy': saccade_out.get('gaze_free_energy', 0.0),
             'gaze_precision': saccade_out.get('gaze_precision', 1.0),
+            # Pretectum OKR
+            'okr_velocity': pretect_out['okr_velocity'],
+            'pretectum_dsi': pretect_out['dsi'],
+            'retinal_slip': pretect_out['retinal_slip'],
+            # IPN behavioral inhibition
+            'ipn_inhibition': ipn_out['behavioral_inhibition'],
+            'ipn_aversion_memory': ipn_out['aversion_memory'],
+            # Gap junction state
+            'gap_state_L': rs_out.get('gap_state_L', 0.0),
+            'gap_state_R': rs_out.get('gap_state_R', 0.0),
         }
 
     # ------------------------------------------------------------------
@@ -1560,6 +1606,8 @@ class ZebrafishBrainV2(nn.Module):
         self.goal_selector.reset()
         self.cerebellum.reset()
         self.habenula.reset()
+        self.pretectum.reset()
+        self.ipn.reset()
         self.predictive.reset()
         self.critic.reset()
         self.habit.reset()

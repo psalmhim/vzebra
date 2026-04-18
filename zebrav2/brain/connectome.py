@@ -73,6 +73,11 @@ ANATOMICAL_PROJECTIONS = [
     ('PT',  'P',   0.4),   # Post. tuberculum → Pallium (DA)
     ('P',   'Hr',  0.3),   # Pallium → Hypothalamus
     ('Cb',  'TeO', 0.3),   # Cerebellum → Tectum
+    ('TeO', 'PrT', 0.8),   # Tectum → Pretectum (already listed above, but explicit)
+    ('PrT', 'Th',  0.5),   # Pretectum → Thalamus (already listed above)
+    ('Hb',  'IPN', 0.9),   # Habenula → IPN (strongest projection: MHb→vIPN)
+    ('IPN', 'Ra',  0.5),   # IPN → Raphe (5-HT modulation)
+    ('IPN', 'PT',  0.4),   # IPN → Post. tuberculum (DA feedback)
 ]
 
 # Map v2 modules to atlas regions
@@ -85,6 +90,8 @@ V2_TO_ATLAS = {
     'rs':       'aRF',
     'neuromod_da':  'PT',
     'neuromod_5ht': 'Ra',
+    'pretectum':    'PrT',
+    'ipn':          'IPN',
 }
 
 
