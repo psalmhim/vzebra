@@ -70,13 +70,19 @@ def _run_episode(env, brain, T=300, seed=42):
         obs, reward, terminated, truncated, info = env.step(action)
         env._eaten_now = info.get('food_eaten_this_step', 0)
 
-        # Collect
-        traces['sfgsb_rate'].append(brain.tectum.sfgs_b.get_rate_e().detach().cpu().numpy().copy())
-        traces['sfgsd_rate'].append(brain.tectum.sfgs_d.get_rate_e().detach().cpu().numpy().copy())
-        traces['sgc_rate'].append(brain.tectum.sgc.get_rate_e().detach().cpu().numpy().copy())
-        traces['so_rate'].append(brain.tectum.so.get_rate_e().detach().cpu().numpy().copy())
-        traces['tc_rate'].append(brain.thalamus.tc_rate.detach().cpu().numpy().copy())
-        traces['trn_rate'].append(brain.thalamus.trn_rate.detach().cpu().numpy().copy())
+        # Collect — tectum: average L+R hemispheres; thalamus: concatenate L+R
+        _sfgsb = 0.5 * (brain.tectum.sfgs_b_L.get_rate_e() + brain.tectum.sfgs_b_R.get_rate_e())
+        _sfgsd = 0.5 * (brain.tectum.sfgs_d_L.get_rate_e() + brain.tectum.sfgs_d_R.get_rate_e())
+        _sgc   = 0.5 * (brain.tectum.sgc_L.get_rate_e()    + brain.tectum.sgc_R.get_rate_e())
+        _so    = 0.5 * (brain.tectum.so_L.get_rate_e()     + brain.tectum.so_R.get_rate_e())
+        traces['sfgsb_rate'].append(_sfgsb.detach().cpu().numpy().copy())
+        traces['sfgsd_rate'].append(_sfgsd.detach().cpu().numpy().copy())
+        traces['sgc_rate'].append(_sgc.detach().cpu().numpy().copy())
+        traces['so_rate'].append(_so.detach().cpu().numpy().copy())
+        _tc  = torch.cat([brain.thalamus_L.tc_rate,  brain.thalamus_R.tc_rate])
+        _trn = torch.cat([brain.thalamus_L.trn_rate, brain.thalamus_R.trn_rate])
+        traces['tc_rate'].append(_tc.detach().cpu().numpy().copy())
+        traces['trn_rate'].append(_trn.detach().cpu().numpy().copy())
         traces['pals_rate'].append(brain.pallium.rate_s.detach().cpu().numpy().copy())
         traces['pald_rate'].append(brain.pallium.rate_d.detach().cpu().numpy().copy())
         traces['d1_rate'].append(brain.bg.d1_rate.detach().cpu().numpy().copy())
@@ -437,6 +443,38 @@ def fig4_ablation():
 
 
 # =====================================================================
+# Fig 8: Hemispheric vision system
+# =====================================================================
+def fig8_hemispheric_vision():
+    """Copy pre-generated hemispheric vision test result into paper figures."""
+    src = os.path.join(PROJECT_ROOT, "plots", "v2_hemispheric_vision.png")
+    if os.path.exists(src):
+        import shutil
+        dst = os.path.join(PLOT_DIR, "fig8_hemispheric_vision.png")
+        shutil.copy2(src, dst)
+        print(f"  Fig 8 copied: {dst}")
+    else:
+        # Fall back: generate a simple reference panel
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.axis('off')
+        ax.text(0.5, 0.5,
+                "Fig 8: Hemispheric Vision System\n\n"
+                "L_tectum ← R_eye (contralateral)\n"
+                "R_tectum ← L_eye (contralateral)\n\n"
+                "Each hemisphere: SFGS-b / SFGS-d / SGC / SO\n"
+                "Thalamus split: TC_L (150) + TC_R (150)\n"
+                "See plots/v2_hemispheric_vision.png for full test results",
+                ha='center', va='center', fontsize=12,
+                transform=ax.transAxes,
+                bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+        fig.suptitle("Fig 8: Hemispheric Vision System", fontsize=13, fontweight='bold')
+        dst = os.path.join(PLOT_DIR, "fig8_hemispheric_vision.png")
+        plt.savefig(dst, dpi=200, bbox_inches='tight')
+        plt.close()
+        print(f"  Fig 8 saved (reference panel): {dst}")
+
+
+# =====================================================================
 # Main
 # =====================================================================
 def main():
@@ -459,6 +497,7 @@ def main():
     fig5_v1_vs_v2()
     fig6_neuromod(traces)
     fig7_place_cells(traces)
+    fig8_hemispheric_vision()
 
     print("\nRunning ablation study (5 conditions × 5 scenarios)...")
     fig4_ablation()

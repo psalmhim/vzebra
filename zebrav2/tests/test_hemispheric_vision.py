@@ -1,5 +1,5 @@
 """
-Hemispheric visual system tests — 5 biological steps + integration.
+Hemispheric visual system tests — 5 biological steps + integration + novelty gaze.
 
 Steps:
   1. Optic chiasm crossing (L_eye → R_tectum, R_eye → L_tectum)
@@ -8,6 +8,7 @@ Steps:
   4. Gaze offset shifts retinal projection
   5. Thalamus laterality (TC_L vs TC_R segregation)
   6. Integration — full brain.step() propagates gaze_offset
+  7. Novelty gaze — pallium prediction error drives gaze toward new/unexpected objects
 
 Run:
   .venv/bin/python -m zebrav2.tests.test_hemispheric_vision
@@ -358,12 +359,113 @@ def test_step6_integration():
 
 
 # ---------------------------------------------------------------------------
+# Step 7: Pallium prediction-error gaze (novelty-driven saccade)
+# ---------------------------------------------------------------------------
+
+def test_step7_novelty_gaze():
+    """
+    Gaze shifts toward new/unexpected objects via thalamic novelty signal.
+
+    W_tc_pals is a dense random matrix, so pallium pred_error has no spatial structure
+    (left vs right) by neuron index. Instead, we use the THALAMIC DELTA signal:
+      |tc_combined_now − tc_prev| cleanly separates left (TC_R change) vs right (TC_L change).
+
+    Protocol:
+      Phase A (baseline): 5 steps with RIGHT-eye active → brain/thalamus habituate.
+      Phase B (novelty):  switch to LEFT-eye active → TC_R changes (left-field novelty).
+      Expected: _tc_delta[:150] (TC_R = left visual) becomes high → _pe_L↑ → gaze shifts LEFT.
+
+    Also tested the reverse: LEFT→RIGHT switch → _pe_R↑ → gaze shifts RIGHT.
+    """
+    print("\n=== Step 7: Novelty-Driven Gaze (thalamic novelty signal) ===")
+
+    from zebrav2.brain.brain_v2 import ZebrafishBrainV2
+
+    def make_env():
+        class E:
+            brain_L = np.zeros(800, dtype=np.float32)
+            brain_R = np.zeros(800, dtype=np.float32)
+            _enemy_pixels_total = 0
+            fish_x = 400; fish_y = 300; fish_heading = 0.0; fish_energy = 80.0
+            pred_x = -9999; pred_y = -9999
+            rock_formations = []; all_fish = []
+            gaze_offset = 0.0; arena_w = 800; arena_h = 600
+            foods = []
+        return E()
+
+    obs = np.zeros(10)
+
+    # --- Test A: habituate to RIGHT eye → switch to LEFT → expect gaze left ---
+    brain = ZebrafishBrainV2(device=DEVICE)
+    brain.reset()
+    envA = make_env()
+    envA.brain_R[100:160] = 0.8; envA.brain_R[500:560] = 0.8   # right active
+
+    for _ in range(5):   # habituation phase
+        brain.step(obs, envA)
+    gaze_habituated = float(envA.gaze_offset)
+
+    # Switch: RIGHT off, LEFT on → TC_R now changes (left-field novelty)
+    envA.brain_R = np.zeros(800, dtype=np.float32)
+    envA.brain_L[100:160] = 0.8; envA.brain_L[500:560] = 0.8
+
+    gaze_novelty_L = []
+    for _ in range(5):   # novelty phase
+        brain.step(obs, envA)
+        gaze_novelty_L.append(float(envA.gaze_offset))
+
+    gaze_novelty_L_mean = float(np.mean(gaze_novelty_L))
+    left_ok = gaze_novelty_L_mean < gaze_habituated   # gaze went LEFT (negative shift)
+
+    # --- Test B: habituate to LEFT → switch to RIGHT → expect gaze right ---
+    brain2 = ZebrafishBrainV2(device=DEVICE)
+    brain2.reset()
+    envB = make_env()
+    envB.brain_L[100:160] = 0.8; envB.brain_L[500:560] = 0.8   # left active
+
+    for _ in range(5):
+        brain2.step(obs, envB)
+    gaze_habituated2 = float(envB.gaze_offset)
+
+    envB.brain_L = np.zeros(800, dtype=np.float32)
+    envB.brain_R[100:160] = 0.8; envB.brain_R[500:560] = 0.8
+
+    gaze_novelty_R = []
+    for _ in range(5):
+        brain2.step(obs, envB)
+        gaze_novelty_R.append(float(envB.gaze_offset))
+
+    gaze_novelty_R_mean = float(np.mean(gaze_novelty_R))
+    right_ok = gaze_novelty_R_mean > gaze_habituated2   # gaze went RIGHT (positive shift)
+
+    novelty_ok = left_ok and right_ok
+
+    _record(
+        'NOVELTY_GAZE_thalamic_delta', novelty_ok,
+        f"R→L switch: gaze {gaze_habituated:.3f}→{gaze_novelty_L_mean:.3f} (left ok={left_ok}) | "
+        f"L→R switch: gaze {gaze_habituated2:.3f}→{gaze_novelty_R_mean:.3f} (right ok={right_ok})"
+    )
+
+    return {
+        'gaze_habituated':     gaze_habituated,
+        'gaze_novelty_L':      gaze_novelty_L,
+        'gaze_novelty_L_mean': gaze_novelty_L_mean,
+        'gaze_habituated2':    gaze_habituated2,
+        'gaze_novelty_R':      gaze_novelty_R,
+        'gaze_novelty_R_mean': gaze_novelty_R_mean,
+        'left_ok':  left_ok,
+        'right_ok': right_ok,
+        'novelty_ok': novelty_ok,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Figure
 # ---------------------------------------------------------------------------
 
-def make_figure(d1, d2, d3, d4, d5, d6):
-    fig, axes = plt.subplots(3, 2, figsize=(14, 10))
-    fig.suptitle('Hemispheric Visual System — 6-Step Evaluation', fontsize=14, fontweight='bold')
+def make_figure(d1, d2, d3, d4, d5, d6, d7):
+    fig, axes = plt.subplots(4, 2, figsize=(14, 14))
+    fig.suptitle('Hemispheric Visual System — 7-Step Evaluation', fontsize=14, fontweight='bold')
 
     # ---- Panel 1: Optic chiasm crossing ----
     ax = axes[0, 0]
@@ -466,6 +568,57 @@ def make_figure(d1, d2, d3, d4, d5, d6):
     ax.annotate(status6, xy=(0.98, 0.95), xycoords='axes fraction',
                 ha='right', va='top', fontsize=13, color=color6, fontweight='bold')
 
+    # ---- Panel 7: Novelty-driven gaze (thalamic delta) ----
+    ax = axes[3, 0]
+    n_hab  = 5
+    n_nov  = len(d7['gaze_novelty_L'])
+
+    steps_hab  = list(range(1, n_hab + 1))
+    steps_nov  = list(range(n_hab + 1, n_hab + n_nov + 1))
+
+    ax.plot(steps_hab,  [d7['gaze_habituated']] * n_hab,  'steelblue',
+            marker='o', linewidth=2, markersize=5, label='habituation (R eye)')
+    ax.plot(steps_nov,  d7['gaze_novelty_L'],  'tomato',
+            marker='s', linewidth=2, markersize=6, label='novel L eye (R→L switch)')
+    ax.plot(steps_hab,  [d7['gaze_habituated2']] * n_hab, 'darkorange',
+            marker='o', linewidth=2, markersize=5, linestyle='--', label='habituation (L eye)')
+    ax.plot(steps_nov,  d7['gaze_novelty_R'],  'green',
+            marker='^', linewidth=2, markersize=6, label='novel R eye (L→R switch)')
+
+    ax.axvline(n_hab + 0.5, color='gray', linestyle='--', linewidth=1.2)
+    ax.axhline(0, color='black', linewidth=0.7, linestyle=':')
+    ax.set_title('Step 7: Novelty Gaze (thalamic delta → saccade PE)', fontweight='bold')
+    ax.set_xlabel('Brain step')
+    ax.set_ylabel('env.gaze_offset (rad)')
+    ax.legend(fontsize=7)
+    status7 = 'PASS' if d7['novelty_ok'] else 'FAIL'
+    color7  = 'green' if d7['novelty_ok'] else 'red'
+    ax.annotate(status7, xy=(0.98, 0.95), xycoords='axes fraction',
+                ha='right', va='top', fontsize=13, color=color7, fontweight='bold')
+    ax.annotate(
+        f"R→L: {d7['gaze_habituated']:.3f}→{d7['gaze_novelty_L_mean']:.3f} "
+        f"({'ok' if d7['left_ok'] else 'FAIL'})\n"
+        f"L→R: {d7['gaze_habituated2']:.3f}→{d7['gaze_novelty_R_mean']:.3f} "
+        f"({'ok' if d7['right_ok'] else 'FAIL'})",
+        xy=(0.02, 0.05), xycoords='axes fraction', fontsize=8, color='black')
+
+    # ---- Panel 8: summary ----
+    ax = axes[3, 1]
+    ax.axis('off')
+    summary_lines = [f"{'Step':<35} {'Status'}"]
+    summary_lines.append('-' * 45)
+    for key, (status, desc) in results.items():
+        icon = 'PASS' if status == 'PASS' else 'FAIL'
+        summary_lines.append(f"{key:<35} {icon}")
+    summary_lines.append('')
+    total_pass = sum(1 for s, _ in results.values() if s == 'PASS')
+    total_fail = sum(1 for s, _ in results.values() if s == 'FAIL')
+    summary_lines.append(f"Total: {total_pass} PASS / {total_fail} FAIL")
+    ax.text(0.05, 0.95, '\n'.join(summary_lines),
+            transform=ax.transAxes, fontsize=9,
+            verticalalignment='top', fontfamily='monospace')
+    ax.set_title('Summary', fontweight='bold')
+
     plt.tight_layout()
     plt.savefig(FIGURE_PATH, dpi=120, bbox_inches='tight')
     plt.close()
@@ -488,8 +641,9 @@ def run_all():
     d4 = test_step4_gaze_shift()
     d5 = test_step5_thalamus_laterality()
     d6 = test_step6_integration()
+    d7 = test_step7_novelty_gaze()
 
-    make_figure(d1, d2, d3, d4, d5, d6)
+    make_figure(d1, d2, d3, d4, d5, d6, d7)
 
     print("\n" + "=" * 60)
     print(f"Results: {pass_count} PASS / {fail_count} FAIL")

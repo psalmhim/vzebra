@@ -1,0 +1,20 @@
+{
+  "baseline": {
+    "mean_survival": 30.0,
+    "mean_food": 0.3333333333333333,
+    "survival_rate": 1.0,
+    "mean_energy": 93.46392925848367
+  },
+  "full": {
+    "mean_survival": 30.0,
+    "mean_food": 0.3333333333333333,
+    "survival_rate": 1.0,
+    "mean_energy": 93.40029014049138
+  },
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "max_steps": 30
+}
