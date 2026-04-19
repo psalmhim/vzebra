@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vzebra"
+version = "2.0.0"
+description = "Virtual Zebrafish: a downloadable whole-brain simulation for neuroscience and social science"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "HJ Park"},
+]
+keywords = ["neuroscience", "zebrafish", "brain-simulation", "spiking-neural-network", "active-inference"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "torch>=2.0",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+    "gymnasium>=0.28",
+    "pygame>=2.5",
+    "imageio>=2.31",
+    "imageio-ffmpeg>=0.4",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.100",
+    "uvicorn>=0.23",
+    "websockets>=11.0",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-timeout>=2.1",
+]
+all = ["vzebra[web,dev]"]
+
+[project.scripts]
+vzebra = "zebrav2.cli:main"
+
+[project.entry-points."vzebra.arenas"]
+open_field = "zebrav2.gym_env.assay_arenas:OpenFieldTest"
+novel_tank = "zebrav2.gym_env.assay_arenas:NovelTankTest"
+light_dark = "zebrav2.gym_env.assay_arenas:LightDarkTest"
+social_preference = "zebrav2.gym_env.assay_arenas:SocialPreferenceTest"
+
+[tool.setuptools.packages.find]
+include = ["zebrav2*"]
+
+[tool.pytest.ini_options]
+testpaths = ["zebrav2/tests"]
+timeout = 120

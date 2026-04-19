@@ -22,6 +22,7 @@ import numpy as np
 # Predefined personality types
 PERSONALITIES = {
     'bold': {
+        'name': 'bold',
         'DA_baseline': 0.7,       # high reward drive → aggressive foraging
         'HT5_baseline': 0.3,     # low patience → impulsive
         'NA_baseline': 0.5,       # moderate arousal
@@ -35,6 +36,7 @@ PERSONALITIES = {
         'description': 'Aggressive forager, low fear, approaches predator closely',
     },
     'shy': {
+        'name': 'shy',
         'DA_baseline': 0.3,       # low reward drive
         'HT5_baseline': 0.7,     # high patience → cautious
         'NA_baseline': 0.6,       # high arousal → hypervigilant
@@ -48,6 +50,7 @@ PERSONALITIES = {
         'description': 'Cautious, flees early, stays near group',
     },
     'explorer': {
+        'name': 'explorer',
         'DA_baseline': 0.5,
         'HT5_baseline': 0.2,     # low patience → restless
         'NA_baseline': 0.4,
@@ -61,6 +64,7 @@ PERSONALITIES = {
         'description': 'Curious, explores widely, independent from group',
     },
     'social': {
+        'name': 'social',
         'DA_baseline': 0.4,
         'HT5_baseline': 0.6,
         'NA_baseline': 0.3,       # calm
@@ -74,6 +78,7 @@ PERSONALITIES = {
         'description': 'Stays near group, follows neighbors, moderate foraging',
     },
     'default': {
+        'name': 'default',
         'DA_baseline': 0.5,
         'HT5_baseline': 0.5,
         'NA_baseline': 0.3,

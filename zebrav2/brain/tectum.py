@@ -21,6 +21,7 @@ import torch.nn as nn
 from zebrav2.spec import (DEVICE, N_OT_SFGS_B, N_OT_SFGS_D, N_OT_SGC, N_OT_SO,
                           N_RET_PER_TYPE, N_RET_LOOM, N_RET_DS, SUBSTEPS)
 from zebrav2.brain.ei_layer import EILayer
+from zebrav2.brain.habituation import SynapticDepression
 
 
 class Tectum(nn.Module):
@@ -85,6 +86,10 @@ class Tectum(nn.Module):
                    self.sgc_R.n_e    + self.so_R.n_e)
         self.register_buffer('rate_e_all', torch.zeros(total_e, device=device))
 
+        # Synaptic depression (habituation) on SFGS-b input synapses
+        self.hab_L = SynapticDepression(self.sfgs_b_L.n_e, device=device)
+        self.hab_R = SynapticDepression(self.sfgs_b_R.n_e, device=device)
+
         # Looming detection flag
         self.looming = False
 
@@ -116,6 +121,10 @@ class Tectum(nn.Module):
         I_sfgsd_R = self._norm_drive(self.W_off_R,  rgc_out['L_off'],  3.0, 6.0)
         I_sgc_R   = self._norm_drive(self.W_loom_R, rgc_out['L_loom'], 4.0, 8.0)
         I_so_R    = self._norm_drive(self.W_ds_R,   rgc_out['L_ds'],   3.0, 6.0)
+
+        # Synaptic depression (habituation): repeated stimuli weaken SFGS-b input
+        I_sfgsb_L = self.hab_L(I_sfgsb_L)
+        I_sfgsb_R = self.hab_R(I_sfgsb_R)
 
         # Apply optional top-down attention
         if I_topdown_L is not None:
@@ -158,6 +167,8 @@ class Tectum(nn.Module):
             'sgc_R':      sgc_R_rate,
             'sgc_L_mean': float(sgc_L_rate.mean()),
             'sgc_R_mean': float(sgc_R_rate.mean()),
+            'habituation_L': self.hab_L.get_habituation_level(),
+            'habituation_R': self.hab_R.get_habituation_level(),
         }
 
     def reset(self):
@@ -165,4 +176,6 @@ class Tectum(nn.Module):
                       self.sfgs_b_R, self.sfgs_d_R, self.sgc_R, self.so_R]:
             layer.reset()
         self.rate_e_all.zero_()
+        self.hab_L.reset()
+        self.hab_R.reset()
         self.looming = False

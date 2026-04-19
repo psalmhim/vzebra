@@ -78,6 +78,10 @@ ANATOMICAL_PROJECTIONS = [
     ('Hb',  'IPN', 0.9),   # Habenula → IPN (strongest projection: MHb→vIPN)
     ('IPN', 'Ra',  0.5),   # IPN → Raphe (5-HT modulation)
     ('IPN', 'PT',  0.4),   # IPN → Post. tuberculum (DA feedback)
+    ('Ra',  'SP',  0.4),   # Raphe → Subpallium (5-HT impulse control)
+    ('pRF', 'Th',  0.5),   # LC (pRF) → Thalamus (wake/sleep gating)
+    ('pRF', 'P',   0.4),   # LC (pRF) → Pallium (attention, signal-to-noise)
+    ('pRF', 'SP',  0.3),   # LC (pRF) → Subpallium (arousal → amygdala)
 ]
 
 # Map v2 modules to atlas regions
@@ -92,6 +96,8 @@ V2_TO_ATLAS = {
     'neuromod_5ht': 'Ra',
     'pretectum':    'PrT',
     'ipn':          'IPN',
+    'raphe':        'Ra',
+    'lc':           'pRF',
 }
 
 

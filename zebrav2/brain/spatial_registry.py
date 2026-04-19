@@ -84,6 +84,8 @@ class SpatialRegistry:
             'sleep_wake':       [17, 53],       # Hypothalamus (VLPO homolog)
             'allostasis':       [17, 53],       # Hypothalamus (allostatic regulation)
             'ipn':              [11, 47],       # T (tegmentum — IPN is ventral)
+            'locus_coeruleus':  [14, 50],       # lpRF / rpRF (LC in posterior hindbrain)
+            'pectoral_fin':     [35, 71],       # NX (spinal motor — pectoral fin MNs)
             'cpg_L':            [35],           # NX left (spinal CPG)
             'cpg_R':            [71],           # NX right (spinal CPG)
         }
@@ -241,6 +243,9 @@ class SpatialRegistry:
             'saccade':               ('pretectum',    6, [10, 0, 0]),
             'pretectum':             ('pretectum',   60, None),
             'ipn':                   ('tegmentum',   24, [0, 0, -10]),
+            'raphe':                 ('raphe',       40, None),
+            'locus_coeruleus':       ('posterior_rf', 20, [0, 0, 5]),
+            'pectoral_fin':          ('spinal',       8, [10, 0, -5]),
         }
 
         brain._spatial_registry = self

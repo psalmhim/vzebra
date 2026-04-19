@@ -55,6 +55,10 @@ from zebrav2.brain.hpa_axis import HPAAxis
 from zebrav2.brain.oxytocin import OxytocinSystem
 from zebrav2.brain.pretectum import SpikingPretectum
 from zebrav2.brain.ipn import SpikingIPN
+from zebrav2.brain.raphe import SpikingRaphe
+from zebrav2.brain.locus_coeruleus import SpikingLocusCoeruleus
+from zebrav2.brain.habituation import SynapticDepression
+from zebrav2.brain.pectoral_fin import PectoralFinMotor
 
 GOAL_FORAGE, GOAL_FLEE, GOAL_EXPLORE, GOAL_SOCIAL = 0, 1, 2, 3
 
@@ -195,6 +199,12 @@ class ZebrafishBrainV2(nn.Module):
         self.pretectum = SpikingPretectum(device=device)
         # Interpeduncular nucleus: habenula relay → behavioral inhibition + DA feedback
         self.ipn = SpikingIPN(device=device)
+        # Spiking raphe: population-coded 5-HT (overrides scalar neuromod.HT5)
+        self.raphe = SpikingRaphe(device=device)
+        # Spiking locus coeruleus: population-coded NA (overrides scalar neuromod.NA)
+        self.lc = SpikingLocusCoeruleus(device=device)
+        # Pectoral fin motor neurons: slow-turn kinematics (non-flee)
+        self.pectoral_fin = PectoralFinMotor(device=device)
         # EFE state (adapted from v1)
         self.goal_probs = torch.tensor([0.25, 0.25, 0.25, 0.25], device=device)
         self.current_goal = GOAL_EXPLORE
@@ -1012,6 +1022,23 @@ class ZebrafishBrainV2(nn.Module):
             brain_turn = 0.4 * shoal_turn + 0.3 * retinal_turn + 0.3 * obstacle_turn
             alpha_s = 0.30
 
+        # Pectoral fin: slow-turn kinematics (suppressed during flee)
+        if self._active('pectoral_fin'):
+            _food_bearing = 0.0
+            if self.current_goal == GOAL_FORAGE and food_px > 0:
+                _food_bearing = (float((R_type > 0.7).float().sum()) -
+                                 float((L_type > 0.7).float().sum())) / (food_px + 1e-8)
+            pect_out = self.pectoral_fin(
+                food_bearing=_food_bearing,
+                turn_request=brain_turn,
+                goal=self.current_goal,
+                goal_speed=self._last_speed)
+            if pect_out['active']:
+                brain_turn = 0.85 * brain_turn + 0.15 * pect_out['fin_turn']
+        else:
+            pect_out = {'fin_turn': 0.0, 'fin_L_rate': 0.0,
+                        'fin_R_rate': 0.0, 'active': False}
+
         self._smoother = alpha_s * brain_turn + (1 - alpha_s) * self._smoother
         # v1 convention: turn_rate = -brain_turn * brain_weight + wall_turn
         brain_weight = max(0.2, 1.0 - wall_urgency)
@@ -1203,6 +1230,31 @@ class ZebrafishBrainV2(nn.Module):
             if ipn_out['da_feedback'] < -0.05:
                 self.neuromod.DA.mul_(1.0 + ipn_out['da_feedback'])  # da_feedback is negative
                 self.neuromod.DA.clamp_(0.0, 1.0)
+
+        # ── Spiking raphe: override scalar 5-HT with population-coded output ──
+        if self._active('raphe'):
+            raphe_out = self.raphe(
+                lhb_rate=hab_out.get('lhb_rate', 0.0),
+                ipn_raphe_drive=ipn_out.get('raphe_drive', 0.0),
+                amygdala_stress=self.amygdala_alpha,
+                circadian=self._last_activity_drive,
+                flee_active=(self.current_goal == GOAL_FLEE))
+            self.neuromod.HT5.fill_(raphe_out['ht5_level'])
+        else:
+            raphe_out = {'ht5_level': self.neuromod.HT5.item(), 'dr_rate': 0.0,
+                         'mr_rate': 0.0, 'sensory_gain': 1.0, 'patience': 0.5}
+
+        # ── Spiking locus coeruleus: override scalar NA with population-coded output ──
+        if self._active('locus_coeruleus'):
+            lc_out = self.lc(
+                amygdala_alpha=self.amygdala_alpha,
+                insula_arousal=insula_out.get('arousal', 0.5),
+                circadian=self._last_activity_drive,
+                cms=self.cms)
+            self.neuromod.NA.fill_(lc_out['na_level'])
+        else:
+            lc_out = {'na_level': self.neuromod.NA.item(), 'phasic': False,
+                      'lc_rate': 0.0, 'wake_gate': 1.0, 'attention': 0.5}
 
         # ── Perturbation: apply drug multipliers to neuromodulators ──
         if self._perturbations is not None:
@@ -1474,6 +1526,17 @@ class ZebrafishBrainV2(nn.Module):
             # Gap junction state
             'gap_state_L': rs_out.get('gap_state_L', 0.0),
             'gap_state_R': rs_out.get('gap_state_R', 0.0),
+            # Spiking raphe (5-HT)
+            'raphe_ht5': raphe_out['ht5_level'],
+            'raphe_dr_rate': raphe_out['dr_rate'],
+            'raphe_patience': raphe_out.get('patience', 0.5),
+            # Spiking LC (NA)
+            'lc_na': lc_out['na_level'],
+            'lc_phasic': lc_out['phasic'],
+            'lc_attention': lc_out.get('attention', 0.5),
+            # Pectoral fin
+            'pect_fin_turn': pect_out['fin_turn'],
+            'pect_fin_active': pect_out['active'],
         }
 
     # ------------------------------------------------------------------
@@ -1608,6 +1671,9 @@ class ZebrafishBrainV2(nn.Module):
         self.habenula.reset()
         self.pretectum.reset()
         self.ipn.reset()
+        self.raphe.reset()
+        self.lc.reset()
+        self.pectoral_fin.reset()
         self.predictive.reset()
         self.critic.reset()
         self.habit.reset()

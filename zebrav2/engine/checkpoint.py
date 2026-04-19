@@ -53,9 +53,17 @@ class CheckpointManager:
             'habenula_frustration': brain.habenula.frustration.tolist(),
             # Personality
             'personality': brain.personality,
+            # HPA axis (cortisol / chronic stress)
+            'hpa': brain.hpa.state_dict(),
+            # Oxytocin / vasopressin (social bonding)
+            'oxt': brain.oxt.state_dict(),
             # Neuromod baselines
             'neuromod_DA': brain.neuromod.DA.item(),
             'neuromod_V': brain.neuromod.V.item(),
+            # Learned EFE weights (MetaGoalWeights)
+            'meta_goal': brain.meta_goal.state_dict_extra(),
+            # Social inference weights (SocialMemory)
+            'social_mem': brain.social_mem.state_dict(),
         }
         if config:
             ckpt['config'] = config.data if hasattr(config, 'data') else config
@@ -114,8 +122,105 @@ class CheckpointManager:
         brain.habenula.frustration = np.array(ckpt['habenula_frustration'], dtype=np.float32)
         if 'personality' in ckpt:
             brain.personality = ckpt['personality']
+        # Neuromod baselines (were saved but previously not restored)
+        if 'neuromod_DA' in ckpt:
+            brain.neuromod.DA.fill_(ckpt['neuromod_DA'])
+        if 'neuromod_V' in ckpt:
+            brain.neuromod.V.fill_(ckpt['neuromod_V'])
+        if 'meta_goal' in ckpt:
+            brain.meta_goal.load_state_dict_extra(ckpt['meta_goal'])
+        if 'social_mem' in ckpt:
+            brain.social_mem.load_state_dict(ckpt['social_mem'])
+        if 'hpa' in ckpt:
+            brain.hpa.load_state_dict(ckpt['hpa'])
+        if 'oxt' in ckpt:
+            brain.oxt.load_state_dict(ckpt['oxt'])
+        brain._full_ckpt_loaded = True
 
         return ckpt.get('round', 0), ckpt.get('metrics', {})
+
+    def save_world_only(self, brain, tag: str = 'world', step: int = None) -> str:
+        """
+        Save world-knowledge components (not STDP / full NN parameter weights).
+        Cheap (~500 KB). Use for online autosave during live play or between rounds.
+
+        Includes VAE episodic memory (numpy, small) because brain.vae.plan() and
+        vae.memory.query_epistemic() use it for EFE computation.
+
+        IMPORTANT: load_world_only must be called AFTER load() of a full checkpoint.
+        The VAE encoder/decoder/transition NN weights are NOT saved here.
+        """
+        n = brain.vae.memory.n_allocated
+        ckpt = {
+            'tag': tag,
+            'step': step,
+            'timestamp': time.time(),
+            # Spatial world knowledge
+            'place_food_rate':    brain.place.food_rate.cpu().numpy().tolist(),
+            'place_risk_rate':    brain.place.risk_rate.cpu().numpy().tolist(),
+            'place_visit_count':  brain.place.visit_count.cpu().numpy().tolist(),
+            'geo_food':           brain.geo_model.food_score.tolist(),
+            'geo_risk':           brain.geo_model.risk_score.tolist(),
+            'geo_visits':         brain.geo_model.visit_count.tolist(),
+            # Fear conditioning
+            'amygdala_W_la_cea':      brain.amygdala.W_la_cea.cpu().numpy().tolist(),
+            'amygdala_fear_baseline': brain.amygdala.fear_baseline,
+            # Habenula frustration
+            'habenula_frustration': brain.habenula.frustration.tolist(),
+            # VAE episodic memory (numpy, ~50KB — needed for EFE planning)
+            'vae_memory_centroids': brain.vae.memory.centroids[:n].tolist(),
+            'vae_memory_food':      brain.vae.memory.food_rate[:n].tolist(),
+            'vae_memory_risk':      brain.vae.memory.risk[:n].tolist(),
+            'vae_memory_n':         n,
+            # Learned EFE weights
+            'meta_goal': brain.meta_goal.state_dict_extra(),
+            # Social inference weights
+            'social_mem': brain.social_mem.state_dict(),
+        }
+        path = os.path.join(self.save_dir, f'world_{tag}.pt')
+        torch.save(ckpt, path)
+        return path
+
+    def load_world_only(self, brain, path: str):
+        """
+        Load world knowledge snapshot into brain.
+        Does NOT touch STDP or NN parameter weights (critic, classifier, pallium, VAE nets).
+
+        IMPORTANT: call load() with a full checkpoint BEFORE calling this method.
+        The VAE NN weights are not included here; only the episodic memory is restored.
+        """
+        if not getattr(brain, '_full_ckpt_loaded', False):
+            import warnings
+            warnings.warn(
+                "load_world_only called before load(). "
+                "VAE/classifier/pallium NN weights are uninitialized. "
+                "Load a full checkpoint first.",
+                stacklevel=2)
+        ckpt = torch.load(path, map_location=brain.device, weights_only=False)
+        dev = brain.device
+        brain.place.food_rate.copy_(
+            torch.tensor(ckpt['place_food_rate'], device=dev, dtype=torch.float32))
+        brain.place.risk_rate.copy_(
+            torch.tensor(ckpt['place_risk_rate'], device=dev, dtype=torch.float32))
+        brain.place.visit_count.copy_(
+            torch.tensor(ckpt['place_visit_count'], device=dev, dtype=torch.float32))
+        brain.geo_model.food_score  = np.array(ckpt['geo_food'],  dtype=np.float32)
+        brain.geo_model.risk_score  = np.array(ckpt['geo_risk'],  dtype=np.float32)
+        brain.geo_model.visit_count = np.array(ckpt['geo_visits'], dtype=np.float32)
+        brain.amygdala.W_la_cea.copy_(
+            torch.tensor(ckpt['amygdala_W_la_cea'], device=dev, dtype=torch.float32))
+        brain.amygdala.fear_baseline = ckpt['amygdala_fear_baseline']
+        brain.habenula.frustration = np.array(ckpt['habenula_frustration'], dtype=np.float32)
+        if 'vae_memory_n' in ckpt:
+            n = ckpt['vae_memory_n']
+            brain.vae.memory.centroids[:n] = np.array(ckpt['vae_memory_centroids'])
+            brain.vae.memory.food_rate[:n] = np.array(ckpt['vae_memory_food'])
+            brain.vae.memory.risk[:n]      = np.array(ckpt['vae_memory_risk'])
+            brain.vae.memory.n_allocated   = n
+        if 'meta_goal' in ckpt:
+            brain.meta_goal.load_state_dict_extra(ckpt['meta_goal'])
+        if 'social_mem' in ckpt:
+            brain.social_mem.load_state_dict(ckpt['social_mem'])
 
     def list_checkpoints(self):
         """List all available checkpoints."""
