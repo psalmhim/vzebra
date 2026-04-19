@@ -4,10 +4,10 @@
 
 | Property | Value |
 |----------|-------|
-| Total SNN neurons | 7,090 (Izhikevich) + 160 (LIF) |
-| Total modules | 31 |
-| SNN modules | 24 |
-| Rate/analytic modules | 7 |
+| Total SNN neurons | 7,158 (Izhikevich) + 160 (LIF) |
+| Total modules | 35 |
+| SNN modules | 27 |
+| Rate/analytic modules | 8 |
 | Neuron model | Izhikevich (midpoint integration, 1ms timestep) |
 | Cell types | RS, IB, FS, CH, LTS, TC, MSN (7 types) |
 | Substeps per behavioral step | 50 (= 50ms) |
@@ -206,6 +206,10 @@ speed = goal_speed × allostatic_fatigue_cap
 | Insular Cortex | **SNN** | **34** | 3×10 channels + 4 valence (RS) | Hunger/fatigue/stress encoding, heart rate, valence |
 | Pretectum | **SNN** | **60** | 30 RS per hemisphere | OKR, direction-selective, retinal slip → image stabilization |
 | IPN | **SNN** | **24** | vIPN(12 RS) + dIPN(12 RS) | Habenula relay, behavioral inhibition, DA/5-HT feedback |
+| Raphe | **SNN** | **40** | DR(30 RS) + MR(10 RS) | Population-coded 5-HT, overrides scalar neuromod.HT5 |
+| Locus Coeruleus | **SNN** | **20** | 20 RS (tonic/phasic) | Population-coded NA, overrides scalar neuromod.NA |
+| Pectoral Fin | **SNN** | **8** | 4 RS per side | Slow-turn kinematics, goal-gated (suppressed in FLEE) |
+| Tectal Habituation | Analytic | — | Per-synapse depletion | Short-term synaptic depression on SFGS-b input |
 
 #### Amygdala Detail
 
@@ -334,12 +338,12 @@ Social state inference:
 | Goal Selection | Goal Selector (4) | — | — | EFE computation | 2 |
 | Action Gating | — | — | BG (760) | — | 1 |
 | Motor | — | CPG (32) | RS (42) | Wall avoidance | 3 |
-| Subcortical | Amygdala (50), Habenula (50), Cerebellum (270), Insula (34), Pretectum (60), IPN (24) | — | — | — | 6 |
+| Subcortical | Amygdala (50), Habenula (50), Cerebellum (270), Insula (34), Pretectum (60), IPN (24), Raphe (40), LC (20), Pectoral Fin (8) | — | — | Habituation | 10 |
 | Learning | Critic (68), Predictive (192), Habit (40) | — | — | W_FB, ELBO | 5 |
 | Memory | — | — | Place Cells (128) | Predator Model, Allostasis, World Model | 4 |
 | Neuromod | — | — | DA/NA/5-HT/ACh | — | 1 |
 | World Model | — | — | — | VAE (8600 params) | 1 |
-| **Total** | **6,772 neurons** | **160 neurons** | **2,930 neurons** | **7 modules** | **30 files** |
+| **Total** | **6,840 neurons** | **160 neurons** | **2,930 neurons** | **8 modules** | **34 files** |
 
 ---
 
@@ -347,7 +351,7 @@ Social state inference:
 
 | Paradigm | Where Used | Key Modules |
 |----------|-----------|-------------|
-| **SNN (Izhikevich)** | Sensory→motor processing, fear, goal selection, value, prediction, habits, interoception, forward model, disappointment, OKR, behavioral inhibition | Tectum, Thalamus, Pallium, Amygdala, Goal Selector, Cerebellum, Habenula, RL Critic, Predictive Net, Habit Net, Insula, Pretectum, IPN |
+| **SNN (Izhikevich)** | Sensory→motor processing, fear, goal selection, value, prediction, habits, interoception, forward model, disappointment, OKR, behavioral inhibition, 5-HT, NA, slow turns | Tectum, Thalamus, Pallium, Amygdala, Goal Selector, Cerebellum, Habenula, RL Critic, Predictive Net, Habit Net, Insula, Pretectum, IPN, Raphe, LC, Pectoral Fin |
 | **SNN (LIF)** | Scene classification, rhythmic locomotion | Classifier, Spinal CPG |
 | **Active Inference** | Goal selection (EFE), belief state (VAE), predictive coding (pallium PE), visual prediction (predictive net), exploration drive (surprise) | EFE engine, VAE World Model, Pallium W_FB, Predictive Net, Cerebellum |
 | **Reinforcement Learning** | Value estimation (TD), reward prediction error (DA), habit formation (Hebbian), strategy switching (frustration) | RL Critic, Neuromod DA, Habit Network, Habenula |
