@@ -34,6 +34,8 @@ class Tier3LesionReplication:
             return self._run_danio()
         elif species == "drosophila_melanogaster":
             return self._run_drosophila()
+        elif species == "xenopus_laevis":
+            return self._run_xenopus()
         else:
             return {
                 "_error": {
@@ -549,6 +551,114 @@ class Tier3LesionReplication:
             "intervention": round(ablated_delta, 6),
             "change_pct": round(change_pct, 2),
             "expected_direction": "baseline_higher",
+        }
+
+
+    # ── Xenopus laevis interventions ──────────────────────────────────────────
+
+    def _run_xenopus(self) -> dict:
+        results = {}
+
+        # 1. dIN ablation → CPG stops → mean speed drops ≥ 80%
+        try:
+            results["din_ablation_stops_swimming"] = self._xenopus_din_ablation()
+        except Exception as exc:
+            results["din_ablation_stops_swimming"] = _error_intervention(exc)
+
+        # 2. cIN ablation → cross-inhibition lost → L/R alternation drops ≥ 30%
+        try:
+            results["cin_ablation_disrupts_lr"] = self._xenopus_cin_ablation()
+        except Exception as exc:
+            results["cin_ablation_disrupts_lr"] = _error_intervention(exc)
+
+        return results
+
+    def _xenopus_din_ablation(self) -> dict:
+        """dIN ablation silences rhythm generator; mean speed must drop ≥ 80%."""
+        from ..species.xenopus.brain import XenopusTadpoleBrain
+        from ..environments.swim_tank import SwimTank
+
+        n_steps = 30
+
+        # Baseline (dIN intact) — tadpole placed at left wall to initiate swimming
+        env = SwimTank()
+        brain = XenopusTadpoleBrain()
+        organism = VirtualOrganism(brain, env)
+        organism.reset(seed=0)
+        env._agents[0].position = np.array([1.0, 10.0], dtype=np.float32)
+
+        speeds = []
+        for _ in range(n_steps):
+            motor, _ = organism.step()
+            speeds.append(float(motor.speed))
+        baseline = float(np.mean(speeds))
+
+        # dIN ablated — swimming should stop immediately
+        env2 = SwimTank()
+        brain2 = XenopusTadpoleBrain()
+        organism2 = VirtualOrganism(brain2, env2)
+        organism2.reset(seed=0)
+        env2._agents[0].position = np.array([1.0, 10.0], dtype=np.float32)
+        brain2.ablate("dIN")
+
+        speeds2 = []
+        for _ in range(n_steps):
+            motor, _ = organism2.step()
+            speeds2.append(float(motor.speed))
+        ablated = float(np.mean(speeds2))
+
+        if baseline > 1e-9:
+            change_pct = 100.0 * (ablated - baseline) / baseline
+        else:
+            change_pct = 0.0
+
+        return {
+            "passed": change_pct <= -80.0,
+            "baseline": round(baseline, 4),
+            "intervention": round(ablated, 4),
+            "change_pct": round(change_pct, 2),
+            "expected_direction": "decrease",
+        }
+
+    def _xenopus_cin_ablation(self) -> dict:
+        """
+        cIN ablation removes cross-inhibition; L/R alternation fraction must
+        drop by ≥ 30 percentage points compared to intact.
+        """
+        from ..species.xenopus.brain import XenopusTadpoleBrain
+        from ..environments.swim_tank import SwimTank
+
+        n_steps = 50
+
+        def _alternation_fraction(brain, env) -> float:
+            organism = VirtualOrganism(brain, env)
+            organism.reset(seed=0)
+            env._agents[0].position = np.array([1.0, 10.0], dtype=np.float32)
+            turns = []
+            for _ in range(n_steps):
+                motor, _ = organism.step()
+                turns.append(float(motor.turn))
+            if len(turns) < 2:
+                return 0.0
+            sign_changes = sum(
+                1 for a, b in zip(turns, turns[1:]) if a * b < 0
+            )
+            return sign_changes / (len(turns) - 1)
+
+        baseline = _alternation_fraction(XenopusTadpoleBrain(), SwimTank())
+
+        brain2 = XenopusTadpoleBrain()
+        brain2.ablate("cIN")
+        ablated = _alternation_fraction(brain2, SwimTank())
+
+        change_pct = 100.0 * (ablated - baseline) / max(baseline, 1e-9)
+
+        return {
+            "passed": (baseline - ablated) >= 0.30,
+            "baseline": round(baseline, 4),
+            "intervention": round(ablated, 4),
+            "change_pct": round(change_pct, 2),
+            "expected_direction": "decrease",
         }
 
 

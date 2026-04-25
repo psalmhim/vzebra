@@ -41,6 +41,17 @@ REFERENCE_TEMPLATES: dict[str, dict[str, dict[str, float]]] = {
             "sensory": 0.3, "tectum": 0.3, "amygdala": 0.1, "motor": 0.2,
         },
     },
+    "xenopus_laevis": {
+        # swimming: dIN drives rhythm (highest), MN activated, cIN moderately active,
+        # RB briefly active on touch then low → rank: rb < cin < mn < din
+        "swimming": {
+            "rb": 0.4, "din": 0.8, "cin": 0.5, "mn": 0.7,
+        },
+        # rest: all quiet; small dIN baseline tone only → rank: rb=cin=mn < din
+        "rest": {
+            "rb": 0.0, "din": 0.1, "cin": 0.0, "mn": 0.0,
+        },
+    },
     "drosophila_melanogaster": {
         # odor_present: PN gain amplified → PNs fire most; KCs sparse (APL); DANs baseline
         # Expected rank: kc < dan < pn
@@ -159,6 +170,14 @@ class Tier2AtlasCorrespondence:
                 brain.set_param("efe.beta_flee", 1.0)
                 brain.set_param("efe.beta_epistemic", 1.0)
 
+        elif species == "xenopus_laevis":
+            if condition == "swimming":
+                # Place tadpole at left wall → wall contact → CPG initiates
+                env._agents[0].position = np.array([1.0, 10.0], dtype=np.float32)
+            elif condition == "rest":
+                # Tadpole at centre — no wall contact, CPG stays off
+                env._agents[0].position = np.array([25.0, 10.0], dtype=np.float32)
+
         elif species == "drosophila_melanogaster":
             if condition == "odor_present":
                 # Amplify PN gain so odor drives the circuit strongly
@@ -198,6 +217,17 @@ class Tier2AtlasCorrespondence:
                 "tectum":  "tectum_fr",
                 "amygdala": "amygdala_fr",
                 "motor":   "motor_fr",
+            }
+            for region, key in key_map.items():
+                if region in region_accum:
+                    region_accum[region].append(abs(float(L3.get(key, 0.0))))
+
+        elif species == "xenopus_laevis":
+            key_map = {
+                "rb":  "rb_fr",
+                "din": "din_fr",
+                "cin": "cin_fr",
+                "mn":  "mn_fr",
             }
             for region, key in key_map.items():
                 if region in region_accum:

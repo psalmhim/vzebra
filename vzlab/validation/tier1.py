@@ -30,6 +30,8 @@ class Tier1BehaviouralBattery:
             return self._run_danio(n_episodes)
         elif species == "drosophila_melanogaster":
             return self._run_drosophila(n_episodes)
+        elif species == "xenopus_laevis":
+            return self._run_xenopus(n_episodes)
         else:
             return {
                 "_error": {
@@ -451,6 +453,115 @@ class Tier1BehaviouralBattery:
             kc_rates.append(float(hier.L3_circuit.get("kc_fr", 0.0)))
 
         return float(np.mean(kc_rates))
+
+    # ── Xenopus laevis tests ──────────────────────────────────────────────────
+
+    def _run_xenopus(self, n_episodes: int) -> dict:
+        results = {}
+
+        # Test 1 — swimming_initiated
+        try:
+            initiated = self._xenopus_swimming_initiated()
+            threshold = 0.5
+            results["swimming_initiated"] = {
+                "passed": initiated > threshold,
+                "value": round(initiated, 4),
+                "threshold": threshold,
+                "description": (
+                    "Wall touch must initiate swimming (speed > 0.3) within 5 steps. "
+                    "RB neurons relay skin contact to the spinal CPG (Roberts et al. 1998)."
+                ),
+            }
+        except Exception as exc:
+            results["swimming_initiated"] = _error_result(exc, threshold=0.5)
+
+        # Test 2 — left_right_alternation
+        try:
+            alt_frac = self._xenopus_lr_alternation()
+            threshold = 0.5
+            results["left_right_alternation"] = {
+                "passed": alt_frac > threshold,
+                "value": round(alt_frac, 4),
+                "threshold": threshold,
+                "description": (
+                    "Fraction of consecutive step-pairs with opposite turn signs must be > 0.5. "
+                    "cIN cross-inhibition produces L/R anti-phase swimming rhythm."
+                ),
+            }
+        except Exception as exc:
+            results["left_right_alternation"] = _error_result(exc, threshold=0.5)
+
+        # Test 3 — locomotion_speed
+        try:
+            mean_speed = self._xenopus_locomotion_speed()
+            threshold = 0.5
+            results["locomotion_speed"] = {
+                "passed": mean_speed > threshold,
+                "value": round(mean_speed, 4),
+                "threshold": threshold,
+                "description": (
+                    "Mean motor speed during swimming must be > 0.5. "
+                    "dIN rhythm generators drive forward locomotion."
+                ),
+            }
+        except Exception as exc:
+            results["locomotion_speed"] = _error_result(exc, threshold=0.5)
+
+        return results
+
+    def _xenopus_swimming_initiated(self) -> float:
+        """1.0 if speed > 0.3 is observed within 5 steps of wall contact, else 0.0."""
+        from ..species.xenopus.brain import XenopusTadpoleBrain
+        from ..environments.swim_tank import SwimTank
+
+        env = SwimTank()
+        brain = XenopusTadpoleBrain()
+        organism = VirtualOrganism(brain, env)
+        organism.reset(seed=0)  # tadpole placed at left wall
+
+        for _ in range(5):
+            motor, _ = organism.step()
+            if motor.speed > 0.3:
+                return 1.0
+        return 0.0
+
+    def _xenopus_lr_alternation(self) -> float:
+        """Fraction of consecutive turn-pairs with opposite signs."""
+        from ..species.xenopus.brain import XenopusTadpoleBrain
+        from ..environments.swim_tank import SwimTank
+
+        env = SwimTank()
+        brain = XenopusTadpoleBrain()
+        organism = VirtualOrganism(brain, env)
+        organism.reset(seed=0)
+
+        turns = []
+        for _ in range(50):
+            motor, _ = organism.step()
+            turns.append(motor.turn)
+
+        if len(turns) < 2:
+            return 0.0
+        sign_changes = sum(
+            1 for a, b in zip(turns, turns[1:]) if a * b < 0
+        )
+        return sign_changes / (len(turns) - 1)
+
+    def _xenopus_locomotion_speed(self) -> float:
+        """Mean motor speed over 50 steps starting from left wall."""
+        from ..species.xenopus.brain import XenopusTadpoleBrain
+        from ..environments.swim_tank import SwimTank
+
+        env = SwimTank()
+        brain = XenopusTadpoleBrain()
+        organism = VirtualOrganism(brain, env)
+        organism.reset(seed=0)
+
+        speeds = []
+        for _ in range(50):
+            motor, _ = organism.step()
+            speeds.append(motor.speed)
+        return float(np.mean(speeds)) if speeds else 0.0
 
     def _drosophila_dan_active(self) -> float:
         """Mean DAN firing rate from baseline dopamine tone."""
