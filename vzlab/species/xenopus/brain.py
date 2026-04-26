@@ -33,6 +33,8 @@ from .connectome import XenopusConnectome
 
 
 class XenopusTadpoleBrain(BrainModule):
+    # Anatomically correct neuron counts per region (Roberts et al. 1998)
+    N_NEURONS: dict[str, int] = {"RB": 20, "dIN": 60, "cIN": 40, "MN": 30}
 
     def __init__(self, connectome: XenopusConnectome | None = None):
         self._connectome = connectome or XenopusConnectome.default()
@@ -110,8 +112,10 @@ class XenopusTadpoleBrain(BrainModule):
                 "swimming": float(self._swimming),
             },
             L4_region={
-                "ablated":  list(self._ablated),
-                "swimming": self._swimming,
+                "ablated":    list(self._ablated),
+                "swimming":   self._swimming,
+                "n_neurons":  self.N_NEURONS,
+                "n_total":    sum(self.N_NEURONS.values()),
             },
             L5_behaviour={
                 "swimming":   self._swimming,

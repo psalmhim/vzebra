@@ -189,6 +189,10 @@ class PlasticityConfig:
     # STDP consolidation frequency
     stdp_consolidation_every: int = 5
 
+    # Synaptic dropout during STDP consolidation (0 = off, 0.1 = 10% synapses
+    # silenced per step).  Builds fault-tolerant distributed representations.
+    stdp_dropout_p: float = 0.10
+
     # VAE training frequency
     vae_training_every: int = 10
 
@@ -291,6 +295,15 @@ class AblationConfig:
     locus_coeruleus: bool = True
     habituation: bool = True
     pectoral_fin: bool = True
+    hypothalamus: bool = True
+    pineal: bool = True
+    inferior_olive: bool = True
+    dl_pallium: bool = True
+    vagus_nerve: bool = True
+    pituitary: bool = True
+    area_postrema: bool = True
+    nts: bool = True
+    ll_efferent: bool = True
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,11 @@ from .connectome import DrosophilaConnectome, _N_TOTAL, _SLICES, _N_MBON, _N_DAN
 
 
 class DrosophilaBrain(BrainModule):
+    # Anatomically correct neuron counts (Aso et al. 2014; Tanaka et al. 2008)
+    N_NEURONS: dict[str, int] = {
+        "PN": 50, "KC_ab": 700, "KC_abp": 300, "KC_g": 1000,
+        "APL": 1, "DAN": 60, "MBON": 34,
+    }
 
     TAU       = 20.0
     THRESHOLD = 1.0
@@ -328,6 +333,8 @@ class DrosophilaBrain(BrainModule):
                 "DAN_active":   dan_act > 0.05,
                 "MBON_active":  (mbon_approach + mbon_avoid) > 0.05,
                 "ablated":      list(self._ablated),
+                "n_neurons":    self.N_NEURONS,
+                "n_total":      sum(self.N_NEURONS.values()),
             },
             L5_behaviour={
                 "goal_name":     self._last_goal,

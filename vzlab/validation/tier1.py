@@ -308,6 +308,40 @@ class Tier1BehaviouralBattery:
         except Exception as exc:
             results["energy_depletion"] = _error_result(exc, threshold=100.0)
 
+        # Test 6 — shoaling_cohesion (L6 social: cells → social behavior)
+        try:
+            cohesion = self._danio_shoaling_cohesion()
+            threshold = 0.20
+            results["shoaling_cohesion"] = {
+                "passed": cohesion > threshold,
+                "value": round(cohesion, 4),
+                "threshold": threshold,
+                "description": (
+                    "In a 3-fish school, cohesion score (1 − mean_dist/arena_diagonal) "
+                    "must be > 0.2. Tests L6_social processing; biological zebrafish "
+                    "maintain inter-individual distances of 1–3 body lengths (Dreosti 2015)."
+                ),
+            }
+        except Exception as exc:
+            results["shoaling_cohesion"] = _error_result(exc, threshold=0.20)
+
+        # Test 7 — social_alarm_propagation (group-level alarm spread)
+        try:
+            group_alarm = self._danio_social_alarm()
+            threshold = 0.50
+            results["social_alarm_propagation"] = {
+                "passed": group_alarm > threshold,
+                "value": round(group_alarm, 4),
+                "threshold": threshold,
+                "description": (
+                    "Fraction of a 3-fish group showing alarmed state after "
+                    "alarm substance injection must be > 0.5. Tests collective "
+                    "predator-avoidance signalling (Speedie & Gerlai 2008)."
+                ),
+            }
+        except Exception as exc:
+            results["social_alarm_propagation"] = _error_result(exc, threshold=0.50)
+
         return results
 
     def _danio_predator_detection(self, n_episodes: int) -> float:
@@ -361,6 +395,84 @@ class Tier1BehaviouralBattery:
         runner = ExperimentRunner(organism, protocol, log_levels=[5], seed=0)
         result = runner.run(n_episodes=n_episodes, label="survival", verbose=False)
         return result.mean_survival
+
+    def _danio_shoaling_cohesion(self, n_agents: int = 3, n_steps: int = 60) -> float:
+        """
+        Cohesion score = 1 − (mean_pairwise_distance / arena_diagonal).
+        Higher = more cohesive.  Biological zebrafish school within 1–3 BL.
+        """
+        from ..species.zebrafish.brain import ZebrafishBrain
+        from ..environments.aquatic_arena import AquaticArena
+
+        env = AquaticArena()
+        env.reset(n_agents=n_agents, seed=0)
+        brains = [ZebrafishBrain() for _ in range(n_agents)]
+        for b in brains:
+            b.reset()
+
+        arena_diag = float(np.sqrt(env.W ** 2 + env.H ** 2))
+        cohesion_scores: list[float] = []
+
+        for t in range(n_steps):
+            motors = []
+            for i, brain in enumerate(brains):
+                sig = env.get_sensory_signals(i)
+                motor = brain.step(sig, t)
+                motor.agent_id = i
+                motors.append(motor)
+            env.step(motors)
+
+            positions = [env._agents[i].position for i in range(n_agents)]
+            dists = [
+                float(np.linalg.norm(positions[i] - positions[j]))
+                for i in range(n_agents)
+                for j in range(i + 1, n_agents)
+            ]
+            mean_dist = float(np.mean(dists)) if dists else 0.0
+            cohesion_scores.append(1.0 - mean_dist / arena_diag)
+
+        return float(np.mean(cohesion_scores))
+
+    def _danio_social_alarm(self, n_agents: int = 3, n_steps: int = 60) -> float:
+        """
+        Inject alarm substance at step 20; measure fraction of agents showing
+        alarmed state (L6_social["alarmed"] == True) in the window [20, 60].
+        """
+        from ..species.zebrafish.brain import ZebrafishBrain
+        from ..environments.aquatic_arena import AquaticArena
+        from ..core.types import Stimulus
+
+        env = AquaticArena()
+        env.reset(n_agents=n_agents, seed=1)
+        brains = [ZebrafishBrain() for _ in range(n_agents)]
+        for b in brains:
+            b.reset()
+
+        alarm_injected = False
+        alarm_counts: list[float] = []
+
+        for t in range(n_steps):
+            if t == 20 and not alarm_injected:
+                env.inject(Stimulus(kind="alarm", onset_t=t, duration=40,
+                                    params={"source_position": (env.W / 2, env.H / 2)}))
+                alarm_injected = True
+
+            motors = []
+            for i, brain in enumerate(brains):
+                sig = env.get_sensory_signals(i)
+                motor = brain.step(sig, t)
+                motor.agent_id = i
+                motors.append(motor)
+            env.step(motors)
+
+            if t >= 20:
+                alarmed = sum(
+                    1 for brain in brains
+                    if brain.get_hierarchical_state(t).L6_social.get("alarmed", False)
+                )
+                alarm_counts.append(alarmed / n_agents)
+
+        return float(np.mean(alarm_counts)) if alarm_counts else 0.0
 
 
     # ── Drosophila melanogaster tests ─────────────────────────────────────────

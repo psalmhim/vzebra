@@ -59,6 +59,19 @@ from zebrav2.brain.raphe import SpikingRaphe
 from zebrav2.brain.locus_coeruleus import SpikingLocusCoeruleus
 from zebrav2.brain.habituation import SynapticDepression
 from zebrav2.brain.pectoral_fin import PectoralFinMotor
+from zebrav2.brain.nociception import SpikingNociception
+from zebrav2.brain.auditory import SpikingAuditory
+from zebrav2.brain.gustatory import SpikingGustatory
+from zebrav2.brain.tactile import SpikingTactile
+from zebrav2.brain.hypothalamus import SpikingHypothalamus
+from zebrav2.brain.pineal import SpikingPineal
+from zebrav2.brain.inferior_olive import SpikingInferiorOlive
+from zebrav2.brain.dl_pallium import SpikingDlPallium
+from zebrav2.brain.vagus_nerve import SpikingVagusNerve
+from zebrav2.brain.pituitary import SpikingPituitary
+from zebrav2.brain.area_postrema import SpikingAreaPostrema
+from zebrav2.brain.nts import SpikingNTS
+from zebrav2.brain.lateral_line_efferent import SpikingLateralLineEfferent
 
 GOAL_FORAGE, GOAL_FLEE, GOAL_EXPLORE, GOAL_SOCIAL = 0, 1, 2, 3
 
@@ -205,6 +218,29 @@ class ZebrafishBrainV2(nn.Module):
         self.lc = SpikingLocusCoeruleus(device=device)
         # Pectoral fin motor neurons: slow-turn kinematics (non-flee)
         self.pectoral_fin = PectoralFinMotor(device=device)
+        # Senses added for biological completeness
+        self.nociception = SpikingNociception(device=device)
+        self.auditory = SpikingAuditory(device=device)
+        self.gustatory = SpikingGustatory(device=device)
+        self.tactile = SpikingTactile(device=device)
+        # Hypothalamus: homeostatic integrator (feeding, stress, thermoreg, circadian)
+        self.hypothalamus = SpikingHypothalamus(device=device)
+        # Pineal gland: direct photoreception + melatonin synthesis
+        self.pineal = SpikingPineal(device=device)
+        # Inferior olive: climbing fiber error signal to cerebellum
+        self.inferior_olive = SpikingInferiorOlive(device=device)
+        # Dorsolateral pallium: hippocampal spatial memory (DG→CA3→CA1)
+        self.dl_pallium = SpikingDlPallium(device=device)
+        # Vagus nerve: bidirectional visceral afferent/efferent
+        self.vagus_nerve = SpikingVagusNerve(device=device)
+        # Pituitary: master endocrine organ (ACTH, MSH, vasotocin, isotocin)
+        self.pituitary = SpikingPituitary(device=device)
+        # Area postrema: circumventricular organ (blood toxin detection)
+        self.area_postrema = SpikingAreaPostrema(device=device)
+        # NTS: primary visceral sensory relay (taste + vagal afferent)
+        self.nts = SpikingNTS(device=device)
+        # Lateral line efferent: corollary discharge suppression of self-motion
+        self.ll_efferent = SpikingLateralLineEfferent(device=device)
         # EFE state (adapted from v1)
         self.goal_probs = torch.tensor([0.25, 0.25, 0.25, 0.25], device=device)
         self.current_goal = GOAL_EXPLORE
@@ -230,6 +266,7 @@ class ZebrafishBrainV2(nn.Module):
         self._step_count = 0
         self._last_fish_pos = (400.0, 300.0)
         self._last_speed = 1.0
+        self._last_turn = 0.0
         # Motor / threat state (pre-initialized to avoid hasattr guards in step())
         self._enemy_lateral_ema = 0.0
         self._rear_threat = 0.0
@@ -682,6 +719,16 @@ class ZebrafishBrainV2(nn.Module):
         if _n_nearby > 0:
             self.amygdala_alpha = max(0.0, self.amygdala_alpha
                                       - self.oxt.fear_extinction_factor() * 0.3)
+        # OXT modulation of social inference weights (transient, per-step):
+        #   social_trust_boost → additive boost to food-cue weight (trust conspecifics)
+        #   competition_drive  → additive boost to competition weight (avoid crowded patches)
+        # We apply the boost transiently: save base weights, boost, use, then restore.
+        _oxt_trust = self.oxt.social_trust_boost()       # [0.0, 0.3]
+        _oxt_comp  = self.oxt.competition_drive()         # [0.0, 0.2]
+        _base_food_w = self.social_mem.w_food_cue
+        _base_comp_w = self.social_mem.w_competition
+        self.social_mem.w_food_cue   = float(np.clip(_base_food_w + _oxt_trust, 0.2, 3.0))
+        self.social_mem.w_competition = float(np.clip(_base_comp_w + _oxt_comp, 0.2, 3.0))
         # Learned alarm replaces fixed shoaling alarm coefficient
         learned_alarm = self.social_mem.get_social_alarm(self.shoaling.social_alarm)
         _social_scale = float(_mw[1])
@@ -693,6 +740,9 @@ class ZebrafishBrainV2(nn.Module):
         # Competition penalty: avoid crowded food patches
         _competition_penalty = self.social_mem.get_competition_penalty(fish_px, fish_py)
         G_forage += _competition_penalty * _social_scale
+        # Restore base weights (OXT modulation is transient, not cumulative)
+        self.social_mem.w_food_cue   = _base_food_w
+        self.social_mem.w_competition = _base_comp_w
         _mc[1] = abs(social_bias['social_forage']) + learned_alarm * 0.2 + abs(social_bias['social_explore'])
         # Error-driven social weight updates — called unconditionally (window-based, not single-snapshot)
         self.social_mem.update_alarm_outcome(pred_dist < 100)
@@ -762,7 +812,7 @@ class ZebrafishBrainV2(nn.Module):
             G_forage, G_flee, G_explore, G_social = _goals
         # Analytic EFE → bias for spiking goal selector
         # Add learned goal_bias (autograd flows for REINFORCE)
-        G_base = torch.tensor([G_forage, G_flee, G_explore, G_social], device=self.device)
+        G_base = torch.tensor([G_forage, G_flee, G_explore, G_social], device=self.device, dtype=torch.float32)
         G = G_base + self.meta_goal.goal_bias  # gradient through goal_bias
         efe_bias = _ec.efe_bias_amplitude * (G - G.min())
 
@@ -1285,6 +1335,23 @@ class ZebrafishBrainV2(nn.Module):
         self._last_fish_pos = (px, py)
         self.place(px, py, food_eaten=(eaten_now > 0), predator_near=(pred_dist < 150))
 
+        # Dl pallium: hippocampal spatial memory (DG→CA3→CA1)
+        _dl_context = np.array([
+            float(self.current_goal) / 3.0,
+            self.energy / 100.0,
+            self.amygdala_alpha,
+            getattr(self, '_last_activity_drive', 0.5),
+        ], dtype=np.float32)
+        _is_resting = (self.current_goal == GOAL_EXPLORE and speed < 0.3)
+        dl_out = self.dl_pallium(
+            place_activation=self.place.rate,
+            pos_x=px, pos_y=py,
+            context=_dl_context,
+            food_eaten=(eaten_now > 0),
+            predator_near=(pred_dist < 60),
+            is_resting=_is_resting,
+            theta_phase=self.place.theta_phase)
+
         # Saccade: gaze shift for active vision
         food_bearing = self.olfaction.food_gradient_dir if hasattr(self, 'olfaction') else 0.0
         enemy_bearing = math.atan2(
@@ -1337,6 +1404,82 @@ class ZebrafishBrainV2(nn.Module):
         wm_input[self.current_goal * 8:(self.current_goal + 1) * 8] = 0.5
         wm_out = self.working_mem(wm_input, gate=self.neuromod.ACh.item())
 
+        # Nociception: pain from collision, predator proximity, temperature
+        noci_out = self.nociception(
+            collision=prop_out['collision'],
+            wall_proximity=prop_out['wall_proximity'],
+            predator_distance=pred_dist)
+        # Auditory: predator sounds, conspecific vocalizations
+        _con_dists = [c.get('dist', 999) for c in _ll_conspecifics] if _ll_conspecifics else []
+        aud_out = self.auditory(
+            predator_distance=pred_dist,
+            conspecific_distances=_con_dists)
+        # Gustatory: taste when eating food
+        _eating = getattr(env, '_eaten_now', 0) > 0
+        _food_q = 0.8 if _eating else 0.0
+        gust_out = self.gustatory(eating=_eating, food_quality=_food_q,
+                                  food_distance=bino_out.get('food_distance', 999))
+        # Tactile: touch from collision, walls, conspecifics, predator
+        _heading_to_wall = prop_out.get('heading_delta', 0.0)
+        tact_out = self.tactile(
+            collision=prop_out['collision'],
+            wall_proximity=prop_out['wall_proximity'],
+            heading_to_wall=_heading_to_wall,
+            conspecific_distance=_conspc_dist,
+            swim_speed=speed,
+            predator_distance=pred_dist)
+
+        # === 7b-organs. ORGAN & VISCERAL MODULES ===
+        pineal_out = self.pineal(light_level=0.7,
+                                  retinal_luminance=float(rgc_out.get('luminance', 0.5)))
+        # Hypothalamus: homeostatic integrator
+        _food_odor = olf_out.get('food_odor_strength', 0.0)
+        hypo_out = self.hypothalamus(
+            energy=self.energy, hunger=self.allostasis.hunger,
+            stress=self.allostasis.stress, fatigue=self.allostasis.fatigue,
+            temperature=26.0, amygdala_alpha=self.amygdala_alpha,
+            cortisol=self.hpa.cortisol, melatonin=pineal_out['melatonin_smoothed'],
+            social_proximity=min(1.0, max(0, 1.0 - _conspc_dist / 200.0)),
+            food_odor=_food_odor)
+        # Inferior olive: error signal → cerebellum climbing fibers
+        _sensory_surprise = float(abs(pal_out.get('pred_error', torch.tensor(0.0)).mean()))
+        _motor_mismatch = abs(turn - getattr(self, '_last_turn', 0.0))
+        io_out = self.inferior_olive(
+            sensory_surprise=_sensory_surprise,
+            motor_mismatch=min(1.0, _motor_mismatch),
+            cerebellar_pe=cb_out.get('prediction_error', 0.0))
+        # Vagus nerve: bidirectional visceral communication
+        _heart_rate = getattr(self, '_heart_rate', 0.6)
+        vagus_out = self.vagus_nerve(
+            heart_rate=_heart_rate,
+            gut_state=self.allostasis.hunger,
+            stress=self.allostasis.stress,
+            respiratory_rate=0.5)
+        # Pituitary: master endocrine relay (HPA axis, melanophores, osmo)
+        pit_out = self.pituitary(
+            crh_release=hypo_out.get('crh_release', 0.0),
+            stress=self.allostasis.stress,
+            energy=self.energy,
+            melatonin=pineal_out.get('melatonin_smoothed', 0.0),
+            dopamine=float(self.neuromod.DA))
+        # Area postrema: blood-borne toxin/metabolite sensing
+        _blood_glucose = min(1.0, self.energy / 100.0)
+        ap_out = self.area_postrema(
+            blood_toxin=0.0,
+            blood_glucose=_blood_glucose)
+        # NTS: visceral sensory relay (taste + vagal afferent)
+        nts_out = self.nts(
+            taste_input=gust_out.get('taste_intensity', 0.0),
+            vagal_afferent=vagus_out.get('gut_signal', 0.0),
+            baroreceptor=vagus_out.get('cardiac_output', 0.5))
+        # Lateral line efferent: corollary discharge suppression
+        _motor_cmd = min(1.0, abs(speed) / 3.0)
+        ll_eff_out = self.ll_efferent(
+            motor_command=_motor_cmd,
+            lateral_line_input=ll_out.get('flow_magnitude', 0.0),
+            swim_speed=min(1.0, abs(speed) / 3.0),
+            turn_rate=min(1.0, abs(turn)))
+
         # === 7c. SENSORY MODULE INTEGRATION ===
         # Apply sensory module outputs to the already-computed motor commands
         # Vestibular postural correction: counteract over-rotation during sharp turns
@@ -1362,6 +1505,37 @@ class ZebrafishBrainV2(nn.Module):
         # Proprioception: collision detected → trigger stuck recovery
         if prop_out['collision']:
             self._stuck_counter += 3
+        # Nociception: withdrawal reflex → reverse briefly
+        if noci_out['withdrawal_reflex'] > 0.5 and self.current_goal != GOAL_FLEE:
+            speed *= max(0.3, 1.0 - noci_out['withdrawal_reflex'] * 0.5)
+        # Auditory: startle → boost flee urgency
+        if aud_out['startle_trigger'] and self.current_goal != GOAL_FLEE:
+            speed = min(speed * 1.3, _mc_cfg.speed_max_clamp)
+        # Gustatory: spit reflex → stop feeding
+        if gust_out['spit_reflex']:
+            speed *= 0.5
+        # Tactile: head startle → reverse turn
+        if tact_out['startle_reflex']:
+            turn = float(np.clip(turn + (-0.3 if turn >= 0 else 0.3), -1.0, 1.0))
+        # Hypothalamus: feeding drive boosts forage speed; circadian gate modulates activity
+        speed *= hypo_out['circadian_gate']
+        # Inferior olive: complex spike → brief motor hesitation (error → recalibrate)
+        if io_out['complex_spike'] and self.current_goal != GOAL_FLEE:
+            speed *= 0.85
+        # Vagus nerve: high vagal tone (calm) → slightly slower, steadier swimming
+        if vagus_out['vagal_tone'] > 0.6 and self.current_goal != GOAL_FLEE:
+            speed *= 0.95  # parasympathetic calming
+        # Area postrema: nausea → avoidance / slow down
+        if ap_out['nausea_signal'] > 0.3 and self.current_goal != GOAL_FLEE:
+            speed *= max(0.5, 1.0 - ap_out['nausea_signal'] * 0.4)
+        # NTS: satiety signal → reduce foraging drive
+        if nts_out['satiety_signal'] > 0.3 and self.current_goal == GOAL_FORAGE:
+            speed *= 0.9
+        # Store heart rate for next step's vagus nerve input
+        self._heart_rate = min(1.0, 0.5 + self.allostasis.stress * 0.3 +
+                               (0.2 if self.current_goal == GOAL_FLEE else 0.0))
+        # Store last turn for inferior olive motor mismatch next step
+        self._last_turn = turn
         # Update previous-step state for next step's EFE
         self._last_activity_drive = circ_out['activity_drive']
 
@@ -1420,10 +1594,11 @@ class ZebrafishBrainV2(nn.Module):
             self.stdp_pal_d.homeostatic_scale(pal_out['rate_D'])
             # Weight update only during elevated DA (reward signal present)
             if DA_now > _plast.da_consolidation_threshold or self._da_phasic_steps > 0:
-                self.stdp_tect_tc_L.consolidate(DA_now, ACh_now, eta=_plast.tect_tc.consolidation_eta)
-                self.stdp_tect_tc_R.consolidate(DA_now, ACh_now, eta=_plast.tect_tc.consolidation_eta)
-                self.stdp_tc_pal.consolidate(DA_now, ACh_now, eta=_plast.tc_pal.consolidation_eta)
-                self.stdp_pal_d.consolidate(DA_now, ACh_now, eta=_plast.pal_d.consolidation_eta)
+                _dp = getattr(_plast, "stdp_dropout_p", 0.0)
+                self.stdp_tect_tc_L.consolidate(DA_now, ACh_now, eta=_plast.tect_tc.consolidation_eta, dropout_p=_dp)
+                self.stdp_tect_tc_R.consolidate(DA_now, ACh_now, eta=_plast.tect_tc.consolidation_eta, dropout_p=_dp)
+                self.stdp_tc_pal.consolidate(DA_now, ACh_now, eta=_plast.tc_pal.consolidation_eta, dropout_p=_dp)
+                self.stdp_pal_d.consolidate(DA_now, ACh_now, eta=_plast.pal_d.consolidation_eta, dropout_p=_dp)
         # Online Hebbian classifier fine-tuning: food confirmation → reinforce food class
         if eaten_now > 0 and self.classifier._last_hidden is not None:
             with torch.no_grad():
@@ -1460,7 +1635,7 @@ class ZebrafishBrainV2(nn.Module):
             float(R_int.sum()) / 400.0,
             float((L_type > 0.7).float().sum()) / 20.0,
             float((R_type > 0.7).float().sum()) / 20.0,
-        ], device=self.device)
+        ], device=self.device, dtype=torch.float32)
         habit_out = self.habit(
             cls_probs=self._cls_probs,
             goal=self.current_goal, turn=turn, speed=speed,
@@ -1537,6 +1712,13 @@ class ZebrafishBrainV2(nn.Module):
             # Pectoral fin
             'pect_fin_turn': pect_out['fin_turn'],
             'pect_fin_active': pect_out['active'],
+            # Social memory (learned inference weights)
+            'social_w_alarm': self.social_mem.w_alarm,
+            'social_w_food_cue': self.social_mem.w_food_cue,
+            'social_w_competition': self.social_mem.w_competition,
+            # Oxytocin / vasopressin levels
+            'oxt_level': self.oxt.oxt,
+            'avp_level': self.oxt.avp,
         }
 
     # ------------------------------------------------------------------
@@ -1559,6 +1741,19 @@ class ZebrafishBrainV2(nn.Module):
         fe += self.proprioception.free_energy
         fe += self.vestibular.free_energy
         fe += self.color_vision.free_energy
+        fe += self.nociception.free_energy
+        fe += self.auditory.free_energy
+        fe += self.gustatory.free_energy
+        fe += self.tactile.free_energy
+        fe += self.hypothalamus.free_energy
+        fe += self.pineal.free_energy
+        fe += self.inferior_olive.free_energy
+        fe += self.dl_pallium.free_energy
+        fe += self.vagus_nerve.free_energy
+        fe += self.pituitary.free_energy
+        fe += self.area_postrema.free_energy
+        fe += self.nts.free_energy
+        fe += self.ll_efferent.free_energy
         fe += self.thalamus_L.free_energy
         fe += self.thalamus_R.free_energy
         fe += pal_out.get('free_energy', 0.0)
@@ -1575,6 +1770,19 @@ class ZebrafishBrainV2(nn.Module):
             'proprioception':self.proprioception.free_energy,
             'vestibular':    self.vestibular.free_energy,
             'color_vision':  self.color_vision.free_energy,
+            'nociception':   self.nociception.free_energy,
+            'auditory':      self.auditory.free_energy,
+            'gustatory':     self.gustatory.free_energy,
+            'tactile':       self.tactile.free_energy,
+            'hypothalamus':  self.hypothalamus.free_energy,
+            'pineal':        self.pineal.free_energy,
+            'inferior_olive':self.inferior_olive.free_energy,
+            'dl_pallium':    self.dl_pallium.free_energy,
+            'vagus_nerve':   self.vagus_nerve.free_energy,
+            'pituitary':     self.pituitary.free_energy,
+            'area_postrema': self.area_postrema.free_energy,
+            'nts':           self.nts.free_energy,
+            'll_efferent':   self.ll_efferent.free_energy,
             'thalamus_L':    self.thalamus_L.free_energy,
             'thalamus_R':    self.thalamus_R.free_energy,
             'pallium':       self.pallium.pc.free_energy,
@@ -1687,6 +1895,19 @@ class ZebrafishBrainV2(nn.Module):
         self.proprioception.reset()
         self.active_motor.reset()
         self.color_vision.reset()
+        self.nociception.reset()
+        self.auditory.reset()
+        self.gustatory.reset()
+        self.tactile.reset()
+        self.hypothalamus.reset()
+        self.pineal.reset()
+        self.inferior_olive.reset()
+        self.dl_pallium.reset()
+        self.vagus_nerve.reset()
+        self.pituitary.reset()
+        self.area_postrema.reset()
+        self.nts.reset()
+        self.ll_efferent.reset()
         self.circadian.reset()
         self.sleep_wake.reset()
         self.saccade.reset()

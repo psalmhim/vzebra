@@ -44,9 +44,18 @@ class EligibilitySTDP(nn.Module):
         # Update eligibility trace
         self.e_trace.copy_(self.e_trace * self.decay_elig + dW)
 
-    def consolidate(self, DA: float, ACh: float = 1.0, eta: float = 0.001):
-        """Apply eligibility trace with DA as third factor."""
+    def consolidate(self, DA: float, ACh: float = 1.0, eta: float = 0.001,
+                    dropout_p: float = 0.0):
+        """Apply eligibility trace with DA as third factor.
+
+        dropout_p: fraction of synapses randomly silenced per consolidation
+        step.  Prevents co-adaptation of synapses and forces distributed
+        representations (analogous to biological synaptic unreliability).
+        """
         dW = eta * DA * ACh * self.e_trace
+        if dropout_p > 0.0:
+            mask = torch.rand_like(dW) >= dropout_p
+            dW = dW * mask
         with torch.no_grad():
             self.W.data.add_(dW)
             self.W.data.clamp_(self.w_min, self.w_max)
