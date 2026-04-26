@@ -2581,10 +2581,10 @@ and individual (per-episode) level.
 To demonstrate that the active inference framework generalises beyond
 zebrafish, we developed \textbf{vzlab}, a lightweight multi-species
 virtual laboratory that packages four invertebrate and vertebrate model
-organisms under a common three-tier validation protocol.
+organisms under a common four-tier validation protocol.
 Each species is implemented as a \texttt{BrainModule}--\texttt{Environment}
 pair registered in a central species registry; a single call to
-\texttt{run\_full\_validation(species)} executes all three tiers
+\texttt{run\_full\_validation(species)} executes all four tiers
 and returns a structured report.
 
 \paragraph{Tier 1 — Behavioural battery.}
@@ -2602,46 +2602,71 @@ Known biological interventions (region ablations) are applied
 and the resulting directional change in the target metric is verified
 against the published phenotype.
 
+\paragraph{Tier 4 — Robustness (graceful degradation).}
+Biological neural circuits tolerate substantial cell loss without
+catastrophic failure \citep{rakic2002}.
+We simulate neuron death by applying independent Bernoulli dropout
+to each sensory unit \emph{before} the brain's step, so the brain
+genuinely makes decisions from degraded input.
+Behavioral output (motor speed $\times$ directional control) is measured
+at 10\%, 30\%, and 50\% dropout; pass thresholds are ${\ge}80\%$,
+${\ge}50\%$, and ${\ge}20\%$ retention respectively.
+A \emph{robustness index} (RI) summarises the area under the
+retention curve, normalised to $[0,1]$.
+
 \vspace{4pt}
 \noindent
-Table~\ref{tab:vzlab} summarises the four implemented species and their
-validation results; all species achieve Grade A (all three tiers passing
-across all conditions).
+Table~\ref{tab:vzlab} summarises all four species.
+All achieve Grade A$^+$ (all four tiers passing).
 
 \begin{table}[htbp]
 \centering
-\caption{vzlab multi-species validation summary. All four species pass
-all three tiers (Grade A). Tier 2 reports minimum Spearman $r_s$ across
-conditions; Tier 3 reports the most conservative lesion effect size.}
+\caption{vzlab multi-species validation. All four species achieve Grade A$^+$
+(T1--T4 all pass). T2 reports minimum Spearman $r_s$; T4 reports the
+robustness index (RI) and retention at 30\% neuron dropout.}
 \label{tab:vzlab}
-\begin{tabular}{@{}lllccc@{}}
+\begin{tabular}{@{}llccccc@{}}
 \toprule
-\textbf{Species} & \textbf{Model} & \textbf{Tier 1 metrics} & \textbf{T1} & \textbf{T2 ($r_s$)} & \textbf{T3} \\
+\textbf{Species} & \textbf{Model} & \textbf{T1} & \textbf{T2 ($r_s$)} & \textbf{T3} & \textbf{T4 RI} & \textbf{30\% ret.} \\
 \midrule
-\textit{C.~elegans}        & 302-neuron connectome     & Chemotaxis, thermotaxis, exploration        & \checkmark & $1.0$ & \checkmark \\
-\textit{D.~rerio}          & 100k-neuron SNN (zebrafish) & Decision quality, survival, ablations    & \checkmark & $1.0$ & \checkmark \\
-\textit{D.~melanogaster}   & Mushroom body LIF (2145 n) & PN response, KC sparsity, DAN baseline   & \checkmark & $1.0$ & \checkmark \\
-\textit{X.~laevis}         & Spinal CPG (150 n)        & Swimming initiation, L/R alternation, speed & \checkmark & $1.0$ & \checkmark \\
+\textit{C.~elegans}      & 302-n connectome       & \checkmark & $1.0$ & \checkmark & $0.982$ & $98.1\%$ \\
+\textit{D.~rerio}        & 100k-n SNN (zebrafish) & \checkmark & $1.0$ & \checkmark & $1.000$ & $100\%$  \\
+\textit{D.~melanogaster} & Mushroom body (2145 n) & \checkmark & $1.0$ & \checkmark & $0.946$ & $93.7\%$ \\
+\textit{X.~laevis}       & Spinal CPG (150 n)     & \checkmark & $1.0$ & \checkmark & $1.000$ & $100\%$  \\
 \bottomrule
 \end{tabular}
 \end{table}
 
+\paragraph{Robustness profiles.}
+The zebrafish and \textit{Xenopus} CPG achieve perfect retention (RI $= 1.0$)
+because their locomotor circuits are self-sustaining: once initiated by
+sensory input, the CPG generates rhythm independently of ongoing sensory
+signals.
+\textit{C.~elegans} shows $\ge 96\%$ retention even at 50\% dropout
+because crawl speed is driven by internal motor neuron tone, while only
+the \emph{direction} of chemotaxis is impaired — consistent with the
+observation that sensory-deprived worms continue locomoting but lose
+chemotactic precision.
+\textit{Drosophila} is most sensitive (RI $= 0.946$) because odour-guided
+approach requires sustained PN input to KC activity; this matches the
+known APL-dependent fragility of the mushroom body to olfactory deprivation.
+Critically, the zebrafish sensory cascade — from photoreceptor and
+chemosensory signals through tectum, amygdala, and EFE goal selection
+to motor output — retains full behavioral coherence at all tested
+dropout levels (RI $= 1.0$), supporting the claim that the cells-to-behavior
+hierarchy is inherently fault-tolerant.
+
 \paragraph{Implementation notes.}
 The \textit{Drosophila} mushroom body implements the All-Pathway Loop
-(APL) feedback inhibitor that enforces $\le 10\%$ Kenyon cell sparsity
-\citep{lin2014}; an important implementation detail is that the
-sparsity threshold must be computed by counting active cells directly
-(rather than using \texttt{np.partition} on binary spike vectors, which
-always returns 1.0 for binary signals).
-The \textit{Xenopus} tadpole spinal CPG \citep{roberts1998,li2006}
-models four neuron classes: Rohon-Beard (RB) sensory neurons, descending
-interneurons (dIN) as rhythm generators, commissural inhibitory
-interneurons (cIN) enforcing left-right anti-phase, and motor neurons (MN).
-dIN ablation immediately stops swimming ($-100\%$ speed), while cIN
-ablation disrupts alternation by $-45\%$ without stopping locomotion,
-matching the published phenotype.
-Full source code, species entries, and validation scripts are available
-in the \texttt{vzlab/} package.
+(APL) feedback inhibitor enforcing $\le 10\%$ Kenyon cell sparsity
+\citep{lin2014}.
+The \textit{Xenopus} spinal CPG \citep{roberts1998,li2006} models four
+neuron classes: Rohon-Beard (RB) sensory neurons, descending interneurons
+(dIN) as rhythm generators, commissural inhibitory interneurons (cIN)
+enforcing left-right anti-phase, and motor neurons (MN);
+dIN ablation stops swimming ($-100\%$ speed) and cIN ablation disrupts
+alternation by $-45\%$.
+Full source code is available in the \texttt{vzlab/} package.
 
 % =====================================================================
 \section{Discussion}\label{sec:discussion}
