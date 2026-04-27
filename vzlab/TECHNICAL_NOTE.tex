@@ -1,0 +1,441 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\geometry{margin=2.5cm}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{gray!8},
+  frame=single,
+  framerule=0.4pt,
+  breaklines=true,
+  language=Python,
+}
+
+\title{\textbf{vzlab: A Four-Tier Multi-Species Neural Avatar\\Validation Framework}\\[6pt]
+  \large Technical Note}
+\author{vzebra project}
+\date{2026-04-25}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We describe \textsc{vzlab}, an open Python framework for building and
+validating virtual-organism neural avatars across species.
+The framework enforces a four-tier validation protocol: behavioural
+battery~(T1), atlas rank correspondence~(T2), lesion replication~(T3),
+and sensory dropout robustness~(T4).
+All four current species implementations---\textit{Danio rerio}
+(7,316 spiking neurons), \textit{Caenorhabditis elegans}~(302),
+\textit{Drosophila melanogaster}~(2,145), and \textit{Xenopus laevis}
+tadpole~(150)---achieve Grade~A+ (all four tiers pass), spanning three
+phyla and four orders of magnitude in neuron count.
+Robustness indices under 50\,\% sensory dropout range from 0.946
+(\textit{Drosophila}) to 1.000 (zebrafish and xenopus), confirming
+fault-tolerant distributed representations.
+\end{abstract}
+
+%----------------------------------------------------------------------
+\section{Introduction}
+
+Computational neuroscience models are typically validated against
+single experiments in a single species.
+\textsc{vzlab} introduces a systematic cross-species validation
+paradigm in which the same four-tier protocol is applied to every
+neural avatar, enabling direct comparison of model fidelity across
+organisms.
+
+The framework was designed around three principles:
+\begin{enumerate}
+  \item \textbf{Species-agnostic contracts.}  All species share four
+    abstract base classes so that experimental protocols, lesion tools,
+    and analysis pipelines require no modification when the species
+    changes.
+  \item \textbf{Graded, reproducible validation.}  Tier grades
+    (A+/A/B) encode what kind of biological evidence the avatar
+    reproduces and are serialised with every result object.
+  \item \textbf{Fault-tolerant representations.}  Tier~4 tests whether
+    the avatar's behaviour degrades gracefully under sensory loss,
+    matching the redundancy of biological neural circuits.
+\end{enumerate}
+
+%----------------------------------------------------------------------
+\section{Architecture}
+
+\subsection{Abstract Base Classes}
+
+Four ABCs define the species-agnostic platform contracts
+(\texttt{vzlab/core/interfaces.py}):
+
+\begin{description}
+  \item[\texttt{Connectome}] Wraps anatomical data---region names,
+    neuron counts, projection matrices, neuromodulatory targets.
+    Ingests FlyWire, ZFIN, MICrONS, and the White~\textit{et~al.}\
+    \textit{C.\ elegans} connectome.
+  \item[\texttt{BrainModule}] Implements one timestep of neural
+    dynamics (\texttt{step()}), returns a six-level
+    \texttt{HierarchicalState}, and exposes
+    \texttt{ablate()}/\texttt{restore()}/\texttt{set\_param()}.
+  \item[\texttt{Environment}] Emits typed sensory structs:
+    \texttt{PhotonField}, \texttt{ChemField}, \texttt{PressureField},
+    \texttt{BodyState}, \texttt{SocialField}.
+  \item[\texttt{BehavioralProtocol}] Defines stimuli, episode length,
+    and a \texttt{score()} method converting world state to metrics.
+\end{description}
+
+\subsection{ExperimentRunner}
+
+The \texttt{ExperimentRunner} composes a \texttt{VirtualOrganism}
+(brain + environment) with a protocol and exposes a chainable
+intervention API:
+
+\begin{lstlisting}
+from vzlab import build
+from vzlab.engine.experiment import ExperimentRunner
+from vzlab.protocols import PredatorAvoidanceProtocol
+
+organism = build("danio_rerio")
+runner = ExperimentRunner(organism, PredatorAvoidanceProtocol(), seed=42)
+runner.ablate("amygdala")
+result = runner.run(n_episodes=20)
+print(result.summary())
+\end{lstlisting}
+
+The identical API works for all four species.
+
+\subsection{Environments}
+
+\begin{table}[h]
+\centering
+\caption{Environments per species.}
+\begin{tabular}{lll}
+\toprule
+Species & Environment & Key parameters \\
+\midrule
+\textit{D.\ rerio}         & \texttt{AquaticArena}  & 800$\times$600\,px, 12 food, 1 predator \\
+\textit{C.\ elegans}       & \texttt{AgarPlate}     & 100$\times$100\,mm, Gaussian chem.\ gradients \\
+\textit{D.\ melanogaster}  & \texttt{OdourArena}    & 72-odour CS+/CS$-$ conditioning \\
+\textit{X.\ laevis}        & \texttt{SwimTank}      & 400$\times$300\,px channel, wall-touch CPG \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%----------------------------------------------------------------------
+\section{Four-Tier Validation Protocol}
+
+\subsection{Tier 1 — Behavioural Battery}
+
+Each species has a curated set of behavioural tests run via
+\texttt{Tier1Battery.run(species)}.
+Tests check survival competence, species-characteristic motor
+patterns, and sensory-motor coupling against published thresholds.
+
+Zebrafish tests include: prey capture kinematics (J-turn, capture
+strike), predator-charge escape, obstacle avoidance, shoaling
+cohesion (3~agents, cohesion $\geq 0.20$), and social alarm
+propagation (alarm propagation fraction $\geq 0.50$).
+
+\subsection{Tier 2 — Atlas Rank Correspondence}
+
+Regional activity rates returned in \texttt{HierarchicalState.L4\_region}
+are rank-correlated (Spearman's $r_s$) against species-specific
+biological reference vectors derived from whole-brain imaging or
+electrophysiology atlases.
+Pass criterion: $r_s > 0.50$ ($p < 0.05$).
+
+\subsection{Tier 3 — Lesion Replication}
+
+At least one published lesion experiment is replicated per species.
+The avatar must reproduce the sign and approximate magnitude of the
+reported deficit.
+
+\begin{table}[h]
+\centering
+\caption{Tier~3 lesion tests.}
+\begin{tabular}{lll}
+\toprule
+Species & Lesion & Expected deficit \\
+\midrule
+\textit{D.\ rerio}         & Habenula ablation          & Reduced goal-switching ($\geq$20\%) \\
+\textit{C.\ elegans}       & AWC ablation               & CI drops from 0.68 to $<$0.10 \\
+\textit{D.\ melanogaster}  & DAN silencing              & Discrimination drops from 0.72 to $<$0.30 \\
+\textit{X.\ laevis}        & dIN ablation               & Swimming speed drops $\geq$80\% \\
+\textit{X.\ laevis}        & cIN ablation               & Alternation fraction drops $\geq$0.30 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Tier 4 — Sensory Dropout Robustness}
+
+Bernoulli dropout is applied to the sensory signal struct
+\emph{before} \texttt{brain.step()}, so the avatar makes decisions
+from genuinely degraded input.
+Dropout fractions $p \in \{0.10, 0.30, 0.50\}$ are tested over 5
+seeds $\times$ 40 steps each.
+The retention ratio at fraction $p$ is:
+\[
+  \rho(p) = \frac{\bar{S}(p)}{\bar{S}(0)},
+\]
+where $\bar{S}$ is the mean behavioural score.
+Pass thresholds: $\rho(0.10) \geq 0.80$, $\rho(0.30) \geq 0.50$,
+$\rho(0.50) \geq 0.20$.
+
+The Robustness Index aggregates performance across all dropout levels:
+\[
+  \text{RI} = \frac{\displaystyle\int_0^{0.5} \rho(p)\,dp}{0.5}
+  \approx \frac{\text{trapezoid}(\rho,\, [0,0.1,0.3,0.5])}{0.5}.
+\]
+$\text{RI} = 1$ means perfect retention at all dropout levels;
+$\text{RI} = 0$ means complete failure at $p = 0$.
+
+\paragraph{Implementation (\texttt{vzlab/validation/tier4.py})}
+
+\begin{lstlisting}
+def _apply_sensory_dropout(signals, p, rng):
+    s = deepcopy(signals)
+    if s.chem:
+        mask = rng.random(len(s.chem.concentrations)) >= p
+        s.chem.concentrations *= mask
+    if s.body and rng.random() < p:
+        s.body.in_contact = False
+    if s.photon:
+        mask = rng.random(s.photon.intensity.shape) >= p
+        s.photon.intensity *= mask
+    if s.pressure:
+        mask = rng.random(len(s.pressure.flow_vectors)) >= p
+        s.pressure.flow_vectors *= mask[:, None]
+    return s
+\end{lstlisting}
+
+\subsection{Grading}
+
+\begin{description}
+  \item[Grade A+] T1 + T2 + T3 + T4 all pass.
+  \item[Grade A]  T1 + T2 + T3 pass; T4 not run or partial.
+  \item[Grade B]  T1 + T2 pass.
+  \item[Grade C]  T1 passes only.
+\end{description}
+
+%----------------------------------------------------------------------
+\section{Species Implementations}
+
+\subsection{\textit{Danio rerio} (larval zebrafish)}
+
+\textbf{Architecture.}
+7,316 Izhikevich spiking neurons across 48 brain modules (L1--L6).
+Seven cell types (RS, IB, FS, CH, LTS, TC, MSN); 75\,\%~E / 25\,\%~I.
+Neuron positions constrained by the MPIN whole-brain atlas
+(47,010~cells, 72~bilateral regions).
+Four-axis neuromodulation (DA, NA, 5-HT, ACh).
+
+\textbf{Goal selection.}
+Active inference Expected Free Energy minimisation across four
+policies (forage, flee, explore, social) with reward-modulated
+three-factor STDP eligibility traces ($\tau = 500$\,ms).
+
+\textbf{STDP synaptic dropout.}
+Each \texttt{EligibilitySTDP.consolidate()} call applies a Bernoulli
+mask to the weight delta before committing (default $p_\text{drop} =
+0.10$), preventing synapse co-adaptation and forcing redundant
+distributed representations analogous to biological synaptic release
+failure ($\sim$10--20\,\% per terminal).
+
+\textbf{Validation.}
+T1: 7/7 behavioural tests (including shoaling cohesion and social
+alarm propagation).
+T2: $r_s = 0.81$ (MPIN atlas).
+T3: habenula lesion reduces goal-switching by 22\,\%.
+T4: RI = 1.000.
+\textbf{Grade~A+.}
+
+\subsection{\textit{Caenorhabditis elegans}}
+
+\textbf{Architecture.}
+302 leaky integrate-and-fire neurons ($\tau = 20$\,ms,
+$\theta = 1.0$), 7,391 chemical plus 890 electrical synapses from
+the White~\textit{et~al.}\ connectome.
+
+\textbf{Validation.}
+T1: chemotaxis index CI $= 0.68$ (threshold $\geq 0.60$).
+T2: $r_s = 0.72$ (activity rank vs.\ published profiles).
+T3: AWC ablation drops CI from 0.68 to $0.04 \pm 0.02$ (biological:
+$\leq 0.10$).
+T4: RI = 0.960.
+\textbf{Grade~A+.}
+
+\subsection{\textit{Drosophila melanogaster}}
+
+\textbf{Architecture.}
+2,145 neurons: 50~PNs, 700~KC$_{\alpha\beta}$, 300~KC$_{\alpha'\beta'}$,
+1,000~KC$_\gamma$, 1~APL (global WTA inhibition, 10\,\% sparsity),
+60~DANs, 34~MBONs.
+Connectivity from the FlyWire hemibrain connectome.
+
+\textbf{Sparsity enforcement.}
+APL feedback silences all KCs below the 90th-percentile firing
+threshold each timestep, implemented by counting active units and
+zeroing the bottom 90\,\% by rate.
+
+\textbf{Validation.}
+T1: odour discrimination $= 0.72$ (threshold $\geq 0.60$).
+T2: $r_s = 0.68$ (MB calcium imaging reference).
+T3: DAN silencing drops discrimination from 0.72 to
+$0.19 \pm 0.06$ (threshold $\leq 0.30$).
+T4: RI = 0.946.
+\textbf{Grade~A+.}
+
+\subsection{\textit{Xenopus laevis} tadpole}
+
+\textbf{Architecture.}
+150 neurons: 20~Rohon--B\'{e}ard (RB) sensory, 60~descending
+interneurons (dIN, pacemakers), 40~commissural interneurons (cIN,
+L/R alternation), 30~motoneurons (MN).
+Circuit topology from Roberts~\textit{et~al.}\ 1998.
+
+\textbf{CPG dynamics.}
+Touch $\to$ RB $\to$ dIN rhythm (tonic firing rate 0.15--0.35
+during steady swimming, not maximal at every wall contact).
+cIN cross-inhibition enforces left--right alternation.
+MN drives tail motor output.
+
+\textbf{Validation.}
+T1: swimming speed $\geq 0.50$, alternation fraction $\geq 0.80$.
+T2: $r_s = 1.00$ (rb $<$ cIN $<$ MN $<$ dIN rank order).
+T3: dIN ablation $\to$ 100\,\% speed reduction (threshold $\geq 80$\,\%);
+cIN ablation $\to$ alternation drops by 0.45 (threshold $\geq 0.30$).
+T4: RI = 1.000.
+\textbf{Grade~A+.}
+
+%----------------------------------------------------------------------
+\section{Validation Results Summary}
+
+\begin{table}[h]
+\centering
+\caption{Summary of all species validation results.}
+\begin{tabular}{lrllllll}
+\toprule
+Species & Neurons & T1 & T2 $r_s$ & T3 & T4 RI & 30\,\% ret. & Grade \\
+\midrule
+\textit{D.\ rerio}        & 7,316 & PASS & 0.81 & PASS & 1.000 & 100\,\% & \textbf{A+} \\
+\textit{C.\ elegans}      &   302 & PASS & 0.72 & PASS & 0.960 &  96\,\% & \textbf{A+} \\
+\textit{D.\ melanogaster} & 2,145 & PASS & 0.68 & PASS & 0.946 &  89\,\% & \textbf{A+} \\
+\textit{X.\ laevis}       &   150 & PASS & 1.00 & PASS & 1.000 & 100\,\% & \textbf{A+} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%----------------------------------------------------------------------
+\section{Usage}
+
+\subsection{Run a full validation}
+
+\begin{lstlisting}
+from vzlab.validation.report import run_full_validation
+
+report = run_full_validation("danio_rerio")
+print(report.overall_grade())   # "A+"
+print(report.robustness_index())  # 1.0
+report.print_summary()
+\end{lstlisting}
+
+\subsection{CLI}
+
+\begin{lstlisting}[language=bash]
+vzlab run --species danio_rerio \
+          --protocol predator_avoidance \
+          --ablate amygdala \
+          --episodes 20
+
+vzlab sweep --species danio_rerio \
+            --protocol exploration \
+            --param efe.beta_epistemic \
+            --values 0.0,1.0,2.0,3.0
+\end{lstlisting}
+
+\subsection{Register a new species}
+
+\begin{lstlisting}
+from vzlab.core.registry import register
+
+register(
+    name="mus_musculus",
+    brain_cls=MouseBrain,
+    env_cls=OpenFieldArena,
+    connectome_path="data/mouse_connectome.json",
+)
+# CLI and ExperimentRunner discover it automatically.
+\end{lstlisting}
+
+%----------------------------------------------------------------------
+\section{Biological Grounding of Design Decisions}
+
+\paragraph{Sensory dropout for fault tolerance.}
+Biological neural systems tolerate single-neuron loss, axonal
+conduction failure, and synaptic unreliability because information is
+represented redundantly across populations.
+Tier~4 tests this property directly: an avatar that fails under 30\,\%
+sensory dropout has learned brittle, non-redundant representations
+that would not survive routine biological noise.
+
+\paragraph{STDP synaptic dropout.}
+Cortical and cerebellar synapses have vesicle release probabilities
+of $\sim$0.1--0.3, meaning 70--90\,\% of spikes fail to transmit.
+Applying Bernoulli dropout ($p = 0.10$) to the STDP weight update
+prevents co-adaptation of co-active synapses and forces the learning
+rule to distribute credit across many redundant pathways.
+
+\paragraph{Spearman rank, not absolute values.}
+Atlas activity vectors from calcium imaging or electrophysiology
+contain unknown amplitude scaling factors.
+Rank correlation tests the \emph{ordering} of regional activity
+(which region is most vs.\ least active), not absolute firing rates.
+This makes T2 robust to gain differences between the model and
+measurement modality.
+
+\paragraph{Lesion as ground truth.}
+T3 replicates specific ablation experiments from the literature
+rather than fitting to summary statistics.
+A model that passes T3 has reproduced a causal mechanistic result,
+not merely matched a correlation.
+
+%----------------------------------------------------------------------
+\section*{References}
+
+\noindent
+Roberts~A., Soffe~S.R., Wolf~E.S., Yoshida~M., Zhao~F.Y. (1998).
+Central circuits controlling locomotion in young frog tadpoles.
+\textit{Ann.\ NY Acad.\ Sci.}, 860, 19--34.
+
+\noindent
+Li~W.C., Soffe~S.R., Wolf~E., Roberts~A. (2006).
+Persistent responses to brief stimuli: feedback excitation among
+brainstem neurons.
+\textit{J.\ Neurosci.}, 26(15), 4026--4035.
+
+\noindent
+Lin~A.C., Bygrave~A.M., de Calignon~A., Lee~T., Miesenb\"{o}ck~G.
+(2014). Sparse, decorrelated odor coding in the mushroom body
+enhances learned odor discrimination.
+\textit{Nature Neurosci.}, 17, 559--568.
+
+\noindent
+White~J.G., Southgate~E., Thomson~J.N., Brenner~S. (1986).
+The structure of the nervous system of the nematode
+\textit{Caenorhabditis elegans}.
+\textit{Phil.\ Trans.\ R.\ Soc.\ B}, 314, 1--340.
+
+\noindent
+Dorkenwald~S. \textit{et~al.} (2024). FlyWire: online community for
+whole-brain connectomics.
+\textit{Nature Methods}, 19, 119--128.
+
+\end{document}
