@@ -1060,11 +1060,36 @@ class ZebrafishBrainV2(nn.Module):
             brain_turn = flee_turn * 1.5 + 0.3 * obstacle_turn
             alpha_s = 0.6  # faster response during flee
         elif self.current_goal == GOAL_FORAGE:
-            brain_turn = food_turn if abs(food_turn) > 0.05 else retinal_turn * 0.8
+            if abs(food_turn) > 0.05:
+                brain_turn = food_turn
+            else:
+                # No food visible — use olfactory gradient to navigate toward food source
+                olf_str = olf_out.get('food_odor_strength', 0.0)
+                olf_dir = olf_out.get('food_gradient_dir', 0.0)
+                if olf_str > 0.08 and self._active('olfaction'):
+                    # food_gradient_dir > 0 = food left (CCW) → turn left (negative in v1 convention)
+                    olf_turn = float(np.clip(-olf_dir / (math.pi * 0.5), -1.0, 1.0)) * min(1.0, olf_str * 2.0)
+                    brain_turn = 0.6 * olf_turn + 0.4 * retinal_turn * 0.8
+                else:
+                    brain_turn = retinal_turn * 0.8
             brain_turn = 0.8 * brain_turn + 0.2 * obstacle_turn
             alpha_s = 0.50  # responsive to food direction
         elif self.current_goal == GOAL_EXPLORE:
-            brain_turn = 0.4 * explore_turn + 0.2 * retinal_turn + 0.3 * obstacle_turn + 0.3 * scan_turn
+            # Bias exploration toward less-visited areas using place cell coverage
+            _place_bias = 0.0
+            if hasattr(self.place, 'visit_count') and self._active('place_cells'):
+                _vc = self.place.visit_count
+                _low_idx = int(_vc.argmin())
+                # Convert place cell index to a left/right bias (-1..1)
+                _place_bias = (_low_idx / max(1, len(_vc)) - 0.5) * 0.8
+            # Also use weak olfactory gradient during explore (follow faint food smells)
+            _olf_explore = 0.0
+            _olf_str = olf_out.get('food_odor_strength', 0.0)
+            if _olf_str > 0.15 and self._active('olfaction'):
+                _olf_dir = olf_out.get('food_gradient_dir', 0.0)
+                _olf_explore = float(np.clip(-_olf_dir / (math.pi * 0.5), -1.0, 1.0)) * 0.4
+            brain_turn = (0.3 * explore_turn + 0.15 * retinal_turn + 0.25 * obstacle_turn
+                          + 0.2 * scan_turn + 0.1 * _place_bias + 0.15 * _olf_explore)
             alpha_s = 0.25
         else:  # SOCIAL
             # Shoaling turn bias when in social mode
@@ -1497,7 +1522,9 @@ class ZebrafishBrainV2(nn.Module):
         except Exception:
             pass
         # Sleep-wake: reduce responsiveness when drowsy (melatonin-driven)
-        speed *= sw_out['responsiveness']
+        # Biological: flee speed is never reduced by sleep pressure — survival reflex
+        if self.current_goal != GOAL_FLEE:
+            speed *= sw_out['responsiveness']
         # IPN behavioral inhibition: aversion → slow down (not during active flee)
         if self.current_goal != GOAL_FLEE and self._active('habenula'):
             speed *= ipn_out['speed_multiplier']
@@ -1518,7 +1545,9 @@ class ZebrafishBrainV2(nn.Module):
         if tact_out['startle_reflex']:
             turn = float(np.clip(turn + (-0.3 if turn >= 0 else 0.3), -1.0, 1.0))
         # Hypothalamus: feeding drive boosts forage speed; circadian gate modulates activity
-        speed *= hypo_out['circadian_gate']
+        # Biological: flight response overrides circadian suppression (sympathetic > circadian)
+        if self.current_goal != GOAL_FLEE:
+            speed *= hypo_out['circadian_gate']
         # Inferior olive: complex spike → brief motor hesitation (error → recalibrate)
         if io_out['complex_spike'] and self.current_goal != GOAL_FLEE:
             speed *= 0.85

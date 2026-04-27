@@ -19,7 +19,7 @@ class EFEConfig:
     """Active-inference goal selection coefficients."""
     # Base offsets per goal
     forage_offset: float = 0.15
-    flee_offset: float = 0.35
+    flee_offset: float = 0.42
     explore_offset: float = 0.20
     social_offset: float = 0.10
 
@@ -90,7 +90,7 @@ class GoalSelectionConfig:
 
     # Food-visible reflex
     food_pixels_threshold: int = 1
-    food_reflex_threat_gate: float = 0.10
+    food_reflex_threat_gate: float = 0.12
     forage_lock_duration: int = 20
 
     # Forage persistence
@@ -102,14 +102,14 @@ class GoalSelectionConfig:
     starvation_panic_distance: float = 80.0
 
     # Threat evidence integration
-    enemy_pixels_threat: int = 3
+    enemy_pixels_threat: int = 2
     ll_proximity_threshold: float = 0.15
-    amygdala_threat_threshold: float = 0.25
+    amygdala_threat_threshold: float = 0.18
     starvation_hunger_gate: float = 0.55
     threat_evidence_confidence: float = 0.85
-    ll_close_threshold: float = 0.4
+    ll_close_threshold: float = 0.35
     pred_close_distance: float = 60.0
-    amygdala_moderate_threshold: float = 0.2
+    amygdala_moderate_threshold: float = 0.18
 
     # Stuck detection → force explore
     no_food_timeout: int = 30
@@ -184,7 +184,7 @@ class PlasticityConfig:
     top_down_gain: float = 0.05
 
     # DA threshold for consolidation
-    da_consolidation_threshold: float = 0.55
+    da_consolidation_threshold: float = 0.45
 
     # STDP consolidation frequency
     stdp_consolidation_every: int = 5
