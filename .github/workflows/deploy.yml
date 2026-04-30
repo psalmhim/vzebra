@@ -28,15 +28,29 @@ jobs:
             docker compose -f "$APP_DIR/docker-compose.yml" build vzebra
             docker compose -f "$APP_DIR/docker-compose.yml" up -d vzebra
 
-            # Issue SSL cert if not yet obtained
+            # Phase 1: port-80 only nginx config so certbot can verify
             if [ ! -f "/etc/letsencrypt/live/vzebra.xaiforbrain.com/fullchain.pem" ]; then
-              sudo certbot certonly --nginx \
+              cat > /tmp/vzebra-http.conf <<'NGINX'
+            server {
+                listen 80;
+                server_name vzebra.xaiforbrain.com;
+                location /.well-known/acme-challenge/ { root /var/www/html; }
+                location / { proxy_pass http://127.0.0.1:5001; }
+            }
+            NGINX
+              sudo cp /tmp/vzebra-http.conf /etc/nginx/sites-available/vzebra.xaiforbrain.com
+              sudo ln -sf /etc/nginx/sites-available/vzebra.xaiforbrain.com \
+                          /etc/nginx/sites-enabled/vzebra.xaiforbrain.com
+              sudo nginx -t && sudo systemctl reload nginx
+
+              sudo certbot certonly --webroot \
+                -w /var/www/html \
                 -d vzebra.xaiforbrain.com \
                 --non-interactive --agree-tos \
                 -m hangik.lee@gmail.com
             fi
 
-            # Always update nginx config
+            # Phase 2: full HTTPS nginx config
             sudo cp "$APP_DIR/deploy/nginx-vzebra.conf" \
                     "/etc/nginx/sites-available/vzebra.xaiforbrain.com"
             sudo ln -sf "/etc/nginx/sites-available/vzebra.xaiforbrain.com" \
