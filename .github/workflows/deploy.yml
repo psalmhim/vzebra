@@ -1,0 +1,46 @@
+name: Deploy vzebra                                                                               
+                                                                     
+  on:                                                                                               
+    push:
+      branches: [main]                                                                              
+    workflow_dispatch:                                               
+
+  jobs:
+    deploy:
+      runs-on: ubuntu-latest
+      steps:
+        - name: Deploy to vzebra.xaiforbrain.com
+          uses: appleboy/ssh-action@v1.0.3                                                          
+          with:
+            host: 13.209.16.188                                                                     
+            username: ubuntu                                         
+            key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+            script: |                                                                               
+              set -e
+              APP_DIR=/home/ubuntu/vzebra                                                           
+                                                                     
+              # 최초 실행: repo clone
+              if [ ! -d "$APP_DIR/.git" ]; then                                                     
+                git clone https://github.com/psalmhim/vzebra.git "$APP_DIR"
+              fi                                                                                    
+                                                                                                    
+              # 최신 코드 pull
+              git -C "$APP_DIR" pull origin main                                                    
+                                                                     
+              # Docker 빌드 & 재시작
+              docker compose -f "$APP_DIR/docker-compose.yml" build vzebra
+              docker compose -f "$APP_DIR/docker-compose.yml" up -d vzebra                          
+   
+              # 최초 실행: nginx + SSL 설정                                                         
+              if [ ! -f "/etc/nginx/sites-enabled/vzebra.xaiforbrain.com" ]; then
+                sudo cp "$APP_DIR/deploy/nginx-vzebra.conf" \                                       
+                        "/etc/nginx/sites-available/vzebra.xaiforbrain.com"                         
+                sudo ln -sf "/etc/nginx/sites-available/vzebra.xaiforbrain.com" \
+                            "/etc/nginx/sites-enabled/vzebra.xaiforbrain.com"                       
+                sudo nginx -t && sudo systemctl reload nginx         
+                sudo certbot --nginx -d vzebra.xaiforbrain.com \                                    
+                  --non-interactive --agree-tos -m hangik.lee@gmail.com                             
+                sudo systemctl reload nginx
+              fi                                                                                    
+                                                                     
+              echo "✓ Deployed at $(date)"  
