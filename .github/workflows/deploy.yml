@@ -28,16 +28,19 @@ jobs:
             docker compose -f "$APP_DIR/docker-compose.yml" build vzebra
             docker compose -f "$APP_DIR/docker-compose.yml" up -d vzebra
 
-            if [ ! -f "/etc/nginx/sites-enabled/vzebra.xaiforbrain.com" ]; then
-              sudo cp "$APP_DIR/deploy/nginx-vzebra.conf" \
-                      "/etc/nginx/sites-available/vzebra.xaiforbrain.com"
-              sudo ln -sf "/etc/nginx/sites-available/vzebra.xaiforbrain.com" \
-                          "/etc/nginx/sites-enabled/vzebra.xaiforbrain.com"
-              sudo nginx -t && sudo systemctl reload nginx
-            else
-              sudo cp "$APP_DIR/deploy/nginx-vzebra.conf" \
-                      "/etc/nginx/sites-available/vzebra.xaiforbrain.com"
-              sudo nginx -t && sudo systemctl reload nginx
+            # Issue SSL cert if not yet obtained
+            if [ ! -f "/etc/letsencrypt/live/vzebra.xaiforbrain.com/fullchain.pem" ]; then
+              sudo certbot certonly --nginx \
+                -d vzebra.xaiforbrain.com \
+                --non-interactive --agree-tos \
+                -m hangik.lee@gmail.com
             fi
+
+            # Always update nginx config
+            sudo cp "$APP_DIR/deploy/nginx-vzebra.conf" \
+                    "/etc/nginx/sites-available/vzebra.xaiforbrain.com"
+            sudo ln -sf "/etc/nginx/sites-available/vzebra.xaiforbrain.com" \
+                        "/etc/nginx/sites-enabled/vzebra.xaiforbrain.com"
+            sudo nginx -t && sudo systemctl reload nginx
 
             echo "Deployed at $(date)"
