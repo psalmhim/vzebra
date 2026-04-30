@@ -1,0 +1,21 @@
+services:
+  vzebra:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vzebra:latest
+    container_name: vzebra
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5001:5001"   # loopback only; nginx proxies from outside
+    environment:
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    volumes:
+      # Bind-mount checkpoints so git pull on host immediately reflects inside
+      - ./zebrav2/checkpoints:/app/zebrav2/checkpoints
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"

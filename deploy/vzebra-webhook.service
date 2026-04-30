@@ -1,0 +1,18 @@
+[Unit]
+Description=vzebra GitHub webhook receiver
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/vzebra
+EnvironmentFile=-/home/ubuntu/vzebra/deploy/webhook.env
+ExecStart=/usr/bin/python3 /home/ubuntu/vzebra/deploy/webhook_server.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

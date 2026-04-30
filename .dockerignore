@@ -1,0 +1,42 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.github/
+*.egg-info/
+.DS_Store
+.vscode/
+
+# Atlas raw data (not needed at runtime)
+atlas/*.npy
+atlas/*.npy.gz
+atlas/*.mat
+atlas/*.mat.gz
+atlas/*.pkl
+atlas/*.nii.gz
+atlas/*.vtk
+atlas/*.vtk.gz
+atlas/*.zip
+atlas/*.vtp
+
+# Docs and paper files
+docs/
+*.tex
+*.pdf
+*.bbl
+*.blg
+*.log
+*.out
+*.aux
+
+# Large outputs
+plots/
+
+# Old / unused code
+old/
+zebrav1/tests/
+zebrav2/tests/
+
+# SSH key — never goes into Docker
+*.pem

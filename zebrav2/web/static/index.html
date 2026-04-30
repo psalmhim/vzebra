@@ -23,7 +23,8 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; colo
 .metric .val { color: #7ee787; font-weight: bold; }
 .metric .val.warn { color: #f0883e; }
 .metric .val.bad { color: #f85149; }
-canvas.arena-canvas, canvas#retinaCanvas, canvas#rasterCanvas { width: 100% !important; height: 180px !important; }
+canvas.arena-canvas { width: 100% !important; height: 180px !important; }
+canvas#retinaCanvas, canvas#rasterCanvas { width: 100% !important; height: 48px !important; }
 .controls { display: flex; gap: 8px; padding: 12px; flex-wrap: wrap; }
 .btn { padding: 8px 16px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 12px; }
 .btn:hover { background: #30363d; }
@@ -80,10 +81,10 @@ table th { color: #8b949e; }
 <!-- ========== TAB 1: PLAYGROUND (Arena + Brain 3D split) ========== -->
 <div id="tab-playground" class="tab-page active">
 <div style="display:grid; grid-template-columns:1fr 300px; gap:6px; padding:6px; height:calc(100vh - 48px);">
-    <!-- Left: Arena + Brain 3D + Retina/Raster (scrollable) -->
-    <div style="display:flex; flex-direction:column; gap:6px; overflow-y:auto;">
+    <!-- Left: Arena + Brain 3D + Retina/Raster -->
+    <div style="display:flex; flex-direction:column; gap:6px; overflow:hidden; min-height:0;">
         <!-- Top row: Arena left, Brain 3D right (fills remaining space) -->
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; flex:1; min-height:300px;">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; flex:1; min-height:0;">
             <!-- Arena -->
             <div class="card" style="display:flex; flex-direction:column; min-height:0;">
                 <h3>Arena <span id="arenaInfo" style="font-weight:normal;color:#8b949e;font-size:10px"></span>
@@ -92,6 +93,8 @@ table th { color: #8b949e; }
                             <input type="checkbox" id="showPredHeatmap" checked onchange="window._hidePredHeatmap=!this.checked" style="margin-right:2px;">Pred. memory
                         </label>
                         <button class="btn" onclick="exportFigure()" style="font-size:9px;padding:2px 8px">Export</button>
+                        <button id="brainDemoBtn" class="btn" onclick="toggleBrainDemo()" style="font-size:9px;padding:2px 8px;border-color:#388bfd;color:#58a6ff;" title="Run real ZebrafishBrainV2 (7k neurons)">&#129504; Real Brain</button>
+                        <button id="recBtn" class="btn" onclick="toggleRecording()" style="font-size:9px;padding:2px 8px;background:#6e0000;border-color:#da3633;color:#ffa0a0;">&#9679; REC</button>
                     </span></h3>
                 <canvas id="arenaCanvas" class="arena-canvas" style="flex:1;min-height:0;"></canvas>
             </div>
@@ -118,13 +121,13 @@ table th { color: #8b949e; }
                 </div>
             </div>
         </div>
-        <!-- Bottom row: Retinal + Raster (compact) -->
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; height:45px; flex-shrink:0;">
-            <div class="card" style="padding:3px 6px;">
-                <canvas id="retinaCanvas" style="width:100%;height:35px;background:#010409;border:1px solid #30363d;border-radius:3px;"></canvas>
+        <!-- Bottom row: Retinal + Raster (compact, always visible) -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; height:62px; flex-shrink:0;">
+            <div class="card" style="padding:3px 6px; overflow:hidden;">
+                <canvas id="retinaCanvas" style="width:100%;height:48px;background:#010409;border:1px solid #30363d;border-radius:3px;display:block;"></canvas>
             </div>
-            <div class="card" style="padding:3px 6px;">
-                <canvas id="rasterCanvas" style="width:100%;height:35px;background:#010409;border:1px solid #30363d;border-radius:3px;"></canvas>
+            <div class="card" style="padding:3px 6px; overflow:hidden;">
+                <canvas id="rasterCanvas" style="width:100%;height:48px;background:#010409;border:1px solid #30363d;border-radius:3px;display:block;"></canvas>
             </div>
         </div>
     </div>
@@ -137,6 +140,19 @@ table th { color: #8b949e; }
             <div class="metric"><span>Food</span><span class="val" id="mFood">-</span></div>
             <div class="metric"><span>Step</span><span class="val" id="mStep">-</span></div>
             <div class="metric"><span>Free Energy</span><span class="val" id="mEFE">-</span></div>
+        </div>
+        <!-- ── Behavior Log (time-series chart) ── -->
+        <div class="card" style="padding:8px 10px;">
+            <h3 style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                Behavior Log
+                <button class="btn" onclick="exportBehaviorCSV()" style="font-size:8px;padding:1px 6px;">CSV</button>
+            </h3>
+            <canvas id="behavLogCanvas" width="260" height="52" style="width:100%;height:52px;background:#010409;border:1px solid #30363d;border-radius:3px;display:block;"></canvas>
+            <div style="display:flex;gap:8px;margin-top:3px;font-size:8px;color:#6e7681;">
+                <span style="color:#7ee787;">— energy</span>
+                <span style="color:#f85149;">-- pred dist</span>
+                <span style="margin-left:auto;" id="logGoalBand">goal: —</span>
+            </div>
         </div>
         <div class="card" style="padding:10px;">
             <h3>Neuromodulation</h3>
@@ -172,6 +188,84 @@ table th { color: #8b949e; }
         <div class="card" style="padding:10px;">
             <h3>Fish Population</h3>
             <div id="fishPopulation" style="font-size:10px;"></div>
+        </div>
+        <!-- ── Circuit / Environment Parameters ── -->
+        <div class="card" style="padding:10px;">
+            <h3 style="display:flex;justify-content:space-between;align-items:center;">
+                Parameters
+                <button class="btn" onclick="resetDemoParams()" style="font-size:9px;padding:2px 7px;">Reset</button>
+            </h3>
+            <!-- Survival stats bar -->
+            <div id="paramStatsBar" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:8px;padding:4px 0;border-bottom:1px solid #21262d;">
+                <div style="font-size:9px;text-align:center;"><div style="color:#8b949e;">Food eaten</div><div id="psFoodEaten" style="color:#7ee787;font-weight:bold;">0</div></div>
+                <div style="font-size:9px;text-align:center;"><div style="color:#8b949e;">Energy</div><div id="psEnergy" style="color:#f0883e;font-weight:bold;">—</div></div>
+                <div style="font-size:9px;text-align:center;"><div style="color:#8b949e;">Goal</div><div id="psGoal" style="color:#58a6ff;font-weight:bold;">—</div></div>
+            </div>
+            <!-- Sliders -->
+            <div style="display:grid;grid-template-columns:1fr;gap:4px;font-size:10px;">
+                <div style="color:#58a6ff;font-size:9px;font-weight:bold;margin-top:2px;padding-top:2px;border-top:1px solid #21262d;">── Circuit ──</div>
+                <div class="config-item"><label title="Threat→amygdala amplification. High=fearful, low=bold">Amy gain</label>
+                    <input type="range" id="pAmyGain" min="0.5" max="4.0" step="0.1" value="2.0" style="width:90px;height:10px;" oninput="updateParamLabel(this,'pAmyGainVal');sendDemoParam('amygdala_gain',this.value)">
+                    <span id="pAmyGainVal" style="color:#7ee787;width:26px;text-align:right;font-size:9px;">2.0</span></div>
+                <div class="config-item"><label title="RPE→DA sigmoid steepness. High=strong reward signal">DA gain</label>
+                    <input type="range" id="pDaGain" min="0.5" max="6.0" step="0.25" value="3.0" style="width:90px;height:10px;" oninput="updateParamLabel(this,'pDaGainVal');sendDemoParam('da_gain',this.value)">
+                    <span id="pDaGainVal" style="color:#7ee787;width:26px;text-align:right;font-size:9px;">3.0</span></div>
+                <div class="config-item"><label title="5-HT accumulation rate. High=more patient/persistent">5-HT gain</label>
+                    <input type="range" id="pShtGain" min="0.2" max="3.0" step="0.1" value="1.0" style="width:90px;height:10px;" oninput="updateParamLabel(this,'pShtGainVal');sendDemoParam('sht_gain',this.value)">
+                    <span id="pShtGainVal" style="color:#7ee787;width:26px;text-align:right;font-size:9px;">1.0</span></div>
+                <div class="config-item"><label title="BG gate bias. Higher=easier to initiate movement">BG bias</label>
+                    <input type="range" id="pBgBias" min="-0.5" max="1.0" step="0.05" value="0.3" style="width:90px;height:10px;" oninput="updateParamLabel(this,'pBgBiasVal');sendDemoParam('bg_bias',this.value)">
+                    <span id="pBgBiasVal" style="color:#7ee787;width:26px;text-align:right;font-size:9px;">0.3</span></div>
+                <div class="config-item"><label title="Flee goal weight. High=flees easily, low=ignores predator">Flee bias</label>
+                    <input type="range" id="pFleeW" min="0.2" max="3.0" step="0.1" value="1.0" style="width:90px;height:10px;" oninput="updateParamLabel(this,'pFleeWVal');sendDemoParam('flee_weight',this.value)">
+                    <span id="pFleeWVal" style="color:#7ee787;width:26px;text-align:right;font-size:9px;">1.0</span></div>
+                <div style="color:#58a6ff;font-size:9px;font-weight:bold;margin-top:4px;padding-top:4px;border-top:1px solid #21262d;">── Locomotion ──</div>
+                <div class="config-item"><label title="Global fish speed multiplier">Fish speed</label>
+                    <input type="range" id="pFishSpd" min="0.3" max="2.0" step="0.1" value="1.0" style="width:90px;height:10px;" oninput="updateParamLabel(this,'pFishSpdVal');sendDemoParam('fish_speed_mult',this.value)">
+                    <span id="pFishSpdVal" style="color:#7ee787;width:26px;text-align:right;font-size:9px;">1.0</span></div>
+                <div style="color:#58a6ff;font-size:9px;font-weight:bold;margin-top:4px;padding-top:4px;border-top:1px solid #21262d;">── Environment ──</div>
+                <div class="config-item"><label title="Energy lost per sub-step. Higher=starves faster">Energy drain</label>
+                    <input type="range" id="pEDrain" min="0.002" max="0.04" step="0.002" value="0.012" style="width:90px;height:10px;" oninput="updateParamLabel(this,'pEDrainVal');sendDemoParam('energy_drain',this.value)">
+                    <span id="pEDrainVal" style="color:#7ee787;width:26px;text-align:right;font-size:9px;">.012</span></div>
+                <div class="config-item"><label title="Distance to eat food (px)">Food radius</label>
+                    <input type="range" id="pFoodR" min="10" max="60" step="5" value="25" style="width:90px;height:10px;" oninput="updateParamLabel(this,'pFoodRVal');sendDemoParam('food_radius',this.value)">
+                    <span id="pFoodRVal" style="color:#7ee787;width:26px;text-align:right;font-size:9px;">25</span></div>
+                <div class="config-item"><label title="Energy restored per food item">Food value</label>
+                    <input type="range" id="pFoodV" min="1" max="20" step="1" value="5" style="width:90px;height:10px;" oninput="updateParamLabel(this,'pFoodVVal');sendDemoParam('food_value',this.value)">
+                    <span id="pFoodVVal" style="color:#7ee787;width:26px;text-align:right;font-size:9px;">5</span></div>
+                <div class="config-item"><label title="Predator chase speed (px/step)">Pred speed</label>
+                    <input type="range" id="pPredSpd" min="1.0" max="6.0" step="0.2" value="2.8" style="width:90px;height:10px;" oninput="updateParamLabel(this,'pPredSpdVal');sendDemoParam('pred_speed',this.value)">
+                    <span id="pPredSpdVal" style="color:#7ee787;width:26px;text-align:right;font-size:9px;">2.8</span></div>
+                <div class="config-item"><label title="Distance at which predator starts hunting (px)">Pred range</label>
+                    <input type="range" id="pPredR" min="80" max="400" step="10" value="220" style="width:90px;height:10px;" oninput="updateParamLabel(this,'pPredRVal');sendDemoParam('pred_range',this.value)">
+                    <span id="pPredRVal" style="color:#7ee787;width:26px;text-align:right;font-size:9px;">220</span></div>
+            </div>
+        </div>
+        <!-- ── Parameter Presets + Session Comparison ── -->
+        <div class="card" style="padding:10px;">
+            <h3>Presets</h3>
+            <div style="display:flex;gap:4px;align-items:center;margin-bottom:6px;">
+                <select id="presetSelect" style="flex:1;font-size:10px;">
+                    <option value="Wildtype">Wildtype (default)</option>
+                    <option value="Bold">Bold (risk-taking)</option>
+                    <option value="Anxious">Anxious (fearful)</option>
+                    <option value="DA-depleted">DA-depleted (slow)</option>
+                    <option value="Fearless">Fearless (no flee)</option>
+                    <option value="Curious">Curious (explorer)</option>
+                </select>
+                <button class="btn" onclick="applyPreset()" style="font-size:9px;padding:3px 8px;background:#1f6feb;border-color:#1f6feb;color:#fff">Apply</button>
+            </div>
+            <div style="font-size:9px;color:#8b949e;margin-bottom:6px;">Active: <span id="activePreset" style="color:#58a6ff;">Wildtype</span>
+                <button class="btn" onclick="snapshotSession()" style="float:right;font-size:8px;padding:1px 6px;">Snapshot</button>
+            </div>
+            <div style="font-size:9px;color:#8b949e;margin-bottom:2px;border-top:1px solid #21262d;padding-top:4px;">Session comparison (last 3)</div>
+            <table style="font-size:9px;">
+                <thead><tr>
+                    <th style="color:#8b949e;">Preset</th><th style="color:#8b949e;">Surv.</th>
+                    <th style="color:#8b949e;">Food/m</th><th style="color:#f85149;">Flee%</th><th style="color:#7ee787;">Forage%</th>
+                </tr></thead>
+                <tbody id="comparisonTable"><tr><td colspan="5" style="color:#6e7681;text-align:center;">No snapshots yet</td></tr></tbody>
+            </table>
         </div>
         <div class="card" style="padding:10px;">
             <h3>Disorder Model</h3>
@@ -1905,6 +1999,147 @@ async function init() {
 }
 init();
 
+// ========== DEMO PARAMETERS ==========
+const _defaultParams = {
+    amygdala_gain: 2.0, da_gain: 3.0, sht_gain: 1.0, bg_bias: 0.3, flee_weight: 1.0,
+    fish_speed_mult: 1.0, energy_drain: 0.012, food_radius: 25, food_value: 5,
+    pred_speed: 2.8, pred_range: 220
+};
+const _paramIds = {
+    amygdala_gain: ['pAmyGain','pAmyGainVal'], da_gain: ['pDaGain','pDaGainVal'],
+    sht_gain: ['pShtGain','pShtGainVal'], bg_bias: ['pBgBias','pBgBiasVal'],
+    flee_weight: ['pFleeW','pFleeWVal'], fish_speed_mult: ['pFishSpd','pFishSpdVal'],
+    energy_drain: ['pEDrain','pEDrainVal'], food_radius: ['pFoodR','pFoodRVal'],
+    food_value: ['pFoodV','pFoodVVal'], pred_speed: ['pPredSpd','pPredSpdVal'],
+    pred_range: ['pPredR','pPredRVal']
+};
+
+function updateParamLabel(slider, labelId) {
+    const v = parseFloat(slider.value);
+    document.getElementById(labelId).textContent = v < 0.1 ? v.toFixed(3) : (v < 10 ? v.toFixed(1) : Math.round(v));
+}
+
+function sendDemoParam(key, value) {
+    fetch('/api/demo_params', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({[key]: parseFloat(value)})
+    }).catch(() => {});
+}
+
+function resetDemoParams() {
+    for (const [key, val] of Object.entries(_defaultParams)) {
+        const ids = _paramIds[key];
+        if (!ids) continue;
+        const slider = document.getElementById(ids[0]);
+        const label = document.getElementById(ids[1]);
+        if (slider) { slider.value = val; updateParamLabel(slider, ids[1]); }
+    }
+    fetch('/api/demo_params', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(_defaultParams)
+    }).catch(() => {});
+}
+
+// Poll survival stats every 2s and update the mini stats bar
+setInterval(() => {
+    fetch('/api/demo_params').then(r => r.json()).then(d => {
+        const fe = document.getElementById('psFoodEaten');
+        const en = document.getElementById('psEnergy');
+        const gn = document.getElementById('psGoal');
+        if (fe) fe.textContent = d.food_eaten ?? '—';
+        if (en) {
+            const e = d.fish_energy ?? 0;
+            en.textContent = Math.round(e) + '%';
+            en.style.color = e < 25 ? '#f85149' : e < 50 ? '#f0883e' : '#7ee787';
+        }
+        if (gn) {
+            const g = d.fish_goal ?? '?';
+            const gc = {FORAGE:'#7ee787',FLEE:'#f85149',EXPLORE:'#58a6ff',SOCIAL:'#3fb9a0',DEAD:'#6e7681'};
+            gn.textContent = g;
+            gn.style.color = gc[g] || '#c9d1d9';
+        }
+    }).catch(() => {});
+}, 2000);
+
+// ========== WEB RECORDING ==========
+const _rec = { active: false, recorder: null, chunks: [], rafId: null, offCanvas: null, offCtx: null };
+
+function toggleRecording() {
+    if (_rec.active) { stopRecording(); } else { startRecording(); }
+}
+
+function startRecording() {
+    const arenaC = document.getElementById('arenaCanvas');
+    const brain3dC = document.getElementById('brain3dCanvas');
+    const W = arenaC.clientWidth + brain3dC.clientWidth;
+    const H = Math.max(arenaC.clientHeight, brain3dC.clientHeight);
+
+    _rec.offCanvas = document.createElement('canvas');
+    _rec.offCanvas.width = W || 1600;
+    _rec.offCanvas.height = H || 600;
+    _rec.offCtx = _rec.offCanvas.getContext('2d');
+    _rec.chunks = [];
+
+    const stream = _rec.offCanvas.captureStream(30);
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9'
+        : (MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : 'video/mp4');
+
+    _rec.recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
+    _rec.recorder.ondataavailable = e => { if (e.data.size > 0) _rec.chunks.push(e.data); };
+    _rec.recorder.onstop = _finishRecording;
+    _rec.recorder.start(100);
+    _rec.active = true;
+
+    const btn = document.getElementById('recBtn');
+    btn.textContent = '⏹ STOP';
+    btn.style.background = '#238636';
+    btn.style.borderColor = '#238636';
+    btn.style.color = '#fff';
+
+    function _captureFrame() {
+        if (!_rec.active) return;
+        const aC = document.getElementById('arenaCanvas');
+        const bC = document.getElementById('brain3dCanvas');
+        const ctx = _rec.offCtx;
+        const oc = _rec.offCanvas;
+        ctx.fillStyle = '#0d1117';
+        ctx.fillRect(0, 0, oc.width, oc.height);
+        const aW = oc.width / 2, aH = oc.height;
+        const bW = oc.width / 2, bH = oc.height;
+        try { ctx.drawImage(aC, 0, 0, aW, aH); } catch(e) {}
+        try { ctx.drawImage(bC, aW, 0, bW, bH); } catch(e) {}
+        _rec.rafId = requestAnimationFrame(_captureFrame);
+    }
+    _rec.rafId = requestAnimationFrame(_captureFrame);
+}
+
+function stopRecording() {
+    _rec.active = false;
+    if (_rec.rafId) cancelAnimationFrame(_rec.rafId);
+    if (_rec.recorder && _rec.recorder.state !== 'inactive') _rec.recorder.stop();
+    const btn = document.getElementById('recBtn');
+    btn.textContent = '&#9679; REC';
+    btn.style.background = '#6e0000';
+    btn.style.borderColor = '#da3633';
+    btn.style.color = '#ffa0a0';
+}
+
+function _finishRecording() {
+    const mimeType = _rec.chunks[0]?.type || 'video/webm';
+    const blob = new Blob(_rec.chunks, { type: mimeType });
+    const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `zebrafish_brain_${Date.now()}.${ext}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    _rec.chunks = [];
+}
+
 // ========== BRAIN 3D — Plotly.js scatter3d ==========
 const brain3d = {
     atlas: null, regionOffsets: {},
@@ -2011,17 +2246,228 @@ function updateNodeAlpha(val) {
         }
     } catch(e) {}
 })();
+
+// ========== REAL BRAIN DEMO ==========
+let _brainDemoActive = false;
+
+async function toggleBrainDemo() {
+    const endpoint = _brainDemoActive ? '/api/brain_demo/stop' : '/api/brain_demo/start';
+    try {
+        const r = await fetch(endpoint, {method: 'POST'});
+        const d = await r.json();
+        _brainDemoActive = d.active;
+    } catch(e) { return; }
+    const btn = document.getElementById('brainDemoBtn');
+    if (_brainDemoActive) {
+        btn.textContent = '🧠 Brain ON';
+        btn.style.background = '#238636';
+        btn.style.borderColor = '#238636';
+        btn.style.color = '#fff';
+    } else {
+        btn.textContent = '🧠 Real Brain';
+        btn.style.background = '';
+        btn.style.borderColor = '#388bfd';
+        btn.style.color = '#58a6ff';
+    }
+}
+
+// ========== BEHAVIOR LOG (time-series chart) ==========
+const _behavLog = { energy: [], goal: [], predDist: [], maxLen: 300 };
+const _goalColors = { FORAGE: '#7ee787', FLEE: '#f85149', EXPLORE: '#58a6ff', SOCIAL: '#3fb9a0', DEAD: '#6e7681' };
+
+function _logStep(d) {
+    const px = d.pred_x !== undefined ? d.pred_x : (d.predators && d.predators[0] ? d.predators[0].x : null);
+    const py = d.pred_y !== undefined ? d.pred_y : (d.predators && d.predators[0] ? d.predators[0].y : null);
+    const predDist = (px !== null && py !== null)
+        ? Math.sqrt((d.fish_x - px) ** 2 + (d.fish_y - py) ** 2)
+        : 999;
+    _behavLog.energy.push(d.energy ?? 0);
+    _behavLog.goal.push(d.goal || 'FORAGE');
+    _behavLog.predDist.push(predDist);
+    if (_behavLog.energy.length > _behavLog.maxLen) {
+        _behavLog.energy.shift();
+        _behavLog.goal.shift();
+        _behavLog.predDist.shift();
+    }
+    const gl = document.getElementById('logGoalBand');
+    if (gl) {
+        const g = d.goal || '';
+        gl.textContent = 'goal: ' + g;
+        gl.style.color = _goalColors[g] || '#c9d1d9';
+    }
+    _drawBehaviorLog();
+}
+
+function _drawBehaviorLog() {
+    const canvas = document.getElementById('behavLogCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#010409';
+    ctx.fillRect(0, 0, W, H);
+
+    const n = _behavLog.energy.length;
+    if (n < 2) return;
+
+    // Goal color bands (background)
+    for (let i = 0; i < n; i++) {
+        const x = Math.round(i / _behavLog.maxLen * W);
+        const w = Math.ceil(W / _behavLog.maxLen) + 1;
+        ctx.fillStyle = (_goalColors[_behavLog.goal[i]] || '#555') + '22';
+        ctx.fillRect(x, 0, w, H);
+    }
+
+    // Reference line at 25% energy (danger zone)
+    ctx.strokeStyle = '#f0883e33';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, H * 0.75);
+    ctx.lineTo(W, H * 0.75);
+    ctx.stroke();
+
+    // Energy line (green, 0-100 → H..0)
+    ctx.beginPath();
+    ctx.strokeStyle = '#7ee787';
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < n; i++) {
+        const x = i / _behavLog.maxLen * W;
+        const y = H - (_behavLog.energy[i] / 100) * H;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // Predator distance (red dashed, 0-400px → H..0, capped)
+    ctx.beginPath();
+    ctx.strokeStyle = '#f85149';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 3]);
+    for (let i = 0; i < n; i++) {
+        const x = i / _behavLog.maxLen * W;
+        const y = H - Math.min(1, _behavLog.predDist[i] / 400) * H;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+}
+
+function exportBehaviorCSV() {
+    const rows = ['step,energy,goal,pred_dist'];
+    for (let i = 0; i < _behavLog.energy.length; i++) {
+        rows.push(`${i},${_behavLog.energy[i].toFixed(1)},${_behavLog.goal[i]},${_behavLog.predDist[i].toFixed(0)}`);
+    }
+    const blob = new Blob([rows.join('\n')], {type: 'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `behavior_log_${Date.now()}.csv`;
+    a.click();
+}
+
+// ========== PARAMETER PRESETS ==========
+const _PRESETS = {
+    'Wildtype':    {amygdala_gain:2.0, da_gain:3.0,  sht_gain:1.0, bg_bias:0.3,  flee_weight:1.0, fish_speed_mult:1.0, energy_drain:0.012, food_radius:25, food_value:5, pred_speed:2.8, pred_range:220},
+    'Bold':        {amygdala_gain:0.8, da_gain:4.0,  sht_gain:0.6, bg_bias:0.6,  flee_weight:0.4, fish_speed_mult:1.3, energy_drain:0.015, food_radius:30, food_value:5, pred_speed:2.8, pred_range:220},
+    'Anxious':     {amygdala_gain:3.5, da_gain:2.0,  sht_gain:1.5, bg_bias:0.1,  flee_weight:2.5, fish_speed_mult:0.8, energy_drain:0.012, food_radius:20, food_value:5, pred_speed:2.8, pred_range:220},
+    'DA-depleted': {amygdala_gain:2.0, da_gain:0.8,  sht_gain:1.0, bg_bias:0.0,  flee_weight:1.0, fish_speed_mult:0.7, energy_drain:0.012, food_radius:25, food_value:5, pred_speed:2.8, pred_range:220},
+    'Fearless':    {amygdala_gain:0.5, da_gain:3.0,  sht_gain:1.0, bg_bias:0.5,  flee_weight:0.2, fish_speed_mult:1.2, energy_drain:0.012, food_radius:25, food_value:5, pred_speed:2.8, pred_range:220},
+    'Curious':     {amygdala_gain:1.5, da_gain:3.5,  sht_gain:0.5, bg_bias:0.7,  flee_weight:0.8, fish_speed_mult:1.4, energy_drain:0.012, food_radius:25, food_value:5, pred_speed:2.8, pred_range:160},
+};
+
+function applyPreset() {
+    const name = document.getElementById('presetSelect').value;
+    const p = _PRESETS[name];
+    if (!p) return;
+    for (const [k, [sliderId, labelId]] of Object.entries(_paramIds)) {
+        if (p[k] !== undefined) {
+            const sl = document.getElementById(sliderId);
+            if (sl) { sl.value = p[k]; updateParamLabel(sl, labelId); }
+        }
+    }
+    fetch('/api/demo_params', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(p)}).catch(() => {});
+    const ap = document.getElementById('activePreset');
+    if (ap) ap.textContent = name;
+}
+
+// Session comparison table
+const _sessions = [];
+let _sessionStart = Date.now();
+let _sessionFoodCount = 0;
+const _sessionGoalCount = {FORAGE:0, FLEE:0, EXPLORE:0, SOCIAL:0};
+let _sessionSteps = 0;
+
+function _updateSession(d) {
+    if (!d.goal) return;
+    _sessionSteps++;
+    _sessionFoodCount = d.food_total ?? _sessionFoodCount;
+    if (_sessionGoalCount[d.goal] !== undefined) _sessionGoalCount[d.goal]++;
+}
+
+function snapshotSession() {
+    const elapsedMin = Math.max(0.01, (Date.now() - _sessionStart) / 60000);
+    const preset = (document.getElementById('activePreset') || {}).textContent || 'Custom';
+    const total = Math.max(1, _sessionSteps);
+    _sessions.push({
+        preset,
+        survival: elapsedMin.toFixed(1),
+        food: (_sessionFoodCount / elapsedMin).toFixed(1),
+        flee: ((_sessionGoalCount.FLEE / total) * 100).toFixed(0),
+        forage: ((_sessionGoalCount.FORAGE / total) * 100).toFixed(0),
+    });
+    if (_sessions.length > 3) _sessions.shift();
+    // Reset counters
+    _sessionStart = Date.now();
+    _sessionFoodCount = 0;
+    Object.keys(_sessionGoalCount).forEach(k => { _sessionGoalCount[k] = 0; });
+    _sessionSteps = 0;
+    _renderComparisonTable();
+}
+
+function _renderComparisonTable() {
+    const tb = document.getElementById('comparisonTable');
+    if (!tb) return;
+    if (_sessions.length === 0) {
+        tb.innerHTML = '<tr><td colspan="5" style="color:#6e7681;text-align:center;">No snapshots yet</td></tr>';
+        return;
+    }
+    tb.innerHTML = _sessions.map(s =>
+        `<tr>
+            <td style="color:#58a6ff;">${s.preset}</td>
+            <td style="color:#7ee787;">${s.survival}m</td>
+            <td style="color:#f0883e;">${s.food}/m</td>
+            <td style="color:#f85149;">${s.flee}%</td>
+            <td style="color:#7ee787;">${s.forage}%</td>
+        </tr>`
+    ).join('');
+}
 </script>
 <script src="/static/brain3d.js"></script>
 <script src="/static/atlas3d.js"></script>
 <script>
-// Hook spike data into brain3d + atlas slices
+// Hook spike data into brain3d + atlas slices; also feed behavior log and session tracker
 const _origUpdateStep = updateStep;
 updateStep = function(d) {
     _origUpdateStep(d);
+    _logStep(d);
+    _updateSession(d);
     if (d.spikes) {
         updateBrain3DSpikes(d.spikes);
         updateAtlasSliceActivity(d.spikes);
+    }
+};
+
+// Hook status messages to sync brain demo button
+const _origUpdateStatus = updateStatus;
+updateStatus = function(s) {
+    _origUpdateStatus(s);
+    if (s.brain_demo !== undefined && s.brain_demo !== _brainDemoActive) {
+        _brainDemoActive = s.brain_demo;
+        const btn = document.getElementById('brainDemoBtn');
+        if (btn) {
+            btn.textContent = _brainDemoActive ? '🧠 Brain ON' : '🧠 Real Brain';
+            btn.style.background = _brainDemoActive ? '#238636' : '';
+            btn.style.borderColor = _brainDemoActive ? '#238636' : '#388bfd';
+            btn.style.color = _brainDemoActive ? '#fff' : '#58a6ff';
+        }
     }
 };
 </script>

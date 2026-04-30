@@ -17,6 +17,15 @@ atlas/*.nii.gz
 zebrav1/weights/*.pt
 old/
 
+# Checkpoints — keep only round 0001 in git; others live on server volume
+zebrav2/checkpoints/*.pt
+zebrav2/checkpoints/*.json
+!zebrav2/checkpoints/ckpt_round_0001.pt
+!zebrav2/checkpoints/ckpt_round_0001.json
+
+# SSH keys — never commit
+*.pem
+
 # IDE
 .vscode/
 

@@ -30,11 +30,14 @@ from zebrav2.brain.sensory_bridge import inject_sensory as _inject_sensory
 GOAL_NAMES = ["FORAGE", "FLEE", "EXPLORE", "SOCIAL"]
 
 
-def run_v2_demo(render=False, monitor=False, record=False, T=1500):
+def run_v2_demo(render=False, monitor=False, record=False, T=1500, ckpt=None, device=None):
     import pygame
 
     if record:
         render = True
+
+    # CPU is 12x faster than MPS for small per-step tensors; use it when recording
+    _device = device or ('cpu' if record else DEVICE)
 
     # --- Environment ---
     use_panels = render  # side_panels shows retina/goal on env side (like v1)
@@ -42,13 +45,18 @@ def run_v2_demo(render=False, monitor=False, record=False, T=1500):
         render_mode="rgb_array" if render else None,
         n_food=15, max_steps=T, side_panels=use_panels)
 
-    brain = ZebrafishBrainV2(device=DEVICE)
+    brain = ZebrafishBrainV2(device=_device)
+
+    if ckpt and os.path.exists(ckpt):
+        import torch
+        state = torch.load(ckpt, map_location=_device, weights_only=False)
+        brain.load_state_dict(state.get('brain', state), strict=False)
+        print(f"Loaded checkpoint: {ckpt}")
 
     # --- Window setup (matching v1 layout) ---
     mon = None
     combined_screen = None
     clock = None
-    frames = []
 
     RENDER_W = env.render_width
     RENDER_H = env.render_height
@@ -94,8 +102,17 @@ def run_v2_demo(render=False, monitor=False, record=False, T=1500):
     if monitor:
         mode_str += " [MONITOR]"
     if record:
-        mode_str += " [RECORDING]"
+        mode_str += f" [RECORDING/{_device.upper()}]"
     print(f"Running ZebrafishBrainV2 for {T} steps{mode_str}...")
+
+    # Streaming video writer (avoids buffering all frames in RAM)
+    _writer = None
+    if record:
+        import imageio
+        os.makedirs(os.path.join(PROJECT_ROOT, "plots"), exist_ok=True)
+        video_path = os.path.join(PROJECT_ROOT, "plots", "zebrafish_v2_demo.mp4")
+        _writer = imageio.get_writer(video_path, fps=30, quality=8, macro_block_size=16)
+        print(f"Streaming to {video_path} ...")
 
     for t in range(T):
         if not running:
@@ -221,14 +238,17 @@ def run_v2_demo(render=False, monitor=False, record=False, T=1500):
 
                 pygame.display.flip()
 
-                # Capture frame for recording
-                if record:
+                # Capture frame for recording (stream directly to disk)
+                if record and _writer is not None:
                     frame = np.transpose(
                         np.array(pygame.surfarray.pixels3d(combined_screen)),
                         (1, 0, 2)).copy()
-                    frames.append(frame)
+                    _writer.append_data(frame)
+                    if not running:
+                        break
 
-                clock.tick(30)
+                if not record:
+                    clock.tick(30)
 
         if t % 100 == 0:
             g = brain.current_goal
@@ -244,6 +264,10 @@ def run_v2_demo(render=False, monitor=False, record=False, T=1500):
                 print(f"  CAUGHT by predator at step {t}!")
             break
 
+    if _writer is not None:
+        _writer.close()
+        print(f"Video saved: {video_path}")
+
     if combined_screen is not None:
         env._screen = None
     env.close()
@@ -253,14 +277,6 @@ def run_v2_demo(render=False, monitor=False, record=False, T=1500):
     print(f"\nSummary: survived {t+1} steps, "
           f"ate {info['total_eaten']} food, "
           f"total reward = {cumulative_reward:.1f}")
-
-    if record and frames:
-        import imageio
-        os.makedirs(os.path.join(PROJECT_ROOT, "plots"), exist_ok=True)
-        video_path = os.path.join(PROJECT_ROOT, "plots", "zebrafish_v2_demo.mp4")
-        print(f"\nSaving {len(frames)} frames to {video_path} ...")
-        imageio.mimwrite(video_path, frames, fps=30, quality=8)
-        print(f"Video saved: {video_path}")
 
 
 if __name__ == "__main__":
@@ -272,6 +288,10 @@ if __name__ == "__main__":
     parser.add_argument("--record", action="store_true",
                         help="Save MP4 video")
     parser.add_argument("--steps", type=int, default=1500)
+    parser.add_argument("--ckpt", type=str, default=None,
+                        help="Path to .pt checkpoint (default: random weights)")
+    parser.add_argument("--device", type=str, default=None,
+                        help="Device: cpu/mps/cuda (default: cpu when recording, mps otherwise)")
     args = parser.parse_args()
     run_v2_demo(render=args.render, monitor=args.monitor,
-                record=args.record, T=args.steps)
+                record=args.record, T=args.steps, ckpt=args.ckpt, device=args.device)

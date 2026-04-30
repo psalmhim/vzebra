@@ -18,12 +18,13 @@ import json
 import asyncio
 import time
 import math
+import threading
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
@@ -42,24 +43,48 @@ def _lazy_engine_imports():
         from zebrav2.engine.config import TrainingConfig as _TC, REPERTOIRES as _R
         _TrainingEngine, _TrainingConfig, _REPERTOIRES = _TE, _TC, _R
 
-app = FastAPI(title="Zebrafish Brain v2 Dashboard")
+from contextlib import asynccontextmanager
+
 STATIC_DIR = os.path.join(os.path.dirname(__file__), 'static')
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Global engine (lazy init)
 engine = None
 ws_clients = set()
 _main_loop = None  # store uvicorn's event loop
 _latest_step = {}  # latest step data for polling
-_demo_t = 0  # idle demo timer
+_demo_t = 0        # idle demo timer
+_demo_food_eaten = 0  # cumulative food eaten count
+
+# ── Tunable circuit / environment parameters (changed via /api/demo_params) ──
+_demo_params = {
+    # Circuit gains
+    'amygdala_gain':    2.0,   # threat→amygdala multiplier     (0.5–4.0)
+    'da_gain':          3.0,   # RPE→DA sigmoid steepness       (0.5–6.0)
+    'sht_gain':         1.0,   # 5-HT accumulation rate mult    (0.2–3.0)
+    'bg_bias':          0.3,   # BG gate offset (higher→easier to move) (-0.5–1.0)
+    'flee_weight':      1.0,   # flee goal weight multiplier    (0.2–3.0)
+    # Locomotion
+    'fish_speed_mult':  1.0,   # global fish speed scale        (0.3–2.0)
+    # Environment
+    'energy_drain':     0.012, # energy cost per sub-step       (0.002–0.04)
+    'food_radius':      25.0,  # eat distance in px             (10–60)
+    'food_value':       5.0,   # energy gained per food item    (1–20)
+    'pred_speed':       2.8,   # predator chase speed px/step   (1.0–6.0)
+    'pred_range':       220.0, # predator detection range px    (80–400)
+}
 
 
-@app.on_event("startup")
-async def on_startup():
+@asynccontextmanager
+async def lifespan(app):
     global _main_loop, engine
     _main_loop = asyncio.get_event_loop()
     _lazy_engine_imports()
     engine = _TrainingEngine()
+    yield
+
+
+app = FastAPI(title="Zebrafish Brain v2 Dashboard", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 # --- WebSocket broadcast ---
@@ -358,7 +383,8 @@ _round_counter = 0
 def _reset_round():
     """Reset the entire round: respawn fish, conspecifics, predators, food.
     Each round uses a different random seed for varied layouts."""
-    global _demo_t, _demo_foods, _demo_fish, _demo_conspecifics, _demo_predators, _neural, _round_counter
+    global _demo_t, _demo_foods, _demo_fish, _demo_conspecifics, _demo_predators, _neural, _round_counter, _demo_food_eaten
+    _demo_food_eaten = 0
     _round_counter += 1
     rnd = _init_rnd
     rnd.seed(_round_counter * 1000 + int(_demo_t) % 10000)
@@ -407,8 +433,8 @@ def _reset_round():
         (250, 100), (550, 500),
     ]
     rnd.shuffle(pred_zones)
-    _pred_sequence = [2, 3, 1, 4, 5, 6, 7]
-    n_predators = _pred_sequence[(_round_counter - 1) % len(_pred_sequence)]
+    _pred_seq = [1, 2, 1, 2, 2, 1, 2]
+    n_predators = _pred_seq[(_round_counter - 1) % len(_pred_seq)]
     _demo_predators[:] = []
     for i in range(n_predators):
         pcx, pcy = pred_zones[i]
@@ -435,6 +461,118 @@ def _reset_round():
     }.items():
         _neural[k] = v
     _neural['frustration'] = [0.0, 0.0, 0.0, 0.0]
+
+
+# ── Real-brain demo (background thread) ──────────────────────────────────────
+_brain_demo_active = False
+_brain_demo_thread = None
+_brain_latest_step: dict = {}
+_GOAL_NAMES_V2 = ['FORAGE', 'FLEE', 'EXPLORE', 'SOCIAL']
+
+
+def _run_brain_demo():
+    """Background thread: ZebrafishBrainV2 + gym env, updates _brain_latest_step."""
+    global _brain_latest_step, _brain_demo_active
+    import numpy as np, torch
+    from zebrav1.gym_env.zebrafish_env import ZebrafishPreyPredatorEnv
+    from zebrav2.brain.brain_v2 import ZebrafishBrainV2
+    from zebrav2.brain.sensory_bridge import inject_sensory
+
+    CKPT = os.path.join(PROJECT_ROOT, 'zebrav2/checkpoints/ckpt_round_0085.pt')
+    if not os.path.exists(CKPT):
+        # Fall back to most recent checkpoint
+        ckpt_dir = os.path.join(PROJECT_ROOT, 'zebrav2/checkpoints')
+        pts = sorted([f for f in os.listdir(ckpt_dir) if f.endswith('.pt')]) if os.path.isdir(ckpt_dir) else []
+        CKPT = os.path.join(ckpt_dir, pts[-1]) if pts else ''
+
+    brain = ZebrafishBrainV2(device='cpu')
+    if CKPT and os.path.exists(CKPT):
+        state = torch.load(CKPT, map_location='cpu', weights_only=False)
+        brain.load_state_dict(state.get('brain', state), strict=False)
+        print(f'[brain-demo] loaded {CKPT}')
+    else:
+        print('[brain-demo] no checkpoint found — using random weights')
+
+    env = ZebrafishPreyPredatorEnv(render_mode=None, n_food=15, max_steps=3000)
+    obs, info = env.reset()
+    brain.reset()
+    step = total_eaten = 0
+
+    while _brain_demo_active:
+        try:
+            inject_sensory(env)
+            out = brain.step(obs, env)
+            action = np.array([out['turn'], out['speed']], dtype=np.float32)
+            obs, _, terminated, truncated, info = env.step(action)
+            ate = getattr(env, 'food_eaten_this_step', info.get('food_eaten_this_step', 0))
+            total_eaten += ate
+            step += 1
+
+            spikes = {}
+            try:
+                t = brain.tectum
+                spikes = {
+                    'sfgs_b':     float((t.sfgs_b_L.spike_E.mean() + t.sfgs_b_R.spike_E.mean()) * 0.5),
+                    'sgc':        float((t.sgc_L.spike_E.mean()    + t.sgc_R.spike_E.mean())    * 0.5),
+                    'amygdala':   float(brain.amygdala_alpha),
+                    'd1':         float(brain.bg.d1.spike_E.mean()),
+                    'd2':         float(brain.bg.d2.spike_E.mean()),
+                    'critic':     float(out.get('critic_value', 0)),
+                    'habenula':   float(out.get('habenula_disappoint', 0)),
+                    'cerebellum': float(out.get('cerebellum_pe', 0)),
+                }
+            except Exception:
+                pass
+
+            rocks = [[float(r[0]), float(r[1]), float(r[2])]
+                     for r in getattr(env, 'rock_formations', [])]
+
+            _brain_latest_step = {
+                'fish_x': float(env.fish_x),
+                'fish_y': float(env.fish_y),
+                'fish_heading': float(env.fish_heading),
+                'goal': _GOAL_NAMES_V2[brain.current_goal],
+                'energy': float(brain.energy),
+                'step': step,
+                'turn': float(out.get('turn', 0)),
+                'speed': float(out.get('speed', 0)),
+                'DA':  float(out.get('DA',  brain.neuromod.DA.item())),
+                'NA':  float(out.get('NA',  brain.neuromod.NA.item())),
+                '5HT': float(out.get('5HT', brain.neuromod.HT5.item())),
+                'ACh': float(out.get('ACh', brain.neuromod.ACh.item())),
+                'amygdala': float(brain.amygdala_alpha),
+                'free_energy': float(out.get('free_energy', 0)),
+                'critic_value': float(out.get('critic_value', 0)),
+                'heart_rate': float(out.get('heart_rate', 2.0)),
+                'novelty': float(out.get('novelty', 0)),
+                'valence': float(out.get('valence', 0)),
+                'surprise': float(out.get('surprise', 0)),
+                'hunger': float(getattr(brain, 'allostasis', None) and brain.allostasis.hunger or 0),
+                'stress': float(getattr(brain, 'allostasis', None) and brain.allostasis.stress or 0),
+                'foods': [[float(f[0]), float(f[1])] for f in env.foods],
+                'rocks': rocks,
+                'pred_x': float(env.pred_x),
+                'pred_y': float(env.pred_y),
+                'pred_heading': float(env.pred_heading),
+                'pred_state': env.pred_state.lower(),
+                'pred_energy': float(1.0 - getattr(env, 'pred_hunger', 0)),
+                'arena_w': float(env.arena_w),
+                'arena_h': float(env.arena_h),
+                'food_total': total_eaten,
+                'ate_food': bool(ate),
+                'light_level': 1.0,
+                'spikes': spikes,
+                'is_brain_demo': True,
+            }
+
+            if terminated or truncated:
+                obs, info = env.reset()
+                brain.reset()
+                total_eaten = step = 0
+
+        except Exception:
+            import traceback; traceback.print_exc()
+            time.sleep(0.5)
 
 
 def _steer_away_from_rocks(x, y, h, lookahead=40):
@@ -553,6 +691,21 @@ _neural = {
     'prev_retina_R': 0.0,       # previous-step retinal activation (right)
     'orient_dir': 0.0,          # current orienting turn signal (rad/step)
     'orient_habituation': 0.0,  # habituation (dampens repeated stimuli)
+    # --- Visceral organ modules ---
+    # Vagus nerve: parasympathetic tone (inversely related to stress)
+    'vagal_tone': 1.0,
+    # Pituitary–adrenal axis (HPA)
+    'crh': 0.0,                 # hypothalamic CRH (stress proxy)
+    'acth': 0.0,                # pituitary ACTH output
+    'cortisol_drive': 0.0,      # adrenal cortisol drive
+    # Area postrema: circumventricular chemosensing
+    'glucose_status': 0.0,      # blood glucose proxy (−1 low … +1 high)
+    'nausea': 0.0,              # toxin detection (always 0 in demo)
+    # NTS: nucleus tractus solitarius — vagal afferent relay
+    'satiety_signal': 0.0,      # accumulates with eating, decays over time
+    'taste_relay': 0.0,         # gustatory salience from food proximity
+    # Lateral line efferent: self-motion suppression (corollary discharge)
+    'll_efferent_gain': 1.0,    # 1.0 = no suppression, 0 = full suppression
 }
 
 
@@ -573,7 +726,7 @@ def _idle_demo_step():
     Behavior (goal, heading, speed) EMERGES from the neural cascade,
     not from game-programming if/else logic.
     """
-    global _demo_t, _demo_foods, _demo_fish
+    global _demo_t, _demo_foods, _demo_fish, _demo_food_eaten
     _demo_t += 1
     t = _demo_t * 0.01
     f = _demo_fish
@@ -582,6 +735,18 @@ def _idle_demo_step():
     # ================================================================
     # DEATH STATE: fish was killed — freeze and show death screen
     # ================================================================
+    # Auto-clear stale state if energy was externally restored (e.g., test/round reset)
+    if n['dead'] and f['energy'] > 0:
+        n['dead'] = False
+        n['death_timer'] = 0
+    if f['energy'] - n.get('energy_prev', f['energy']) > 10:
+        # Large energy jump indicates external reset — clear accumulated state
+        n['steps_since_food'] = 0
+        n['starvation_anxiety'] = 0.0
+        n['energy_rate'] = 0.0
+        n['food_memory_xy'] = None
+        n['food_memory_age'] = 999
+
     if n['dead']:
         n['death_timer'] -= 1
         if n['death_timer'] <= 0:
@@ -905,15 +1070,19 @@ def _idle_demo_step():
     # LA (lateral): threat input
     nearest_pred_dist = min((vp['d'] for vp in visible_preds), default=9999)
     pred_proximity = max(0, 1.0 - nearest_pred_dist / 200) if visible_preds else 0
-    amyg_input = (pred_proximity * 2.0 + tectum_threat * 0.5
+    amyg_input = (pred_proximity * _demo_params['amygdala_gain'] + tectum_threat * 0.5
                   + olf_alarm * 1.5 + ll_signal * 0.3)
 
     # CeA (central): fear output with trace (persists after threat gone)
     # Episodic conditioning: near-death → LTP (trace grows)
     if pred_proximity > 0.8:
-        n['amygdala_trace'] = min(3.0, n['amygdala_trace'] + 0.15)
-    n['amygdala_trace'] = _ema(n['amygdala_trace'],
-                               amyg_input, tau=15)  # fast rise, moderate decay
+        n['amygdala_trace'] = min(3.0, n['amygdala_trace'] + 0.2)
+    # Asymmetric dynamics: fast rise (tau=8), slow decay (tau=60)
+    # Biological basis: fear conditioning is rapid, extinction is slow
+    if amyg_input > n['amygdala_trace']:
+        n['amygdala_trace'] = _ema(n['amygdala_trace'], amyg_input, tau=8)
+    else:
+        n['amygdala_trace'] = _ema(n['amygdala_trace'], amyg_input, tau=60)
 
     amygdala_out = min(3.0, n['amygdala_trace'])
 
@@ -928,16 +1097,22 @@ def _idle_demo_step():
     # --- Critic: temporal difference value ---
     reward = 0.0
     ate_food = False
-    if nearest_food_idx is not None and nearest_food_dist < 20:
+    if nearest_food_idx is not None and nearest_food_dist < _demo_params['food_radius']:
         reward = 1.0
         ate_food = True
-        f['energy'] = min(100, f['energy'] + 5)
-        n['steps_since_food'] = 0  # reset food timer → anxiety drops
-        n['food_memory_xy'] = (f['x'], f['y'])  # remember where food was
+        _demo_food_eaten += 1
+        f['energy'] = min(100, f['energy'] + _demo_params['food_value'])
+        n['steps_since_food'] = 0
+        n['food_memory_xy'] = (f['x'], f['y'])
         n['food_memory_age'] = 0
-        fd = _demo_foods[nearest_food_idx]
-        if len(fd) <= 2:
-            fd.append(_demo_t)
+        # Remove eaten food and respawn at a random safe location
+        _demo_foods.pop(nearest_food_idx)
+        for _try in range(40):
+            nx = _init_rnd.uniform(40, 760)
+            ny = _init_rnd.uniform(40, 560)
+            if not _is_inside_rock(nx, ny):
+                break
+        _demo_foods.append([round(nx, 1), round(ny, 1)])
     if pred_proximity > 0.8:
         reward -= 0.5  # punishment for near-death
 
@@ -946,8 +1121,8 @@ def _idle_demo_step():
     n['V_prev'] = V_current
     critic = 0.2 + abs(RPE) * 2.0  # critic activity ∝ |RPE|
 
-    # DA: reward prediction error → sigmoid(3 × RPE)
-    n['DA'] = _ema(n['DA'], _sigmoid(3 * RPE), tau=8)
+    # DA: reward prediction error → sigmoid(da_gain × RPE)
+    n['DA'] = _ema(n['DA'], _sigmoid(_demo_params['da_gain'] * RPE), tau=8)
 
     # NA: arousal = 0.3 + 0.5×amygdala + 0.2×CMS
     CMS = 0.3 * amygdala_out + 0.1 * starvation
@@ -955,7 +1130,7 @@ def _idle_demo_step():
 
     # 5-HT: rises when NOT fleeing (patience/habituation)
     if amygdala_out < 0.5:
-        n['sht_acc'] = min(1.0, n['sht_acc'] + 0.005)
+        n['sht_acc'] = min(1.0, n['sht_acc'] + 0.005 * _demo_params['sht_gain'])
     else:
         n['sht_acc'] = max(0, n['sht_acc'] - 0.02)
     n['5HT'] = _ema(n['5HT'], 0.3 + 0.4 * n['sht_acc'], tau=20)
@@ -1003,12 +1178,15 @@ def _idle_demo_step():
     # EFE per goal (lower = more attractive, matches brain_v2.py convention)
     # Starvation anxiety biases FORAGE strongly — fish fears future energy crisis
     anx = n['starvation_anxiety']
+    # Melatonin-mediated circadian suppression of arousal/foraging at night
+    night_factor = max(0, (0.3 - light) / 0.3) if not is_day else 0.0
 
     G_forage = (0.2 * U - 0.8 * p_food + 0.15
                 - starvation * 0.5      # current hunger bias
-                - anx * 1.2             # PREDICTIVE: strong fear of future starvation
+                - anx * 1.2 * (1.0 - night_factor * 0.7)  # melatonin blunts foraging drive at night
                 - olf_food * 0.3        # smell guides foraging
                 - food_memory_signal * 0.5  # remembered food pulls toward foraging
+                + night_factor * 0.4    # circadian penalty: foraging suppressed at night
                 + n['frustration'][0] * 0.3)
 
     G_flee = (0.1 * CMS - 1.2 * p_enemy + 0.20
@@ -1022,18 +1200,20 @@ def _idle_demo_step():
                  + anx * 0.4             # anxiety PENALIZES aimless explore → drives FORAGE
                  + n['frustration'][2] * 0.2)
 
-    G_social = (0.10 + starvation * 0.2
+    G_social = (0.18 + starvation * 0.2
                 + anx * 0.3              # anxiety reduces social drive
                 + n['frustration'][3] * 0.2
-                - 0.1 * min(1.0, retina_L_conspec + retina_R_conspec))
+                - 0.4 * min(1.0, retina_L_conspec + retina_R_conspec))  # attractive when conspecifics visible
 
-    G_sleep = (0.5 - sleep_drive * 1.2  # circadian pull (strong night drive)
-               - fatigue * 0.3           # tired → sleep
+    G_sleep = (0.5 - sleep_drive * 1.5  # circadian pull (strong night drive)
+               - fatigue * 0.5           # tired → sleep
+               - night_factor * fatigue * 0.8  # low energy at night → strong sleep pull
                + amygdala_out * 0.5      # fear prevents sleep
-               + anx * 0.4)             # anxiety prevents sleep
+               + anx * 0.4 * (1.0 - night_factor * 0.8))  # melatonin blunts anxiety at night
 
-    goals = {'FORAGE': G_forage, 'FLEE': G_flee, 'EXPLORE': G_explore,
-             'SOCIAL': G_social, 'SLEEP': G_sleep}
+    goals = {'FORAGE': G_forage,
+             'FLEE':   G_flee   - (_demo_params['flee_weight'] - 1.0) * 0.4,
+             'EXPLORE': G_explore, 'SOCIAL': G_social, 'SLEEP': G_sleep}
 
     # --- Reflexive overrides (hard-wired, like Mauthner escape) ---
     # C-start reflex: looming > threshold → immediate escape
@@ -1082,7 +1262,7 @@ def _idle_demo_step():
     d2 = d2_input * (1.0 - 0.3 * n['DA'])
 
     # BG gate: D1 wins → gate opens → motor permitted
-    bg_gate = _sigmoid(4.0 * (d1 * 0.4 - d2 * 0.3) - 0.3)
+    bg_gate = _sigmoid(4.0 * (d1 * 0.4 - d2 * 0.3) - _demo_params['bg_bias'])
 
     # ================================================================
     # STAGE 10: Motor output — reticulospinal + CPG
@@ -1185,7 +1365,7 @@ def _idle_demo_step():
         e = energy_ratio
         motility = max(0.15, 4.0 * e * (1.0 - e))  # floor at 0.15 so fish never freezes
         f['h'] += voluntary_turn * bg_gate
-        f['speed'] = goal_speed * bg_gate * motility
+        f['speed'] = goal_speed * bg_gate * motility * _demo_params['fish_speed_mult']
 
     # CPG: rhythmic pattern modulates speed
     cpg_rhythm = 0.8 + 0.2 * math.sin(t * 6)  # ~6Hz swimming rhythm
@@ -1203,19 +1383,16 @@ def _idle_demo_step():
     f['y'] = _clamp(f['y'] + math.sin(f['h']) * f['speed'], 20, 580)
     f['x'], f['y'] = _collide_rocks(f['x'], f['y'])
     is_sleeping = winner == 'SLEEP'
-    f['energy'] = max(10, f['energy'] - (0.005 if is_sleeping else 0.02))
+    f['energy'] = max(0, f['energy'] - (0.003 if is_sleeping else _demo_params['energy_drain']))
 
-    # Food drift: eaten food slowly moves to new position (avoid rocks)
-    for fd in _demo_foods:
-        if len(fd) > 2:
-            elapsed = _demo_t - fd[2]
-            if elapsed < 60:
-                nx = round(_clamp(fd[0] + _init_rnd.uniform(-2, 2), 40, 760), 1)
-                ny = round(_clamp(fd[1] + _init_rnd.uniform(-2, 2), 40, 560), 1)
-                if not _is_inside_rock(nx, ny):
-                    fd[0], fd[1] = nx, ny
-            else:
-                fd.pop(2)
+    # Starvation death: energy depleted
+    if f['energy'] <= 0 and not n['dead']:
+        n['dead'] = True
+        n['death_timer'] = 33
+        n['death_x'] = f['x']
+        n['death_y'] = f['y']
+        f['goal'] = 'DEAD'
+
 
     # ================================================================
     # Conspecifics (simplified neural: flee/social/forage)
@@ -1264,15 +1441,20 @@ def _idle_demo_step():
                            key=lambda p: _dist(pred['x'], pred['y'], p['x'], p['y']))
         prey_dist = _dist(pred['x'], pred['y'], nearest_prey['x'], nearest_prey['y'])
 
-        if prey_dist < 160 and pred['energy'] > 20:
+        if prey_dist < _demo_params['pred_range'] and pred['energy'] > 20:
+            if pred['state'] != 'hunt':
+                pred['hunt_steps'] = 0  # reset on hunt transition
             pred['state'] = 'hunt'
+            pred['hunt_steps'] = pred.get('hunt_steps', 0) + 1
             chase_h = math.atan2(nearest_prey['y'] - pred['y'],
                                  nearest_prey['x'] - pred['x'])
-            pred['h'] = _steer_toward(pred['h'], chase_h, 0.12)
-            pred_spd = 3.5
-            pred['energy'] = max(0, pred['energy'] - 0.08)
-            if prey_dist < 25:
+            pred['h'] = _steer_toward(pred['h'], chase_h, 0.10)
+            pred_spd = _demo_params['pred_speed']
+            pred['energy'] = max(0, pred['energy'] - 0.06)
+            # Kill: close enough AND sustained hunt
+            if prey_dist < 20 and pred.get('hunt_steps', 0) >= 20:
                 pred['energy'] = min(100, pred['energy'] + 15)
+                pred['hunt_steps'] = 0
                 prey_ref = nearest_prey['ref']
                 if prey_ref is not f:
                     # Conspecific: instant kill
@@ -1288,6 +1470,7 @@ def _idle_demo_step():
                     f['goal'] = 'DEAD'
         else:
             pred['state'] = 'patrol'
+            pred['hunt_steps'] = 0
             pa = t * 0.3 + _demo_predators.index(pred) * 2.1
             target_x = pred['patrol_cx'] + pred['patrol_r'] * math.cos(pa)
             target_y = pred['patrol_cy'] + pred['patrol_r'] * math.sin(pa)
@@ -1300,6 +1483,48 @@ def _idle_demo_step():
         pred['x'] = _clamp(pred['x'] + math.cos(pred['h']) * pred_spd, 10, 790)
         pred['y'] = _clamp(pred['y'] + math.sin(pred['h']) * pred_spd, 10, 590)
         pred['x'], pred['y'] = _collide_rocks(pred['x'], pred['y'])
+
+    # ================================================================
+    # VISCERAL ORGANS: lightweight heuristic approximations
+    # ================================================================
+
+    # --- Vagus nerve: parasympathetic tone (high when calm, low under stress) ---
+    # Stress proxy from amygdala + starvation; vagal tone is inverse
+    stress_level = min(1.0, amygdala_out * 0.4 + starvation * 0.3
+                       + pred_proximity * 0.3)
+    n['vagal_tone'] = _ema(n['vagal_tone'], 1.0 - stress_level, tau=15)
+
+    # --- Pituitary–adrenal axis (HPA): CRH → ACTH → cortisol ---
+    # CRH: hypothalamic stress signal driven by amygdala + starvation
+    n['crh'] = _ema(n['crh'], amygdala_out * 0.5 + starvation * 0.4
+                    + n['starvation_anxiety'] * 0.3, tau=20)
+    n['acth'] = stress_level * 0.6 + n['crh'] * 0.4
+    n['cortisol_drive'] = n['acth'] * 0.5
+
+    # --- Area postrema: circumventricular organ (glucose + toxin sensing) ---
+    # Glucose status: maps energy ratio [0,1] → [−1, +1]
+    n['glucose_status'] = (energy_ratio - 0.5) * 2.0
+    n['nausea'] = 0.0  # no toxins modeled in demo
+
+    # --- NTS: nucleus tractus solitarius (vagal afferent relay) ---
+    # Satiety: jumps on eating, decays slowly (gut stretch → NTS → satiety)
+    if ate_food:
+        n['satiety_signal'] = min(1.0, n['satiety_signal'] + 0.3)
+    else:
+        n['satiety_signal'] *= 0.995  # slow decay (~200 step half-life)
+    # Taste relay: gustatory salience from food proximity (via facial nerve → NTS)
+    n['taste_relay'] = max(0, 1.0 - nearest_food_dist / 60) if nearest_food_idx is not None else 0.0
+
+    # --- Lateral line efferent: corollary discharge (self-motion suppression) ---
+    # During fast swimming, efferent copy suppresses lateral-line sensitivity
+    # to prevent self-generated wake from triggering false alarms.
+    # gain → 0 at high speed (full suppression), gain → 1 at rest
+    current_speed = f['speed']
+    n['ll_efferent_gain'] = _ema(
+        n['ll_efferent_gain'],
+        max(0.1, 1.0 - min(1.0, current_speed / 3.0) * 0.8),
+        tau=5,
+    )
 
     # ================================================================
     # Collect all neural activations — these ARE the computation,
@@ -1347,6 +1572,12 @@ def _idle_demo_step():
         'cerebellum': cerebellum * sleep_factor if n['cstart_timer'] <= 0 else 2.5,
         'cpg': cpg_act * sleep_factor,
         'reticulospinal': reticulospinal * sleep_factor,
+        # Visceral organs
+        'vagus_nerve': n['vagal_tone'] * sleep_factor,
+        'pituitary': n['acth'] * sleep_factor,
+        'area_postrema': max(0, -n['glucose_status']) * sleep_factor,  # active when glucose low
+        'nts': (n['satiety_signal'] + n['taste_relay']) * 0.5 * sleep_factor,
+        'll_efferent': (1.0 - n['ll_efferent_gain']) * sleep_factor,  # suppression strength
     }
 
     # Per-eye detection data for arena FoV visualization
@@ -1358,7 +1589,7 @@ def _idle_demo_step():
         'goal': f['goal'], 'energy': f['energy'],
         'step': _demo_t, 'heart_rate': heart_rate,
         'turn': (pal_d_R - pal_d_L) * 0.3, 'speed': f['speed'] / 3.0,
-        'food_total': _demo_t // 50,
+        'food_total': _demo_food_eaten,
         'ate_food': ate_food,
         'arena_w': 800, 'arena_h': 600,
         'foods': list(_demo_foods),
@@ -1404,6 +1635,16 @@ def _idle_demo_step():
         'orient_habituation': round(n['orient_habituation'], 3),
         'novelty_L': round(delta_L, 3),
         'novelty_R': round(delta_R, 3),
+        # Visceral organs
+        'vagal_tone': round(n['vagal_tone'], 3),
+        'crh': round(n['crh'], 3),
+        'acth': round(n['acth'], 3),
+        'cortisol_drive': round(n['cortisol_drive'], 3),
+        'glucose_status': round(n['glucose_status'], 3),
+        'nausea': round(n['nausea'], 3),
+        'satiety_signal': round(n['satiety_signal'], 3),
+        'taste_relay': round(n['taste_relay'], 3),
+        'll_efferent_gain': round(n['ll_efferent_gain'], 3),
         # Free energy (simulated from prediction errors)
         'free_energy': round(abs(retina_L - retina_R) * 0.05 + n.get('starvation_anxiety', 0) * 0.15, 4),
         'total_free_energy': round(abs(retina_L - retina_R) * 0.05 + n.get('starvation_anxiety', 0) * 0.15 + max_looming * 0.1, 4),
@@ -1432,27 +1673,78 @@ async def websocket_live(ws: WebSocket):
     ws_clients.add(ws)
     try:
         while True:
-            if engine.running and _latest_step:
+            if _latest_step:
                 await ws.send_json({'type': 'step', 'data': _latest_step})
-            elif not engine.running:
-                # Idle demo: show fish swimming so arena isn't empty
-                demo = _latest_step if _latest_step else _idle_demo_step()
-                await ws.send_json({'type': 'step', 'data': demo})
+            elif _brain_demo_active and _brain_latest_step:
+                await ws.send_json({'type': 'step', 'data': _brain_latest_step})
+            else:
+                # No step data yet — run 8 physics sub-steps per frame so
+                # the fish moves at a realistic speed (~8px / 0.15 s interval)
+                for _ in range(7):
+                    _idle_demo_step()
+                await ws.send_json({'type': 'step', 'data': _idle_demo_step()})
             await ws.send_json({
                 'type': 'status',
-                'data': {'running': engine.running, 'round': engine.current_round}
+                'data': {'running': engine.running, 'round': engine.current_round,
+                         'brain_demo': _brain_demo_active}
             })
             await asyncio.sleep(0.3 if engine.running else 0.15)
     except WebSocketDisconnect:
         ws_clients.discard(ws)
 
 
+@app.get("/api/demo_params")
+async def get_demo_params():
+    return {**_demo_params, 'food_eaten': _demo_food_eaten,
+            'fish_energy': _demo_fish.get('energy', 0),
+            'fish_goal': _demo_fish.get('goal', '?')}
+
+
+@app.post("/api/demo_params")
+async def set_demo_params(request: Request):
+    body = await request.json()
+    _allowed = set(_demo_params.keys())
+    for k, v in body.items():
+        if k in _allowed:
+            _demo_params[k] = float(v)
+    return {'ok': True, 'params': _demo_params}
+
+
+@app.post("/api/brain_demo/start")
+async def start_brain_demo():
+    global _brain_demo_active, _brain_demo_thread
+    if not _brain_demo_active:
+        _brain_demo_active = True
+        _brain_demo_thread = threading.Thread(target=_run_brain_demo, daemon=True)
+        _brain_demo_thread.start()
+        print('[brain-demo] started background thread')
+    return {'ok': True, 'active': True}
+
+
+@app.post("/api/brain_demo/stop")
+async def stop_brain_demo():
+    global _brain_demo_active
+    _brain_demo_active = False
+    print('[brain-demo] stopped')
+    return {'ok': True, 'active': False}
+
+
+@app.get("/api/brain_demo/status")
+async def brain_demo_status():
+    return {
+        'active': _brain_demo_active,
+        'step': _brain_latest_step.get('step', 0),
+        'goal': _brain_latest_step.get('goal', ''),
+        'energy': _brain_latest_step.get('energy', 0),
+    }
+
+
 def main():
     print(f"\n{'='*60}")
     print(f"  Zebrafish Brain v2 Dashboard")
-    print(f"  Open: http://localhost:8765")
+    print(f"  Open: http://localhost:5001")
     print(f"{'='*60}\n")
-    uvicorn.run(app, host="0.0.0.0", port=8765, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=5001, log_level="info")
 
 
 if __name__ == '__main__':
