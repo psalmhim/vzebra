@@ -34,9 +34,10 @@ jobs:
               sudo ln -sf "/etc/nginx/sites-available/vzebra.xaiforbrain.com" \
                           "/etc/nginx/sites-enabled/vzebra.xaiforbrain.com"
               sudo nginx -t && sudo systemctl reload nginx
-              sudo certbot --nginx -d vzebra.xaiforbrain.com \
-                --non-interactive --agree-tos -m hangik.lee@gmail.com
-              sudo systemctl reload nginx
+            else
+              sudo cp "$APP_DIR/deploy/nginx-vzebra.conf" \
+                      "/etc/nginx/sites-available/vzebra.xaiforbrain.com"
+              sudo nginx -t && sudo systemctl reload nginx
             fi
 
             echo "Deployed at $(date)"
