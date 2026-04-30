@@ -34,6 +34,17 @@ jobs:
             free -h
 
             echo ""
-            echo "=== Nginx status ==="
+            echo "=== Nginx sites-enabled ==="
+            ls -la /etc/nginx/sites-enabled/
+
+            echo ""
+            echo "=== vzebra nginx config ==="
+            cat /etc/nginx/sites-available/vzebra.xaiforbrain.com 2>/dev/null || echo "(not found)"
+
+            echo ""
+            echo "=== Nginx test ==="
             sudo nginx -t 2>&1
-            sudo systemctl status nginx --no-pager | head -20
+
+            echo ""
+            echo "=== Test vzebra locally ==="
+            curl -s -o /dev/null -w "%{http_code}" -H "Host: vzebra.xaiforbrain.com" http://localhost/api/status || echo "failed"
