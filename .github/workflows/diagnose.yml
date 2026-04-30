@@ -1,0 +1,39 @@
+name: Diagnose vzebra
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check server status
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 13.209.16.188
+          username: ubuntu
+          key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          script: |
+            echo "=== Docker containers ==="
+            docker ps -a
+
+            echo ""
+            echo "=== vzebra container logs (last 50 lines) ==="
+            docker logs --tail 50 vzebra 2>&1 || echo "(no container named vzebra)"
+
+            echo ""
+            echo "=== Port 5001 ==="
+            ss -tlnp | grep 5001 || echo "(nothing on 5001)"
+
+            echo ""
+            echo "=== Disk space ==="
+            df -h /
+
+            echo ""
+            echo "=== Memory ==="
+            free -h
+
+            echo ""
+            echo "=== Nginx status ==="
+            sudo nginx -t 2>&1
+            sudo systemctl status nginx --no-pager | head -20
