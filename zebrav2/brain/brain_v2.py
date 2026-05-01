@@ -9,7 +9,9 @@ from collections import deque
 import numpy as np
 import torch
 import torch.nn as nn
-from zebrav2.spec import DEVICE, N_TC
+from zebrav2.spec import (DEVICE, N_TC,
+                          N_CB_GC, N_CB_PC, N_CB_EN,
+                          N_HB_D, N_HB_V, N_IO)
 from zebrav2.brain.neurons import IzhikevichLayer
 from zebrav2.brain.retina import RetinaV2
 from zebrav2.brain.tectum import Tectum
@@ -156,8 +158,13 @@ class ZebrafishBrainV2(nn.Module):
         self.world_model = InternalWorldModel()
         self.goal_selector = SpikingGoalSelector(device=device)
         # --- New SNN modules ---
-        self.cerebellum = SpikingCerebellum(device=device)
-        self.habenula = SpikingHabenula(device=device)
+        _n_mossy = self.tectum.sfgs_b_L.n_e + self.tectum.sfgs_b_R.n_e
+        self.cerebellum = SpikingCerebellum(
+            n_gc=N_CB_GC, n_pc=N_CB_PC, n_dcn=N_CB_EN,
+            n_mossy=_n_mossy, device=device)
+        # n_mhb = medial/dorsal Hb (dHb homolog); n_lhb = lateral/ventral Hb (vHb homolog)
+        self.habenula = SpikingHabenula(
+            n_mhb=N_HB_D, n_lhb=N_HB_V, device=device)
         self.predictive = SpikingPredictiveNet(device=device)
         self.critic = SpikingCritic(device=device)
         self.habit = SpikingHabitNet(device=device)
@@ -228,7 +235,7 @@ class ZebrafishBrainV2(nn.Module):
         # Pineal gland: direct photoreception + melatonin synthesis
         self.pineal = SpikingPineal(device=device)
         # Inferior olive: climbing fiber error signal to cerebellum
-        self.inferior_olive = SpikingInferiorOlive(device=device)
+        self.inferior_olive = SpikingInferiorOlive(n_neurons=N_IO, device=device)
         # Dorsolateral pallium: hippocampal spatial memory (DG→CA3→CA1)
         self.dl_pallium = SpikingDlPallium(device=device)
         # Vagus nerve: bidirectional visceral afferent/efferent
@@ -601,7 +608,7 @@ class ZebrafishBrainV2(nn.Module):
         if self._active('bg'):
             bg_out = self.bg(pal_out['rate_D'], self.neuromod.DA.item())
         else:
-            bg_out = {'gate': torch.zeros(4, device=self.device), 'd1_rate': torch.zeros(400, device=self.device), 'd2_rate': torch.zeros(300, device=self.device)}
+            bg_out = {'gate': torch.zeros(4, device=self.device), 'd1_rate': torch.zeros(self.bg.n_d1, device=self.device), 'd2_rate': torch.zeros(self.bg.n_d2, device=self.device)}
 
         # Cerebellum: forward model (sensory prediction error)
         if self._active('cerebellum'):
@@ -610,7 +617,7 @@ class ZebrafishBrainV2(nn.Module):
                 climbing_fiber=pal_out.get('free_energy', 0.0),
                 DA=self.neuromod.DA.item())
         else:
-            cb_out = {'dcn_rate': torch.zeros(200, device=self.device),
+            cb_out = {'dcn_rate': torch.zeros(self.cerebellum.n_dcn, device=self.device),
                       'gc_sparsity': 0.0, 'pc_rate_mean': 0.0, 'prediction_error': 0.0}
 
         # === 4. GOAL SELECTION (v1 EFE logic, enhanced with v2 neuromod) ===

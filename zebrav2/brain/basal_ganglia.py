@@ -28,6 +28,8 @@ class BasalGanglia(nn.Module):
         self.register_buffer('gpi_rate', torch.zeros(N_GPI, device=device))
         self.register_buffer('gate', torch.tensor(0.5, device=device))
         self.pal_d_n_e = pal_d_n_e
+        self.n_d1 = N_D1
+        self.n_d2 = N_D2
 
     def forward(self, pal_d_rate: torch.Tensor, DA: float) -> dict:
         """

@@ -16,12 +16,13 @@ class EILayer(nn.Module):
     E neurons: RS (default) or IB for deep layers.
     I neurons: FS.
     """
-    def __init__(self, n_total: int, e_type: str = 'RS', device=DEVICE, name: str = ''):
+    def __init__(self, n_total: int, e_type: str = 'RS', device=DEVICE, name: str = '',
+                 e_frac: float = 0.75):
         super().__init__()
         self.name = name
         self.device = device
-        self.n_e = int(0.75 * n_total)
-        self.n_i = n_total - self.n_e
+        self.n_e = max(1, int(e_frac * n_total))
+        self.n_i = max(1, n_total - self.n_e)
         self.n_total = n_total
 
         # Neuron populations

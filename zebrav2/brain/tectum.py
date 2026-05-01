@@ -19,7 +19,8 @@ Accepts optional I_topdown_L / I_topdown_R for pallium top-down attention.
 import torch
 import torch.nn as nn
 from zebrav2.spec import (DEVICE, N_OT_SFGS_B, N_OT_SFGS_D, N_OT_SGC, N_OT_SO,
-                          N_RET_PER_TYPE, N_RET_LOOM, N_RET_DS, SUBSTEPS)
+                          N_RET_PER_TYPE, N_RET_LOOM, N_RET_DS, SUBSTEPS,
+                          EI_FRAC_OT)
 from zebrav2.brain.ei_layer import EILayer
 from zebrav2.brain.habituation import SynapticDepression
 
@@ -36,16 +37,18 @@ class Tectum(nn.Module):
         n_so_h    = N_OT_SO     // 2   # 200
 
         # LEFT hemisphere (receives R_eye input)
-        self.sfgs_b_L = EILayer(n_sfgsb_h, 'CH', device, 'SFGS-b_L')
-        self.sfgs_d_L = EILayer(n_sfgsd_h, 'CH', device, 'SFGS-d_L')
-        self.sgc_L    = EILayer(n_sgc_h,   'IB', device, 'SGC_L')
-        self.so_L     = EILayer(n_so_h,    'RS', device, 'SO_L')
+        # EI_FRAC_OT = (0.32, 0.68): tectum is 32% E, 68% I (Robles 2011)
+        _e_frac = EI_FRAC_OT[0]
+        self.sfgs_b_L = EILayer(n_sfgsb_h, 'CH', device, 'SFGS-b_L', e_frac=_e_frac)
+        self.sfgs_d_L = EILayer(n_sfgsd_h, 'CH', device, 'SFGS-d_L', e_frac=_e_frac)
+        self.sgc_L    = EILayer(n_sgc_h,   'IB', device, 'SGC_L',    e_frac=_e_frac)
+        self.so_L     = EILayer(n_so_h,    'RS', device, 'SO_L',     e_frac=_e_frac)
 
         # RIGHT hemisphere (receives L_eye input)
-        self.sfgs_b_R = EILayer(n_sfgsb_h, 'CH', device, 'SFGS-b_R')
-        self.sfgs_d_R = EILayer(n_sfgsd_h, 'CH', device, 'SFGS-d_R')
-        self.sgc_R    = EILayer(n_sgc_h,   'IB', device, 'SGC_R')
-        self.so_R     = EILayer(n_so_h,    'RS', device, 'SO_R')
+        self.sfgs_b_R = EILayer(n_sfgsb_h, 'CH', device, 'SFGS-b_R', e_frac=_e_frac)
+        self.sfgs_d_R = EILayer(n_sfgsd_h, 'CH', device, 'SFGS-d_R', e_frac=_e_frac)
+        self.sgc_R    = EILayer(n_sgc_h,   'IB', device, 'SGC_R',    e_frac=_e_frac)
+        self.so_R     = EILayer(n_so_h,    'RS', device, 'SO_R',     e_frac=_e_frac)
 
         # Input projection weights
         # L_tectum <- R_eye (contralateral crossing)
