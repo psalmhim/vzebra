@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Zebrafish Brain v2 Dashboard</title>
+<title>Zebrafish Virtual Experimental Lab</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.145.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.145.0/examples/js/controls/OrbitControls.js"></script>
@@ -67,7 +67,8 @@ table th { color: #8b949e; }
 <body>
 
 <div class="header">
-    <h1>Zebrafish Brain v2 <button id="soundToggle" onclick="toggleSound()" style="background:none;border:1px solid #30363d;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:14px;vertical-align:middle;margin-left:8px;" title="Toggle sound effects">🔇</button></h1>
+    <h1>Zebrafish Virtual Experimental Lab <button id="soundToggle" onclick="toggleSound()" style="background:none;border:1px solid #30363d;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:14px;vertical-align:middle;margin-left:8px;" title="Toggle sound effects">🔇</button></h1>
+    <span style="font-size:11px;color:#8b949e;margin-left:8px;">MoNET @ YONSEI</span>
     <div style="display:flex;gap:8px;align-items:center">
         <button class="tab-btn active" onclick="switchTab('playground')">Playground</button>
         <button class="tab-btn" onclick="switchTab('training')">Training</button>
@@ -1512,7 +1513,8 @@ function log(msg) { logBox.textContent += msg + '\n'; logBox.scrollTop = logBox.
 
 // WebSocket
 function connectWS() {
-    ws = new WebSocket(`ws://${location.host}/ws/live`);
+    const _wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${_wsProto}//${location.host}/ws/live`);
     ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
         if (msg.type === 'step') updateStep(msg.data);
