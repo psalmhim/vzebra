@@ -17,11 +17,9 @@ atlas/*.nii.gz
 zebrav1/weights/*.pt
 old/
 
-# Checkpoints — keep only round 0001 in git; others live on server volume
+# Checkpoints — only latest model in git; all JSON history tracked
 zebrav2/checkpoints/*.pt
-zebrav2/checkpoints/*.json
-!zebrav2/checkpoints/ckpt_round_0001.pt
-!zebrav2/checkpoints/ckpt_round_0001.json
+!zebrav2/checkpoints/ckpt_latest.pt
 
 # SSH keys — never commit
 *.pem

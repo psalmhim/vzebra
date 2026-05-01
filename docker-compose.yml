@@ -7,13 +7,15 @@ services:
     container_name: vzebra
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5001:5001"   # loopback only; nginx proxies from outside
+      - "127.0.0.1:5001:5001"
     environment:
       SDL_VIDEODRIVER: dummy
       SDL_AUDIODRIVER: dummy
+      PRODUCTION: "1"
     volumes:
-      # Bind-mount checkpoints so git pull on host immediately reflects inside
-      - ./zebrav2/checkpoints:/app/zebrav2/checkpoints
+      # Live code mounts — git pull on host reflects immediately, restart only needed
+      - ./zebrav2:/app/zebrav2
+      - ./zebrav1:/app/zebrav1
     logging:
       driver: json-file
       options:

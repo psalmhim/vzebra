@@ -23,12 +23,21 @@ jobs:
               git clone https://github.com/psalmhim/vzebra.git "$APP_DIR"
             fi
 
+            git -C "$APP_DIR" fetch origin main
+            CHANGED=$(git -C "$APP_DIR" diff HEAD origin/main --name-only)
             git -C "$APP_DIR" pull origin main
 
-            docker compose -f "$APP_DIR/docker-compose.yml" build vzebra
-            docker compose -f "$APP_DIR/docker-compose.yml" up -d vzebra
+            # Rebuild only if Docker config or dependencies changed; otherwise just restart
+            if echo "$CHANGED" | grep -qE 'Dockerfile|requirements.txt'; then
+              echo "=== Rebuilding Docker image ==="
+              docker compose -f "$APP_DIR/docker-compose.yml" build vzebra
+              docker compose -f "$APP_DIR/docker-compose.yml" up -d vzebra
+            else
+              echo "=== Code-only change — restarting container ==="
+              docker compose -f "$APP_DIR/docker-compose.yml" restart vzebra
+            fi
 
-            # Generate self-signed cert (Cloudflare Full mode accepts this)
+            # Self-signed cert (once only)
             if [ ! -f "/etc/ssl/vzebra/fullchain.pem" ]; then
               sudo mkdir -p /etc/ssl/vzebra
               sudo openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
@@ -37,7 +46,7 @@ jobs:
                 -subj "/CN=vzebra.xaiforbrain.com"
             fi
 
-            # Install nginx config
+            # Nginx config (always sync latest)
             sudo cp "$APP_DIR/deploy/nginx-vzebra.conf" \
                     "/etc/nginx/sites-available/vzebra.xaiforbrain.com"
             sudo ln -sf "/etc/nginx/sites-available/vzebra.xaiforbrain.com" \

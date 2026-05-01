@@ -478,10 +478,9 @@ def _run_brain_demo():
     from zebrav2.brain.brain_v2 import ZebrafishBrainV2
     from zebrav2.brain.sensory_bridge import inject_sensory
 
-    CKPT = os.path.join(PROJECT_ROOT, 'zebrav2/checkpoints/ckpt_round_0085.pt')
+    ckpt_dir = os.path.join(PROJECT_ROOT, 'zebrav2/checkpoints')
+    CKPT = os.path.join(ckpt_dir, 'ckpt_latest.pt')
     if not os.path.exists(CKPT):
-        # Fall back to most recent checkpoint
-        ckpt_dir = os.path.join(PROJECT_ROOT, 'zebrav2/checkpoints')
         pts = sorted([f for f in os.listdir(ckpt_dir) if f.endswith('.pt')]) if os.path.isdir(ckpt_dir) else []
         CKPT = os.path.join(ckpt_dir, pts[-1]) if pts else ''
 

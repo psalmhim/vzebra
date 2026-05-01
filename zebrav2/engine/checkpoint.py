@@ -70,7 +70,11 @@ class CheckpointManager:
 
         path = os.path.join(self.save_dir, f'ckpt_round_{round_num:04d}.pt')
         torch.save(ckpt, path)
-        # Save metadata as JSON for web dashboard
+        # Always overwrite ckpt_latest.pt so server always loads newest model
+        latest_path = os.path.join(self.save_dir, 'ckpt_latest.pt')
+        torch.save(ckpt, latest_path)
+
+        # Save metadata as JSON for web dashboard + git history
         meta = {
             'round': round_num,
             'timestamp': ckpt['timestamp'],
