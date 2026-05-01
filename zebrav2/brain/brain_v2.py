@@ -51,6 +51,7 @@ from zebrav2.brain.shoaling import ShoalingModule
 from zebrav2.brain.prey_capture import PreyCaptureKinematics
 from zebrav2.brain.personality import get_personality
 from zebrav2.brain.meta_goal import MetaGoalWeights
+from zebrav2.brain.connectome import init_connectome_weights
 from zebrav2.brain.active_motor import ActiveInferenceMotor
 from zebrav2.brain.social_memory import SocialMemory
 from zebrav2.brain.hpa_axis import HPAAxis
@@ -137,6 +138,9 @@ class ZebrafishBrainV2(nn.Module):
         nn.init.xavier_uniform_(self.W_pal_tect_R.weight, gain=_td_gain)
         self.W_pal_tect_L.to(device)
         self.W_pal_tect_R.to(device)
+        # Connectome-constrained init: pallium→tectum top-down attention (P→TeO strength=0.50)
+        init_connectome_weights(self.W_pal_tect_L.weight, 'pallium', 'tectum', _td_gain)
+        init_connectome_weights(self.W_pal_tect_R.weight, 'pallium', 'tectum', _td_gain)
         # Previous-step pallium rate (for top-down prediction, 1-step delay)
         self.register_buffer('_prev_pal_rate_s', torch.zeros(_pal_s_n_e, device=device))
         # Thalamic activity from previous step: used as "prediction" for spatial novelty gaze

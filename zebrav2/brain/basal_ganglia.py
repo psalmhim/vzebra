@@ -7,6 +7,7 @@ Action selection via GPi disinhibition.
 import torch
 import torch.nn as nn
 from zebrav2.spec import DEVICE, N_D1, N_D2, N_GPI, N_PAL_D
+from zebrav2.brain.connectome import init_connectome_weights
 
 class BasalGanglia(nn.Module):
     def __init__(self, device=DEVICE):
@@ -22,6 +23,10 @@ class BasalGanglia(nn.Module):
         for W in [self.W_pald_d1, self.W_pald_d2, self.W_d1_gpi, self.W_d2_gpi]:
             nn.init.xavier_uniform_(W.weight, gain=0.5)
             W.to(device)
+
+        # Connectome-constrained init: pallium→striatum (EM: P→SP d=0.006)
+        init_connectome_weights(self.W_pald_d1.weight, 'pallium', 'bg', 1.0)
+        init_connectome_weights(self.W_pald_d2.weight, 'pallium', 'bg', 1.0)
         # State
         self.register_buffer('d1_rate', torch.zeros(N_D1, device=device))
         self.register_buffer('d2_rate', torch.zeros(N_D2, device=device))

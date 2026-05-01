@@ -26,6 +26,7 @@ import torch.nn as nn
 from zebrav2.spec import DEVICE, N_TC, N_TRN, N_OT_SFGS_B, N_PAL_S, SUBSTEPS, EI_FRAC_OT
 from zebrav2.brain.neurons import IzhikevichLayer
 from zebrav2.brain.two_comp_column import TwoCompColumn
+from zebrav2.brain.connectome import init_connectome_weights
 
 class Thalamus(nn.Module):
     def __init__(self, device=DEVICE,
@@ -65,6 +66,10 @@ class Thalamus(nn.Module):
         for W in [self.W_tect_tc, self.W_pal_trn, self.W_tc_trn, self.W_trn_tc]:
             nn.init.xavier_uniform_(W.weight, gain=0.3)
             W.to(device)
+
+        # Connectome-constrained init: tectum→TC (EM: TeO→Th d=0.006), pallium→TRN (P→Th d=0.04)
+        init_connectome_weights(self.W_tect_tc.weight, 'tectum', 'thalamus', 1.0)
+        init_connectome_weights(self.W_pal_trn.weight, 'pallium', 'thalamus', 0.5)
 
         self.register_buffer('tc_rate',  torch.zeros(_n_tc,  device=device))
         self.register_buffer('trn_rate', torch.zeros(_n_trn, device=device))
