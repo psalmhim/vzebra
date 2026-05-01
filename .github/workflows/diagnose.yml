@@ -42,9 +42,21 @@ jobs:
             cat /etc/nginx/sites-available/vzebra.xaiforbrain.com 2>/dev/null || echo "(not found)"
 
             echo ""
+            echo "=== Self-signed cert ==="
+            ls -la /etc/ssl/vzebra/ 2>/dev/null || echo "(no /etc/ssl/vzebra)"
+
+            echo ""
             echo "=== Nginx test ==="
             sudo nginx -t 2>&1
 
             echo ""
-            echo "=== Test vzebra locally ==="
-            curl -s -o /dev/null -w "%{http_code}" -H "Host: vzebra.xaiforbrain.com" http://localhost/api/status || echo "failed"
+            echo "=== Port 443 listeners ==="
+            ss -tlnp | grep 443 || echo "(nothing on 443)"
+
+            echo ""
+            echo "=== Test vzebra HTTPS locally ==="
+            curl -sk -o /dev/null -w "%{http_code}" -H "Host: vzebra.xaiforbrain.com" https://localhost/api/status || echo "failed"
+
+            echo ""
+            echo "=== Lab nginx config ==="
+            cat /etc/nginx/sites-enabled/lab.xaiforbrain.com 2>/dev/null | head -20
