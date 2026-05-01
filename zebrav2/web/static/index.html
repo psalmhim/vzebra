@@ -95,6 +95,8 @@ table th { color: #8b949e; }
                         </label>
                         <button class="btn" onclick="exportFigure()" style="font-size:9px;padding:2px 8px">Export</button>
                         <button id="brainDemoBtn" class="btn" onclick="toggleBrainDemo()" style="font-size:9px;padding:2px 8px;border-color:#388bfd;color:#58a6ff;" title="Run real ZebrafishBrainV2 (7k neurons)">&#129504; Real Brain</button>
+                        <span id="epochBadge" style="font-size:9px;color:#8b949e;display:none;">ep <span id="epochCount">0</span> | save in <span id="epochNext">10</span></span>
+                        <button id="dlCkptBtn" class="btn" onclick="downloadCheckpoint()" style="font-size:9px;padding:2px 8px;border-color:#7ee787;color:#7ee787;display:none;" title="Download latest checkpoint learned from web">&#8595; Checkpoint</button>
                         <button id="recBtn" class="btn" onclick="toggleRecording()" style="font-size:9px;padding:2px 8px;background:#6e0000;border-color:#da3633;color:#ffa0a0;">&#9679; REC</button>
                     </span></h3>
                 <canvas id="arenaCanvas" class="arena-canvas" style="flex:1;min-height:0;"></canvas>
@@ -2260,17 +2262,38 @@ async function toggleBrainDemo() {
         _brainDemoActive = d.active;
     } catch(e) { return; }
     const btn = document.getElementById('brainDemoBtn');
+    const badge = document.getElementById('epochBadge');
+    const dlBtn = document.getElementById('dlCkptBtn');
     if (_brainDemoActive) {
         btn.textContent = '🧠 Brain ON';
         btn.style.background = '#238636';
         btn.style.borderColor = '#238636';
         btn.style.color = '#fff';
+        badge.style.display = 'inline';
+        dlBtn.style.display = 'inline';
     } else {
         btn.textContent = '🧠 Real Brain';
         btn.style.background = '';
         btn.style.borderColor = '#388bfd';
         btn.style.color = '#58a6ff';
+        badge.style.display = 'none';
     }
+}
+
+async function _pollEpochStatus() {
+    if (!_brainDemoActive) return;
+    try {
+        const d = await fetch('/api/brain_demo/status').then(r => r.json());
+        document.getElementById('epochCount').textContent = d.epochs || 0;
+        document.getElementById('epochNext').textContent = d.next_save_in || 10;
+        if (d.saves > 0) document.getElementById('dlCkptBtn').style.display = 'inline';
+    } catch(e) {}
+    setTimeout(_pollEpochStatus, 5000);
+}
+setTimeout(_pollEpochStatus, 5000);
+
+function downloadCheckpoint() {
+    window.location.href = '/api/checkpoint/download';
 }
 
 // ========== BEHAVIOR LOG (time-series chart) ==========

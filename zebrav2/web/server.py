@@ -467,7 +467,10 @@ def _reset_round():
 _brain_demo_active = False
 _brain_demo_thread = None
 _brain_latest_step: dict = {}
+_brain_demo_epochs = 0       # episodes completed during this demo session
+_brain_demo_saves = 0        # how many epoch-checkpoints saved
 _GOAL_NAMES_V2 = ['FORAGE', 'FLEE', 'EXPLORE', 'SOCIAL']
+EPOCH_SIZE = 10              # save checkpoint every N episodes
 
 
 def _run_brain_demo():
@@ -496,6 +499,30 @@ def _run_brain_demo():
     obs, info = env.reset()
     brain.reset()
     step = total_eaten = 0
+    global _brain_demo_epochs, _brain_demo_saves
+
+    def _save_epoch_ckpt():
+        global _brain_demo_saves
+        try:
+            latest = os.path.join(ckpt_dir, 'ckpt_latest.pt')
+            state = {
+                'brain': brain.state_dict() if hasattr(brain, 'state_dict') else {},
+                'critic_state': brain.critic.state_dict(),
+                'classifier_state': brain.classifier.state_dict(),
+                'pallium_state': brain.pallium.state_dict(),
+                'habit_state': brain.habit.state_dict(),
+                'amygdala_W_la_cea': brain.amygdala.W_la_cea.cpu().numpy().tolist(),
+                'amygdala_fear_baseline': brain.amygdala.fear_baseline,
+                'cerebellum_W_pf': brain.cerebellum.W_pf.data.cpu().numpy().tolist(),
+                'web_epochs': _brain_demo_epochs,
+                'web_saves': _brain_demo_saves + 1,
+            }
+            import torch as _torch
+            _torch.save(state, latest)
+            _brain_demo_saves += 1
+            print(f'[brain-demo] epoch checkpoint saved (epoch {_brain_demo_epochs}, save #{_brain_demo_saves})')
+        except Exception as e:
+            print(f'[brain-demo] save failed: {e}')
 
     while _brain_demo_active:
         try:
@@ -565,6 +592,9 @@ def _run_brain_demo():
             }
 
             if terminated or truncated:
+                _brain_demo_epochs += 1
+                if _brain_demo_epochs % EPOCH_SIZE == 0:
+                    _save_epoch_ckpt()
                 obs, info = env.reset()
                 brain.reset()
                 total_eaten = step = 0
@@ -1735,7 +1765,38 @@ async def brain_demo_status():
         'step': _brain_latest_step.get('step', 0),
         'goal': _brain_latest_step.get('goal', ''),
         'energy': _brain_latest_step.get('energy', 0),
+        'epochs': _brain_demo_epochs,
+        'saves': _brain_demo_saves,
+        'next_save_in': EPOCH_SIZE - (_brain_demo_epochs % EPOCH_SIZE),
     }
+
+
+@app.get("/api/checkpoint/status")
+async def checkpoint_status():
+    ckpt_dir = os.path.join(PROJECT_ROOT, 'zebrav2/checkpoints')
+    latest = os.path.join(ckpt_dir, 'ckpt_latest.pt')
+    size_mb = round(os.path.getsize(latest) / 1e6, 1) if os.path.exists(latest) else 0
+    mtime = os.path.getmtime(latest) if os.path.exists(latest) else 0
+    return {
+        'exists': os.path.exists(latest),
+        'size_mb': size_mb,
+        'saved_at': mtime,
+        'web_epochs': _brain_demo_epochs,
+        'web_saves': _brain_demo_saves,
+        'epoch_size': EPOCH_SIZE,
+        'next_save_in': EPOCH_SIZE - (_brain_demo_epochs % EPOCH_SIZE) if _brain_demo_active else None,
+    }
+
+
+@app.get("/api/checkpoint/download")
+async def download_checkpoint():
+    from fastapi.responses import FileResponse
+    latest = os.path.join(PROJECT_ROOT, 'zebrav2/checkpoints/ckpt_latest.pt')
+    if not os.path.exists(latest):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="No checkpoint found")
+    return FileResponse(latest, media_type='application/octet-stream',
+                        filename='ckpt_latest.pt')
 
 
 def main():
