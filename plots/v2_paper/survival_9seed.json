@@ -1,47 +1,47 @@
 [
   {
     "seed": 1,
-    "survived": 196,
-    "food": 5
-  },
-  {
-    "seed": 2,
-    "survived": 500,
-    "food": 13
-  },
-  {
-    "seed": 3,
-    "survived": 500,
-    "food": 7
-  },
-  {
-    "seed": 4,
     "survived": 500,
     "food": 9
   },
   {
-    "seed": 5,
+    "seed": 2,
     "survived": 500,
-    "food": 4
+    "food": 14
   },
   {
-    "seed": 6,
+    "seed": 3,
+    "survived": 500,
+    "food": 13
+  },
+  {
+    "seed": 4,
+    "survived": 500,
+    "food": 8
+  },
+  {
+    "seed": 5,
     "survived": 500,
     "food": 11
   },
   {
+    "seed": 6,
+    "survived": 500,
+    "food": 12
+  },
+  {
     "seed": 7,
-    "survived": 391,
+    "survived": 500,
     "food": 15
   },
   {
     "seed": 8,
     "survived": 500,
-    "food": 13
+    "food": 11
   },
   {
     "seed": 9,
-    "survived": 271,
-    "food": 6
+    "survived": 500,
+    "food": 16
   }
 ]

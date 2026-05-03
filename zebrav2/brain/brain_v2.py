@@ -57,6 +57,7 @@ from zebrav2.brain.social_memory import SocialMemory
 from zebrav2.brain.hpa_axis import HPAAxis
 from zebrav2.brain.oxytocin import OxytocinSystem
 from zebrav2.brain.pretectum import SpikingPretectum
+from zebrav2.brain.nucleus_isthmi import NucleusIsthmi
 from zebrav2.brain.ipn import SpikingIPN
 from zebrav2.brain.raphe import SpikingRaphe
 from zebrav2.brain.locus_coeruleus import SpikingLocusCoeruleus
@@ -144,8 +145,9 @@ class ZebrafishBrainV2(nn.Module):
         # Previous-step pallium rate (for top-down prediction, 1-step delay)
         self.register_buffer('_prev_pal_rate_s', torch.zeros(_pal_s_n_e, device=device))
         # Thalamic activity from previous step: used as "prediction" for spatial novelty gaze
-        # tc_combined = cat([TC_R (left visual), TC_L (right visual)]) = 300 neurons
-        self.register_buffer('_prev_tc', torch.zeros(N_TC, device=device))
+        # tc_combined = cat([TC_R (left visual), TC_L (right visual)]) = n_tc_R + n_tc_L neurons
+        _n_tc_combined = self.thalamus_L.TC.n + self.thalamus_R.TC.n
+        self.register_buffer('_prev_tc', torch.zeros(_n_tc_combined, device=device))
         self._da_phasic_steps = 0  # phasic DA burst counter
         self.amygdala  = SpikingAmygdalaV2(device=device)
         self.classifier = ClassifierV2(device=device)
@@ -165,7 +167,9 @@ class ZebrafishBrainV2(nn.Module):
         _n_mossy = self.tectum.sfgs_b_L.n_e + self.tectum.sfgs_b_R.n_e
         self.cerebellum = SpikingCerebellum(
             n_gc=N_CB_GC, n_pc=N_CB_PC, n_dcn=N_CB_EN,
-            n_mossy=_n_mossy, device=device)
+            n_mossy=_n_mossy, n_io=N_IO, device=device)
+        # IO rate from previous step (1-step delay avoids circular IO↔CB dependency)
+        self.register_buffer('_prev_io_rate', torch.zeros(N_IO, device=device))
         # n_mhb = medial/dorsal Hb (dHb homolog); n_lhb = lateral/ventral Hb (vHb homolog)
         self.habenula = SpikingHabenula(
             n_mhb=N_HB_D, n_lhb=N_HB_V, device=device)
@@ -221,6 +225,11 @@ class ZebrafishBrainV2(nn.Module):
         self.oxt = OxytocinSystem()
         # Pretectum: optokinetic response (OKR) from direction-selective retinal input
         self.pretectum = SpikingPretectum(device=device)
+        # Nucleus Isthmi: winner-take-all visual stimulus selection via cross-hemisphere inhibition
+        self.ni = NucleusIsthmi(device=device)
+        # NI feedback buffers (1-step delay — NI runs after tectum, feeds back next step)
+        self.register_buffer('_ni_fb_L', torch.tensor(0.0, device=device))
+        self.register_buffer('_ni_fb_R', torch.tensor(0.0, device=device))
         # Interpeduncular nucleus: habenula relay → behavioral inhibition + DA feedback
         self.ipn = SpikingIPN(device=device)
         # Spiking raphe: population-coded 5-HT (overrides scalar neuromod.HT5)
@@ -543,7 +552,9 @@ class ZebrafishBrainV2(nn.Module):
             with torch.no_grad():
                 I_td_L = self.W_pal_tect_L(self._prev_pal_rate_s).clamp(-3.0, 3.0)
                 I_td_R = self.W_pal_tect_R(self._prev_pal_rate_s).clamp(-3.0, 3.0)
-            tect_out = self.tectum(rgc_out, I_topdown_L=I_td_L, I_topdown_R=I_td_R)
+            tect_out = self.tectum(rgc_out, I_topdown_L=I_td_L, I_topdown_R=I_td_R,
+                                   I_ni_L=float(self._ni_fb_L),
+                                   I_ni_R=float(self._ni_fb_R))
         else:
             tect_out = {
                 'sfgs_b': torch.zeros(self.tectum.sfgs_b_L.n_e * 2, device=self.device),
@@ -556,6 +567,13 @@ class ZebrafishBrainV2(nn.Module):
                 'sgc_R':    torch.zeros(self.tectum.sgc_R.n_e,    device=self.device),
                 'sgc_L_mean': 0.0, 'sgc_R_mean': 0.0,
             }
+
+        # Nucleus Isthmi: cross-hemisphere inhibition for next tectum call
+        ni_out = self.ni(
+            sgc_L_mean=tect_out.get('sgc_L_mean', 0.0),
+            sgc_R_mean=tect_out.get('sgc_R_mean', 0.0))
+        self._ni_fb_L.fill_(ni_out['fb_to_L_sfgsb'])
+        self._ni_fb_R.fill_(ni_out['fb_to_R_sfgsb'])
 
         # Interoception (spiking insular cortex)
         if self._active('insula'):
@@ -618,7 +636,7 @@ class ZebrafishBrainV2(nn.Module):
         if self._active('cerebellum'):
             cb_out = self.cerebellum(
                 mossy_input=tect_out['sfgs_b'],
-                climbing_fiber=pal_out.get('free_energy', 0.0),
+                climbing_fiber_rate=self._prev_io_rate,
                 DA=self.neuromod.DA.item())
         else:
             cb_out = {'dcn_rate': torch.zeros(self.cerebellum.n_dcn, device=self.device),
@@ -1484,6 +1502,8 @@ class ZebrafishBrainV2(nn.Module):
             sensory_surprise=_sensory_surprise,
             motor_mismatch=min(1.0, _motor_mismatch),
             cerebellar_pe=cb_out.get('prediction_error', 0.0))
+        # Store IO rate vector for 1:1 PC projection next step
+        self._prev_io_rate.copy_(io_out['rate_vec'])
         # Vagus nerve: bidirectional visceral communication
         _heart_rate = getattr(self, '_heart_rate', 0.6)
         vagus_out = self.vagus_nerve(
@@ -1918,6 +1938,10 @@ class ZebrafishBrainV2(nn.Module):
         self.cerebellum.reset()
         self.habenula.reset()
         self.pretectum.reset()
+        self.ni.reset()
+        self._ni_fb_L.zero_()
+        self._ni_fb_R.zero_()
+        self._prev_io_rate.zero_()
         self.ipn.reset()
         self.raphe.reset()
         self.lc.reset()

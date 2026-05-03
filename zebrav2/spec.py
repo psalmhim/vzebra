@@ -127,7 +127,7 @@ N_PT = 1000   # (real: ~1,000-1,500)
 # ── THALAMUS ──────────────────────────────────────────────────────────────────
 # Real: ~1,000-2,000; predominantly glutamatergic relay (Bhatt 2012).
 # Dorsal thalamus → tectum (10/37 non-retinal inputs; Kunst 2019).
-N_TC  = 1000   # dorsal thalamus relay neurons  (real: ~1,000-2,000)
+N_TC  = 300    # dorsal thalamus relay neurons — 150/hemisphere × 2 (bilateral)
 N_TRN = 300    # thalamic reticular nucleus, inhibitory  (real: ~300-500)
 
 # ── CEREBELLUM ────────────────────────────────────────────────────────────────

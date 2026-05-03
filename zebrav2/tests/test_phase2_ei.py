@@ -30,7 +30,7 @@ def test_phase2():
 
     # Test 2: inhibition reduces E activity
     layer_no_i = EILayer(200, 'RS', DEVICE, 'no_i')
-    layer_no_i.syn_ie.W.zero_()  # kill I→E inhibition
+    layer_no_i.syn_ie.zero_weights()  # kill I→E inhibition
     I_strong = torch.ones(layer_no_i.n_e, device=DEVICE) * 10.0
     r_no_inh, _, _, _ = layer_no_i(I_strong, substeps=50)
     r_with_inh, _, _, _ = layer(I_strong, substeps=50)

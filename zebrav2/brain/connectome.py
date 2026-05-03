@@ -262,6 +262,33 @@ V2_TO_ATLAS: dict[str, str] = {
 }
 
 
+# ─── Region-specific λ for intra-region distance-dependent connectivity ──────
+# PNAS empirical estimate: λ=80 μm (Fig. S2B distance-correlation curve).
+# Telencephalon (clustering=0.027, modularity=0.673): sparse/modular → larger λ.
+# Hindbrain (clustering=0.066, global-eff=0.122): dense/clustered → smaller λ.
+REGION_LAMBDA: dict[str, float] = {
+    'pallium':       120.0,   # Tel low-clustering sparse-modular
+    'subpallium':    120.0,   # Tel same
+    'tectum':         80.0,   # Mes — baseline
+    'thalamus':       80.0,   # Di — baseline
+    'pretectum':      80.0,   # Di — baseline
+    'tegmentum':      80.0,   # Di/Mes — baseline
+    'hypothalamus':   80.0,   # Di — baseline
+    'habenula':       80.0,   # Di — baseline
+    'olfactory':      80.0,   # Tel/Di — baseline
+    'cerebellum':     50.0,   # Hind high-clustering dense
+    'reticular':      50.0,   # Hind same
+    'medulla':        50.0,   # Hind same
+    'raphe':          50.0,   # Hind same
+    'spinal':         50.0,   # Hind-like
+}
+
+
+def get_region_lambda(region_name: str) -> float:
+    """Return λ (μm) for within-region distance-dependent connectivity."""
+    return REGION_LAMBDA.get(region_name, 80.0)
+
+
 # ─── Weight initialisation ────────────────────────────────────────────────────
 
 def distance_dependent_connectivity(n_pre: int, n_post: int,

@@ -81,6 +81,18 @@ class EILayer(nn.Module):
         """Current E population rate (per ms)."""
         return self.E.rate
 
+    def init_distance(self, pos_e: 'torch.Tensor', pos_i: 'torch.Tensor',
+                      lambda_um: float = 80.0):
+        """Re-initialize intra-layer synapses with distance-dependent connectivity.
+
+        Called by SpatialRegistry.assign_to_brain after neuron positions are known.
+        Uses p_max = P_EE/EI/IE/II so the mean density matches the flat init.
+        """
+        self.syn_ee.init_distance_sparse(pos_e, pos_e, lambda_um, P_EE)
+        self.syn_ei.init_distance_sparse(pos_e, pos_i, lambda_um, P_EI)
+        self.syn_ie.init_distance_sparse(pos_i, pos_e, lambda_um, P_IE)
+        self.syn_ii.init_distance_sparse(pos_i, pos_i, lambda_um, P_II)
+
     def reset(self):
         self.E.reset()
         self.I.reset()

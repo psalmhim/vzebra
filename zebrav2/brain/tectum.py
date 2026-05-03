@@ -105,13 +105,17 @@ class Tectum(nn.Module):
 
     def forward(self, rgc_out: dict,
                 I_topdown_L: torch.Tensor = None,
-                I_topdown_R: torch.Tensor = None) -> dict:
+                I_topdown_R: torch.Tensor = None,
+                I_ni_L: float = 0.0,
+                I_ni_R: float = 0.0) -> dict:
         """
         rgc_out: dict from RetinaV2 with keys:
             'R_on', 'R_off', 'R_loom', 'R_ds'  -> drive L_tectum (contralateral)
             'L_on', 'L_off', 'L_loom', 'L_ds'  -> drive R_tectum (contralateral)
         I_topdown_L: optional top-down current from pallium to L_tectum SFGS-b (n_e,)
         I_topdown_R: optional top-down current from pallium to R_tectum SFGS-b (n_e,)
+        I_ni_L: scalar GABAergic feedback from Nucleus Isthmi to L SFGS-b (pA, ≤0)
+        I_ni_R: scalar GABAergic feedback from Nucleus Isthmi to R SFGS-b (pA, ≤0)
         """
         # L_tectum driven by R_eye (optic chiasm crossing)
         I_sfgsb_L = self._norm_drive(self.W_on_L,   rgc_out['R_on'],   3.0, 6.0)
@@ -134,6 +138,12 @@ class Tectum(nn.Module):
             I_sfgsb_L = I_sfgsb_L + I_topdown_L[:self.sfgs_b_L.n_e]
         if I_topdown_R is not None:
             I_sfgsb_R = I_sfgsb_R + I_topdown_R[:self.sfgs_b_R.n_e]
+
+        # Nucleus Isthmi GABAergic cross-hemisphere suppression (1-step delay)
+        if I_ni_L != 0.0:
+            I_sfgsb_L = I_sfgsb_L + I_ni_L
+        if I_ni_R != 0.0:
+            I_sfgsb_R = I_sfgsb_R + I_ni_R
 
         # Run E/I dynamics for each hemisphere
         sfgs_b_L_rate, _, _, _ = self.sfgs_b_L(I_sfgsb_L, substeps=SUBSTEPS)

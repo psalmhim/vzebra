@@ -1,0 +1,126 @@
+# VZebra v2 Change Log
+# Format: [YYYY-MM-DD] FILE: description
+
+# ── 2026-05-04 (feat/realistic-connectome branch) ──────────────────────────
+
+[2026-05-04] zebrav2/brain/synapses.py
+  REFACTOR: Dense W matrix → COO sparse storage (_row, _col, _val triplets)
+  - Memory: O(post_n × pre_n) → O(nnz); 69.3 MB → 11.7 MB for EILayer synapses
+  - Added init_sparse(), init_distance_sparse(λ=80 μm from PNAS Fig S2B)
+  - Forward: index_add_ scatter instead of dense matmul
+  - Added W property (read-only dense reconstruction), zero_weights()
+
+[2026-05-04] zebrav2/brain/ei_layer.py
+  FEAT: Added init_distance(pos_e, pos_i, lambda_um) method
+  - Calls init_distance_sparse on all 4 synapse types (EE, EI, IE, II)
+  - Region-specific lambda via get_region_lambda()
+
+[2026-05-04] zebrav2/brain/connectome.py
+  FEAT: Added REGION_LAMBDA dict + get_region_lambda(region_name)
+  - Telencephalon: λ=120 μm (sparse-modular, clustering=0.027)
+  - Hindbrain: λ=50 μm (dense, clustering=0.066)
+  - Baseline: λ=80 μm (PNAS Fig S2B empirical)
+  - Added ('TeO','Th', 0.04, True) to ANATOMICAL_PROJECTIONS (was missing)
+
+[2026-05-04] zebrav2/brain/spatial_registry.py
+  FEAT: Atlas-sampled neuron positions with Gaussian jitter
+  - generate_positions(): samples from real atlas XYZ + jitter at ½ NN spacing
+  - assign_to_brain(): calls layer.init_distance() for 10 tectum + 2 pallium EILayers
+  - topographic_weight(): Gaussian σ=0.15 mapping for retina→tectum retinotopy
+  - Applies retinotopic weighting to W_on_L/R, W_off_L/R (interpolated to fit)
+
+[2026-05-04] zebrav2/brain/retina.py
+  FIX: Direction-selective cells from direction-blind to Reichardt correlator
+  - Old: ds_raw = clamp(I(k,t) × I(k,t-1), 0, 1) — symmetric, direction-blind
+  - New: ds_raw = I(k,t)×I(k-1,t-1) − I(k,t)×I(k+1,t-1) — signed directional
+  - Positive = rightward, negative = leftward (Hassenstein & Reichardt 1956)
+  - Zero-padded at boundaries (no wraparound)
+
+[2026-05-04] zebrav2/brain/pretectum.py
+  FIX: OKR was always 0.0 due to threshold mismatch
+  - Removed tonic inhibition i_tonic.fill_(-1.5) (threshold now ~3.5 pA net)
+  - Increased DS gain 15→100 (ds≈0.023 × 100 = 2.3 pA → net 5.3 pA → fires)
+  - Now correctly drives directional OKR with ds~0.02
+
+[2026-05-04] zebrav2/tests/test_omr.py
+  NEW: OMR (optomotor response) benchmark
+  - 15 tests: DS directionality, monocular L/R, bilateral static, directional consistency
+  - All 15/15 pass
+
+[2026-05-04] zebrav2/tests/test_phase2_ei.py
+  FIX: layer_no_i.syn_ie.W.zero_() → layer_no_i.syn_ie.zero_weights()
+  - Sparse Synapse no longer exposes W as mutable tensor
+
+# ── 2026-05-04 continued ────────────────────────────────────────────────────
+
+[2026-05-04] zebrav2/brain/nucleus_isthmi.py
+  NEW: Nucleus Isthmi — winner-take-all visual stimulus selection
+  - 30 neurons/hemisphere (60 total), IB burst-firing (cholinergic)
+  - Input: ipsilateral SGC mean rate; Output: contralateral SFGS-b inhibition
+  - NI_L (driven by SGC_L) → -3 pA to R SFGS-b; NI_R → -3 pA to L SFGS-b
+  - Creates cross-hemisphere suppression for prey/threat segregation
+  - Reference: Fernandes et al. (2012) J Neurosci
+
+[2026-05-04] zebrav2/brain/tectum.py
+  FEAT: Added I_ni_L, I_ni_R parameters to forward()
+  - Scalar GABAergic NI feedback injected into I_sfgsb_L/R before EI dynamics
+  - Enables winner-take-all from NucleusIsthmi module
+
+[2026-05-04] zebrav2/brain/brain_v2.py
+  FEAT: Wire NucleusIsthmi into tectum pipeline
+  - Import + instantiate self.ni = NucleusIsthmi(device)
+  - 1-step delay buffers: _ni_fb_L, _ni_fb_R (same pattern as top-down attention)
+  - After tectum: call ni(sgc_L_mean, sgc_R_mean), store feedback for next step
+  - Pass _ni_fb_L/R to tectum.forward() as I_ni_L/R
+  - Added ni.reset() + buffer zeros in reset()
+
+[2026-05-04] zebrav2/brain/inferior_olive.py
+  FEAT: Added 'rate_vec' to forward() return dict
+  - Returns self.rate tensor (n_io,) for 1:1 IO→PC projection
+  - 'rate' (scalar mean) retained for backward compat
+
+[2026-05-04] zebrav2/brain/cerebellum.py
+  FEAT: IO→PC 1:1 topographic climbing fiber projection
+  - Added n_io parameter to __init__
+  - Added W_io_pc = nn.Linear(n_io, n_pc) with Gaussian topographic init
+    (σ = 2/n_pc narrow kernel → near 1:1 mapping; Ito 2001)
+  - forward() now accepts climbing_fiber_rate: Tensor (n_io,)
+  - Per-PC: I_cf = W_io_pc(io_rate) × 5.0 instead of scalar broadcast
+  - Scalar climbing_fiber=0.0 fallback retained for backward compat
+  - LTD plasticity gated by mean IO rate (_cf_scalar)
+
+[2026-05-04] zebrav2/brain/brain_v2.py
+  FEAT: Wire IO→PC 1:1 through cerebellum
+  - Pass n_io=N_IO to SpikingCerebellum
+  - Added _prev_io_rate buffer (n_io,) for 1-step delay (avoids circular IO↔CB dep)
+  - Cerebellum call now uses climbing_fiber_rate=self._prev_io_rate
+  - After IO runs: self._prev_io_rate.copy_(io_out['rate_vec'])
+  - Added _prev_io_rate.zero_() in reset()
+
+[2026-05-04] zebrav2/brain/habenula.py
+  FEAT: Habenula L-R asymmetry (Amo et al. 2014)
+  - Split MHb into rMHb (right dHb, ChAT+, n=n_mhb//2+1) + lMHb (left dHb, Glu)
+  - rMHb: i_tonic=-0.5 (more spontaneous, stronger aversion IPN drive × 1.8)
+  - lMHb: i_tonic=-1.5 (more quiescent, weaker × 1.0)
+  - self.MHb alias → self.rMHb for backward compat
+  - New output keys: 'rmhb_rate', 'lmhb_rate', 'ach_ipn_drive'
+  - 'mhb_rate' = 0.67×rmhb + 0.33×lmhb (backward compat composite)
+  - reset() updated for rMHb + lMHb
+
+[2026-05-04] zebrav2/spec.py
+  FIX: N_TC 1000→300 (stale value; bilateral thalamus = 2×150 = 300)
+  - Checkpoint confirms W_tc_pals weight shape (1200, 300)
+  - pallium.py W_tc_pals now correctly sized N_TC=300
+
+[2026-05-04] zebrav2/brain/brain_v2.py
+  FIX: _prev_tc buffer size N_TC→actual tc_combined size
+  - Was: torch.zeros(N_TC=1000) → mismatch with tc_combined=300
+  - Now: torch.zeros(thalamus_L.TC.n + thalamus_R.TC.n)
+
+# ── 2026-05-04 TEST RESULTS ─────────────────────────────────────────────────
+
+[2026-05-04] BENCHMARK: zebrav2/tests/generate_all_paper_figs.py
+  All 13 figures generated successfully
+  9-seed survival: 9/9 survived all 500 steps (food counts: 9,14,13,8,11,12,15,11,16)
+  test_omr: 15/15 PASS
+  test_phase2_ei: 6/6 PASS
