@@ -2,27 +2,27 @@
   {
     "seed": 1,
     "survived": 500,
-    "food": 9
+    "food": 10
   },
   {
     "seed": 2,
     "survived": 500,
-    "food": 14
+    "food": 15
   },
   {
     "seed": 3,
     "survived": 500,
-    "food": 13
+    "food": 9
   },
   {
     "seed": 4,
     "survived": 500,
-    "food": 8
+    "food": 11
   },
   {
     "seed": 5,
     "survived": 500,
-    "food": 11
+    "food": 3
   },
   {
     "seed": 6,
@@ -32,16 +32,16 @@
   {
     "seed": 7,
     "survived": 500,
-    "food": 15
+    "food": 13
   },
   {
     "seed": 8,
-    "survived": 500,
-    "food": 11
+    "survived": 315,
+    "food": 3
   },
   {
     "seed": 9,
     "survived": 500,
-    "food": 16
+    "food": 12
   }
 ]

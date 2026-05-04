@@ -124,3 +124,51 @@
   9-seed survival: 9/9 survived all 500 steps (food counts: 9,14,13,8,11,12,15,11,16)
   test_omr: 15/15 PASS
   test_phase2_ei: 6/6 PASS
+
+# ── 2026-05-04 (eval platform + manuscript) ──────────────────────────────────
+
+[2026-05-04] zebrav2/eval/__init__.py
+  NEW: Evaluation platform package init
+  - Re-exports: EvalPlugin, EvalResult, EvalContext, EvalRegistry, register, Pipeline, ReportBuilder
+
+[2026-05-04] zebrav2/eval/base.py
+  NEW: Core dataclasses and abstract base
+  - EvalResult: tier, name, pass/fail, metrics, pass_criteria, artifacts, figures, reference
+  - EvalContext: shared artifact store (assembly tray) flowing through pipeline
+  - EvalPlugin: ABC with tier, name, tags, requires, purpose, method, reference, run()
+  - PASS_OPS: operator dispatch dict for >, >=, <, <=, ==, !=
+
+[2026-05-04] zebrav2/eval/registry.py
+  NEW: Self-registering plugin registry
+  - EvalRegistry singleton; @register decorator auto-instantiates at import time
+  - discover(): pkgutil.walk_packages auto-imports all plugins/ modules
+  - get_ordered(): Kahn topological sort by requires[] dependency graph
+
+[2026-05-04] zebrav2/eval/pipeline.py
+  NEW: Assembly-line evaluation pipeline
+  - Pipeline.run(): tier-grouped execution, dependency gating (skip on upstream fail)
+  - Exception capture with traceback, final pass/fail/skip summary
+
+[2026-05-04] zebrav2/eval/report.py
+  NEW: Automated report generation
+  - ReportBuilder.build(): JSON index + per-tier PDF tables + radar chart + summary bar chart
+
+[2026-05-04] zebrav2/eval/__main__.py
+  NEW: CLI entry point
+  - python -m zebrav2.eval --tier --tag --out --list --no-brain
+
+[2026-05-04] zebrav2/eval/plugins/ (21 plugins)
+  NEW: T1 Neuron (3): izhikevich, ei_balance, synapses
+  NEW: T2 Circuit (8): retina, pretectum, tectum, cerebellum, habenula, basal_ganglia, cpg, pallium
+  NEW: T3 System (4): omr, fear_conditioning, neuromod, prey_capture
+  NEW: T4 Behavior (3): survival, foraging, exploration
+  NEW: T5 Social (3): shoaling, alarm_substance, social_recognition
+
+[2026-05-04] manuscript2.tex
+  FEAT: Added §"Hierarchical Evaluation Framework" subsection (Methods)
+  - Four paragraphs: motivation/philosophy, five-tier hierarchy, plugin architecture,
+    assembly-line pipeline with artifact passing, automated report generation
+  - Table: eval_tiers (T1-T5, 21 plugins, validation targets)
+  - 7 new bibliography entries: okun2008, borst2011, kubo2014, delbene2010,
+    ito2001, grillner2005, kiehn2016
+  - Placed between §Testing Infrastructure and §Software Platform
