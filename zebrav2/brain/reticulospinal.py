@@ -132,7 +132,9 @@ class ReticulospinalSystem(nn.Module):
                 pal_d_rate: torch.Tensor,
                 flee_dir:   float,
                 goal_speed: float,
-                looming:    bool) -> dict:
+                looming:    bool,
+                m_L_spike:  bool = False,
+                m_R_spike:  bool = False) -> dict:
         """
         sgc_rate   : (N_SGC_E,)  looming input from tectal SGC cells
         bg_gate    : float 0-1   basal ganglia go-signal for voluntary movement
@@ -142,6 +144,8 @@ class ReticulospinalSystem(nn.Module):
                                  positive = threat on right → flee left  (negative turn)
         goal_speed : float 0-2   desired cruising speed
         looming    : bool        tectum looming flag
+        m_L_spike  : bool        left Mauthner cell fired this step (biophysical trigger)
+        m_R_spike  : bool        right Mauthner cell fired this step
 
         Returns dict with keys:
           'turn'   : float  (-1 .. 1)
@@ -209,10 +213,33 @@ class ReticulospinalSystem(nn.Module):
             return self._make_out(turn, speed, cstart=False, tstart=True)
 
         # ----------------------------------------------------------
-        # 4. Check for new C-start trigger (looming + SGC above threshold)
-        #    Gap junctions lower threshold: 0.05 → 0.04 when facilitated
+        # 4. Check for new C-start trigger.
+        #    Priority: biophysical M-cell spike (SpikingMauthner) overrides
+        #    the threshold heuristic when available.
+        #    Fallback: looming + SGC above threshold (original logic).
         # ----------------------------------------------------------
-        # Use lateralized thresholds: threat from one side lowers THAT side's threshold
+        # Biophysical M-cell spike from SpikingMauthner module
+        if m_L_spike and self.mauthner_refrac_L == 0 and self.mauthner_refrac_R == 0:
+            self.mauthner_active_L = 4
+            self.mauthner_refrac_L = 12
+            self.mauthner_refrac_R = 20
+            direction = -1.0
+            turn, speed = self._cstart_motor(4, direction)
+            self.mauthner_active_L -= 1
+            self._fill_motor(turn, speed)
+            return self._make_out(turn, speed, cstart=True, tstart=False)
+
+        if m_R_spike and self.mauthner_refrac_R == 0 and self.mauthner_refrac_L == 0:
+            self.mauthner_active_R = 4
+            self.mauthner_refrac_R = 12
+            self.mauthner_refrac_L = 20
+            direction = +1.0
+            turn, speed = self._cstart_motor(4, direction)
+            self.mauthner_active_R -= 1
+            self._fill_motor(turn, speed)
+            return self._make_out(turn, speed, cstart=True, tstart=False)
+
+        # Fallback heuristic: looming + SGC above gap-modulated threshold
         _effective_thresh = min(cstart_thresh_L, cstart_thresh_R)
         if looming and sgc_mean > _effective_thresh:
             # Determine which M-cell to fire based on threat laterality.

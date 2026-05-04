@@ -58,6 +58,7 @@ from zebrav2.brain.hpa_axis import HPAAxis
 from zebrav2.brain.oxytocin import OxytocinSystem
 from zebrav2.brain.pretectum import SpikingPretectum
 from zebrav2.brain.nucleus_isthmi import NucleusIsthmi
+from zebrav2.brain.mauthner import SpikingMauthner
 from zebrav2.brain.ipn import SpikingIPN
 from zebrav2.brain.raphe import SpikingRaphe
 from zebrav2.brain.locus_coeruleus import SpikingLocusCoeruleus
@@ -227,6 +228,8 @@ class ZebrafishBrainV2(nn.Module):
         self.pretectum = SpikingPretectum(device=device)
         # Nucleus Isthmi: winner-take-all visual stimulus selection via cross-hemisphere inhibition
         self.ni = NucleusIsthmi(device=device)
+        # Mauthner cells: spiking escape reflex trigger (1 M-cell + 2 CoLo per side)
+        self.mauthner = SpikingMauthner(device=device)
         # NI feedback buffers (1-step delay — NI runs after tectum, feeds back next step)
         self.register_buffer('_ni_fb_L', torch.tensor(0.0, device=device))
         self.register_buffer('_ni_fb_R', torch.tensor(0.0, device=device))
@@ -1148,10 +1151,16 @@ class ZebrafishBrainV2(nn.Module):
         brain_weight = max(0.2, 1.0 - wall_urgency)
         turn = float(np.clip(-self._smoother * brain_weight + wall_turn, -1.0, 1.0))
 
-        # RS motor: C-start for looming + voluntary pallium-D asymmetry for normal movement
+        # Mauthner cells: biophysical C-start trigger from tectum SGC + lateral line
+        _ll_pressure = float(ll_out.get('high_freq_threat', 0.0))
+        mauthner_out = self.mauthner(tect_out['sgc_L'], tect_out['sgc_R'], _ll_pressure)
+
+        # RS motor: C-start (M-cell spike or looming fallback) + voluntary pallium-D turn
         _mc_cfg = self.body_cfg.motor
         rs_out = self.rs(tect_out['sgc'], bg_out['gate'], pal_out['rate_D'],
-                         flee_turn, 1.0, tect_out['looming'])
+                         flee_turn, 1.0, tect_out['looming'],
+                         m_L_spike=mauthner_out['m_L_spike'],
+                         m_R_spike=mauthner_out['m_R_spike'])
         if rs_out['cstart']:
             turn = rs_out['turn']
         else:
@@ -1761,6 +1770,11 @@ class ZebrafishBrainV2(nn.Module):
             # Gap junction state
             'gap_state_L': rs_out.get('gap_state_L', 0.0),
             'gap_state_R': rs_out.get('gap_state_R', 0.0),
+            # Mauthner cells
+            'm_L_spike': mauthner_out['m_L_spike'],
+            'm_R_spike': mauthner_out['m_R_spike'],
+            'm_L_rate': mauthner_out['m_L_rate'],
+            'm_R_rate': mauthner_out['m_R_rate'],
             # Spiking raphe (5-HT)
             'raphe_ht5': raphe_out['ht5_level'],
             'raphe_dr_rate': raphe_out['dr_rate'],
@@ -1941,6 +1955,7 @@ class ZebrafishBrainV2(nn.Module):
         self.ni.reset()
         self._ni_fb_L.zero_()
         self._ni_fb_R.zero_()
+        self.mauthner.reset()
         self._prev_io_rate.zero_()
         self.ipn.reset()
         self.raphe.reset()

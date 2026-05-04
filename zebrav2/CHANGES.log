@@ -172,3 +172,34 @@
   - 7 new bibliography entries: okun2008, borst2011, kubo2014, delbene2010,
     ito2001, grillner2005, kiehn2016
   - Placed between §Testing Infrastructure and §Software Platform
+
+# ── 2026-05-04 (Mauthner cell) ───────────────────────────────────────────────
+
+[2026-05-04] zebrav2/brain/mauthner.py
+  NEW: Spiking Mauthner cell circuit (SpikingMauthner)
+  - 1 M-cell per side: RS-type Izhikevich, i_tonic=-3.0 (high threshold)
+  - 2 CoLo interneurons per side: FS-type, glycinergic crossed inhibition
+  - Visual input: contralateral tectum SGC × 120 pA (crossed tectobulbar tract)
+  - Acoustic input: ipsilateral lateral-line pressure × 80 pA (VIII nerve club endings)
+  - Gap junction facilitation: decaying state (decay=0.90, gain=0.80) × 15 pA
+  - CoLo: M-cell spike → CoLo fires (40 pA) → contralateral M-cell -60 pA block
+  - 20-substep spiking loop; returns m_L/R_spike (bool), rates, colo_active
+  - References: Korn & Faber (2005); Bhatt et al. (2007); Pereda & Faber (2011)
+
+[2026-05-04] zebrav2/brain/reticulospinal.py
+  FEAT: Added m_L_spike / m_R_spike parameters to forward()
+  - Biophysical M-cell spike from SpikingMauthner takes priority over
+    looming+threshold heuristic when available
+  - Spike → immediately triggers 4-step C-start sequence with correct refractories
+
+[2026-05-04] zebrav2/brain/brain_v2.py
+  FEAT: Wire SpikingMauthner into motor pipeline
+  - Import + instantiate self.mauthner = SpikingMauthner(device)
+  - Before RS: mauthner(sgc_L, sgc_R, ll_high_freq_threat)
+  - Pass m_L_spike/m_R_spike to rs.forward() as override
+  - Output dict: m_L_spike, m_R_spike, m_L_rate, m_R_rate
+  - reset(): self.mauthner.reset()
+
+# ── 2026-05-04 MERGE ─────────────────────────────────────────────────────────
+
+[2026-05-04] git: merged feat/realistic-connectome → main
