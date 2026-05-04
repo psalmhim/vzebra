@@ -203,3 +203,20 @@
 # ── 2026-05-04 MERGE ─────────────────────────────────────────────────────────
 
 [2026-05-04] git: merged feat/realistic-connectome → main
+
+[2026-05-04] zebrav2/tests/test_mauthner.py
+  NEW: 7-test Mauthner cell suite — all 7/7 PASS
+  - test_no_spontaneous_firing, test_right_threat_fires_left_mcell
+  - test_left_threat_fires_right_mcell, test_acoustic_fires_bilaterally
+  - test_colo_crossed_inhibition, test_gap_junction_accumulation
+  - test_rate_tracking_after_firing
+
+[2026-05-04] zebrav2/eval/plugins/t2_mauthner.py
+  NEW: T2 Mauthner eval plugin — 4/4 metrics PASS
+  - silence_ok, dsi>0.5, colo_ok, acoustic_bilateral
+  - Reference: Korn & Faber (2005); Bhatt et al. (2007)
+
+[2026-05-04] manuscript2.tex
+  FEAT: Added \paragraph{Mauthner cell and C-start escape reflex}
+  - Located in §Motor Control; describes M-cell + CoLo spiking circuit
+  - New bibitems: pereda2011 (club endings), kornfaber1975 (CoLo inhibition)
