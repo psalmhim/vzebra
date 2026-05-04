@@ -32,16 +32,31 @@ class SpikingHabenula(nn.Module):
         self.device = device
         self.n_lhb = n_lhb
         self.n_mhb = n_mhb
+        # Split MHb into L-R with biological asymmetry (Amo et al. 2014):
+        #   Right dHb (rMHb): cholinergic + substance-P → strong IPN projection
+        #   Left  dHb (lMHb): glutamate-only           → weaker IPN projection
+        n_rmhb = n_mhb // 2 + n_mhb % 2   # right: larger half
+        n_lmhb = n_mhb // 2               # left: smaller half
+        self.n_rmhb = n_rmhb
+        self.n_lmhb = n_lmhb
 
         # Neuron populations
-        self.LHb = IzhikevichLayer(n_lhb, 'RS', device)
-        self.MHb = IzhikevichLayer(n_mhb, 'RS', device)
+        self.LHb  = IzhikevichLayer(n_lhb,  'RS', device)   # ventral habenula
+        self.rMHb = IzhikevichLayer(n_rmhb, 'RS', device)   # right dorsal Hb (ChAT+)
+        self.lMHb = IzhikevichLayer(n_lmhb, 'RS', device)   # left dorsal Hb (Glu)
         self.LHb.i_tonic.fill_(-1.0)
-        self.MHb.i_tonic.fill_(-1.0)
+        self.rMHb.i_tonic.fill_(-0.5)  # more spontaneous (cholinergic: higher baseline)
+        self.lMHb.i_tonic.fill_(-1.5)  # more quiescent (Glu-only: lower baseline)
+
+        # Backward-compatible alias: MHb → rMHb for any code that accesses self.MHb
+        self.MHb = self.rMHb
 
         # State
-        self.register_buffer('lhb_rate', torch.zeros(n_lhb, device=device))
-        self.register_buffer('mhb_rate', torch.zeros(n_mhb, device=device))
+        self.register_buffer('lhb_rate',  torch.zeros(n_lhb,  device=device))
+        self.register_buffer('rmhb_rate', torch.zeros(n_rmhb, device=device))
+        self.register_buffer('lmhb_rate', torch.zeros(n_lmhb, device=device))
+        # Backward-compatible mhb_rate = mean of both sides
+        self.register_buffer('mhb_rate',  torch.zeros(1, device=device))
         self.register_buffer('disappointment', torch.tensor(0.0, device=device))
         self.register_buffer('aversion_level', torch.tensor(0.0, device=device))
 
@@ -52,6 +67,7 @@ class SpikingHabenula(nn.Module):
         # Output signals
         self.da_suppression = 0.0
         self.ht5_suppression = 0.0
+        self.ach_ipn_drive = 0.0  # right dHb cholinergic drive to IPN
 
         # --- v1-equivalent: per-goal frustration & strategy switching ---
         self.threshold = helplessness_threshold
@@ -81,23 +97,32 @@ class SpikingHabenula(nn.Module):
         disappoint = max(0.0, -rpe)
 
         # --- Spiking dynamics ---
-        I_lhb = torch.full((self.n_lhb,), disappoint * 20.0, device=self.device)
-        I_mhb = torch.full((self.n_mhb,), aversion * 15.0, device=self.device)
-        lhb_spikes = torch.zeros(self.n_lhb, device=self.device)
-        mhb_spikes = torch.zeros(self.n_mhb, device=self.device)
-        for _ in range(20):  # reduced substeps
-            sp_l = self.LHb(I_lhb + torch.randn(self.n_lhb, device=self.device) * 0.5)
-            sp_m = self.MHb(I_mhb + torch.randn(self.n_mhb, device=self.device) * 0.5)
+        I_lhb  = torch.full((self.n_lhb,),  disappoint * 20.0, device=self.device)
+        # Right dHb (ChAT+): stronger response to acute aversion
+        I_rmhb = torch.full((self.n_rmhb,), aversion * 18.0, device=self.device)
+        # Left dHb (Glu): weaker, driven more by chronic stress than acute fear
+        I_lmhb = torch.full((self.n_lmhb,), aversion * 10.0, device=self.device)
+        lhb_spikes = torch.zeros(self.n_lhb,  device=self.device)
+        for _ in range(20):
+            sp_l  = self.LHb(I_lhb  + torch.randn(self.n_lhb,  device=self.device) * 0.5)
+            self.rMHb(I_rmhb + torch.randn(self.n_rmhb, device=self.device) * 0.5)
+            self.lMHb(I_lmhb + torch.randn(self.n_lmhb, device=self.device) * 0.5)
             lhb_spikes += sp_l
-            mhb_spikes += sp_m
         self.lhb_rate.copy_(self.LHb.rate)
-        self.mhb_rate.copy_(self.MHb.rate)
-        lhb_mean = float(self.lhb_rate.mean())
-        mhb_mean = float(self.mhb_rate.mean())
+        self.rmhb_rate.copy_(self.rMHb.rate)
+        self.lmhb_rate.copy_(self.lMHb.rate)
+        lhb_mean  = float(self.lhb_rate.mean())
+        rmhb_mean = float(self.rmhb_rate.mean())
+        lmhb_mean = float(self.lmhb_rate.mean())
+        # Composite mhb_rate: right dHb weighted more (stronger aversion pathway)
+        mhb_mean = 0.67 * rmhb_mean + 0.33 * lmhb_mean
+        self.mhb_rate.fill_(mhb_mean)
 
         # Neuromod suppression
         self.da_suppression = min(0.5, lhb_mean * 5.0)
         self.ht5_suppression = min(0.3, lhb_mean * 3.0)
+        # Cholinergic (right dHb) → extra ACh drive to IPN (aversion memory)
+        self.ach_ipn_drive = min(1.0, rmhb_mean * 4.0)
         self.disappointment.fill_(disappoint)
         self.aversion_level.fill_(aversion)
 
@@ -128,7 +153,10 @@ class SpikingHabenula(nn.Module):
             'da_suppression': self.da_suppression,
             'ht5_suppression': self.ht5_suppression,
             'lhb_rate': lhb_mean,
-            'mhb_rate': mhb_mean,
+            'mhb_rate': mhb_mean,         # composite (backward compat)
+            'rmhb_rate': rmhb_mean,       # right dHb (cholinergic/aversive)
+            'lmhb_rate': lmhb_mean,       # left dHb (glutamatergic)
+            'ach_ipn_drive': self.ach_ipn_drive,  # cholinergic IPN input
             'explore_drive': min(1.0, disappoint * 2.0 + lhb_mean * 3.0),
             'switch_signal': switch,
             'goal_bias': goal_bias.copy(),
@@ -138,14 +166,18 @@ class SpikingHabenula(nn.Module):
 
     def reset(self):
         self.LHb.reset()
-        self.MHb.reset()
+        self.rMHb.reset()
+        self.lMHb.reset()
         self.lhb_rate.zero_()
+        self.rmhb_rate.zero_()
+        self.lmhb_rate.zero_()
         self.mhb_rate.zero_()
         self.disappointment.zero_()
         self.aversion_level.zero_()
         self.expected_reward = 0.0
         self.da_suppression = 0.0
         self.ht5_suppression = 0.0
+        self.ach_ipn_drive = 0.0
         self.frustration[:] = 0.0
         self.helplessness = 0.0
         self._switch_cooldown = 0

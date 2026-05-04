@@ -2228,6 +2228,126 @@ binocular approach gain (far 1.19 vs.\ close 0.58), food memory
 navigation, predator-overrides-food conflict resolution, BG gate motor
 suppression, and dead-fish motor arrest.
 
+% ------------------------------------------------------------------
+\subsection{Hierarchical Evaluation Framework}\label{sec:eval_platform}
+
+\paragraph{Motivation and design philosophy.}
+Traditional neural-circuit simulators validate correctness through unit tests
+that probe isolated components in isolation.
+However, a full-brain model spanning sensory transduction, motor execution,
+neuromodulation, and social behavior requires a fundamentally different
+paradigm: one in which every added module is subjected to a systematic,
+academically-grounded quality-assurance gate before integration.
+We draw an analogy to modern manufacturing quality-control pipelines,
+where each sub-assembly is tested against traceable specifications at the
+component level, the sub-system level, and the system level before the
+final product ships.
+The evaluation framework presented here embodies this philosophy for
+computational neuroscience: \emph{every brain module earns its place by
+passing published behavioral or physiological criteria, and downstream
+modules are only evaluated once their upstream dependencies are certified}.
+
+\paragraph{Five-tier hierarchy.}
+Evaluations are organized into five tiers of increasing biological
+abstraction (Table~\ref{tab:eval_tiers}).
+\textbf{Tier~1 (Neuron)} verifies single-cell dynamics: Izhikevich
+firing-pattern identity (RS, IB, FS, CH, LTS; Izhikevich 2003), E/I
+population balance within the $0.7$--$3.0$ ratio reported for cortical
+circuits \citep{okun2008}, and synaptic time-constant accuracy
+against experimental $\tau_E/\tau_I$ values.
+\textbf{Tier~2 (Circuit)} tests canonical computations within
+anatomically defined circuits: Reichardt-correlator direction selectivity
+in the retina \citep{borst2011}, OKR gain in the pretectum
+\citep{kubo2014}, prey-size tuning in the tectum
+\citep{delbene2010}, IO--PC climbing-fiber error signaling
+in the cerebellum \citep{ito2001}, habenula L/R asymmetric
+aversion drive \citep{amo2014}, D1/D2 basal-ganglia action gating
+\citep{grillner2005}, CPG left--right alternation \citep{kiehn2016},
+and pallium pattern-separation capacity.
+\textbf{Tier~3 (System)} evaluates multi-circuit interactions: OMR
+coherence, fear-conditioning acquisition and extinction, neuromodulatory
+cross-talk causality, and prey-capture sequence completion.
+\textbf{Tier~4 (Behavior)} measures closed-loop survival: 9-seed $\times$
+500-step survival fraction, foraging efficiency (items/episode), and
+exploration coverage entropy.
+\textbf{Tier~5 (Social)} assesses multi-agent phenomena: shoaling
+attraction within $3\sigma$, alarm-substance-evoked freezing, and
+conspecific individual recognition.
+
+\begin{table}[H]
+\centering
+\caption{Five-tier evaluation hierarchy. Each tier lists the number of
+registered plugins, the primary validation target, and the canonical
+zebrafish reference(s) cited by the pass criterion.}
+\label{tab:eval_tiers}
+\small
+\begin{tabular}{lllr}
+\toprule
+Tier & Label & Validation target & Plugins \\
+\midrule
+T1 & Neuron   & Cell-type firing patterns, E/I balance, synapse $\tau$ & 3 \\
+T2 & Circuit  & Canonical computations per anatomical circuit            & 8 \\
+T3 & System   & Multi-circuit integration and behavioral primitives      & 4 \\
+T4 & Behavior & Closed-loop survival, foraging, exploration              & 3 \\
+T5 & Social   & Shoaling, alarm response, individual recognition         & 3 \\
+\midrule
+   &          & \textbf{Total}                                           & \textbf{21} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Plugin architecture.}
+The evaluation system is implemented as a self-registering plugin
+platform (module \texttt{zebrav2/eval/}).
+Each evaluation unit is a Python class that inherits from
+\texttt{EvalPlugin} and declares four metadata fields:
+\texttt{tier} (T1--T5), \texttt{name} (unique identifier),
+\texttt{tags} (e.g., \texttt{["visual", "retinotopic"]}), and
+\texttt{requires} (list of upstream plugin names that must pass
+before this plugin executes).
+Decorating the class with \texttt{@register} causes it to be
+auto-instantiated and inserted into a global \texttt{EvalRegistry}
+singleton at import time, without any central registration list.
+The registry discovers all plugins by iterating the
+\texttt{plugins/} sub-package via \texttt{pkgutil.walk\_packages},
+making it trivially extensible: a researcher adds a single
+\texttt{.py} file and the new evaluation appears automatically in
+all reports and pipeline runs.
+
+\paragraph{Assembly-line pipeline with artifact passing.}
+The \texttt{Pipeline} class executes plugins in topologically sorted
+order derived from the \texttt{requires} dependency graph (Kahn's
+algorithm; cyclic dependencies raise an error at startup).
+A shared \texttt{EvalContext} object---analogous to a factory assembly
+tray---flows through every plugin.
+Each plugin reads previously computed artifacts (e.g., tectum rate
+tensors, neuromodulator time series) from \texttt{ctx.artifacts} and
+writes its own outputs back to the same store, enabling downstream
+plugins to reuse upstream computation without re-running the brain.
+Dependency gating is strict: if a required upstream plugin fails,
+all plugins that list it in \texttt{requires} are automatically
+\emph{skipped} rather than run against potentially invalid state,
+preventing cascading false-positive results.
+Each plugin returns a structured \texttt{EvalResult} dataclass
+containing the tier, name, pass/fail boolean, a quantitative metrics
+dictionary, pass criteria with comparison operators
+($>, \ge, <, \le, =$), optional figure handles, and a bibliographic
+reference field.
+
+\paragraph{Automated report generation.}
+After every pipeline run, \texttt{ReportBuilder} emits three artefacts:
+(i)~a machine-readable JSON summary (\texttt{eval\_report.json})
+indexing all 21 results with metrics and pass criteria;
+(ii)~per-tier PDF tables ranking modules by pass/fail status; and
+(iii)~a radar chart across all five tiers and a stacked bar chart
+showing pass/skip/fail breakdown, enabling at-a-glance health
+monitoring of the full model.
+The CLI entry point (\texttt{python -m zebrav2.eval}) supports
+\texttt{--tier}, \texttt{--tag}, and \texttt{--no-brain} flags for
+targeted partial runs (e.g., running only visual-circuit evaluations
+without loading a full checkpoint), ensuring that individual
+researchers can rapidly iterate on specific subsystems.
+
 \subsection{Software Platform}\label{sec:platform}
 
 The codebase is distributed as an installable Python package (\texttt{pip install vzebra})
@@ -3407,6 +3527,41 @@ The self-tuning neuron: synaptic scaling of excitatory synapses.
 Wilson, S.~W. (1991).
 The animat path to {AI}.
 In \textit{From Animals to Animats: Proceedings of the First International Conference on Simulation of Adaptive Behavior}, pages 15--21. MIT Press.
+
+\bibitem[Okun and Lampl, 2008]{okun2008}
+Okun, M. and Lampl, I. (2008).
+Instantaneous correlation of excitation and inhibition during ongoing and sensory-evoked activities.
+\textit{Nature Neuroscience}, 11(5):535--537.
+
+\bibitem[Borst and Euler, 2011]{borst2011}
+Borst, A. and Euler, T. (2011).
+Seeing things in motion: models, circuits, and mechanisms.
+\textit{Neuron}, 71(6):974--994.
+
+\bibitem[Kubo et~al., 2014]{kubo2014}
+Kubo, F., Hablitzel, B., Dal~Maschio, M., Driever, W., Baier, H., and Bhatt, D.~L. (2014).
+Functional architecture of an optic flow-responsive area that drives horizontal eye movements in zebrafish.
+\textit{Neuron}, 81(6):1344--1359.
+
+\bibitem[Del~Bene et~al., 2010]{delbene2010}
+Del~Bene, F., Wyart, C., Robles, E., Tran, A., Looger, L., Scott, E.~K., Isacoff, E.~Y., and Bhatt, D.~L. (2010).
+Filtering of visual information in the tectum by an identified neural circuit.
+\textit{Science}, 330(6004):669--673.
+
+\bibitem[Ito, 2001]{ito2001}
+Ito, M. (2001).
+Cerebellar long-term depression: characterization, signal transduction, and functional roles.
+\textit{Physiological Reviews}, 81(3):1143--1195.
+
+\bibitem[Grillner et~al., 2005]{grillner2005}
+Grillner, S., Hellgren, J., M{\'e}nard, A., Saitoh, K., and Wikstr{\"o}m, M.~A. (2005).
+Mechanisms for selection of basic motor programs -- roles for the striatum and pallidum.
+\textit{Trends in Neurosciences}, 28(7):364--370.
+
+\bibitem[Kiehn, 2016]{kiehn2016}
+Kiehn, O. (2016).
+Decoding the organization of spinal circuits that control locomotion.
+\textit{Nature Reviews Neuroscience}, 17(4):224--238.
 
 \end{thebibliography}
 \fi

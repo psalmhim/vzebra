@@ -115,31 +115,62 @@ class SpatialRegistry:
             return np.zeros(3), np.ones(3) * 20.0
         return pts.mean(axis=0), np.clip(pts.std(axis=0), 5.0, None)
 
-    def generate_positions(self, region_name, n_neurons, offset_um=None):
-        """Generate n positions as Gaussian cloud around atlas centroid.
+    def _atlas_jitter_sigma(self, atlas_pts: np.ndarray) -> float:
+        """Estimate jitter σ from median nearest-neighbour spacing (voxels).
 
-        Returns: (n_neurons, 3) tensor in microns.
+        The atlas only contains observed/segmented cells (~47K of ~100K real).
+        Jitter fills the gaps: σ ≈ half the typical inter-cell spacing so
+        interpolated positions stay within the real tissue volume.
+        """
+        if len(atlas_pts) < 2:
+            return 5.0
+        # Subsample for speed on large regions
+        pts = atlas_pts if len(atlas_pts) <= 500 else atlas_pts[
+            np.random.default_rng(0).choice(len(atlas_pts), 500, replace=False)]
+        # Pairwise distances (upper triangle)
+        diff = pts[:, None, :] - pts[None, :, :]          # (N, N, 3)
+        d = np.sqrt((diff ** 2).sum(-1))                   # (N, N)
+        np.fill_diagonal(d, np.inf)
+        nn_dist = d.min(axis=1).mean()                     # mean nearest-neighbour
+        return max(1.0, nn_dist * 0.5)                     # half-spacing as σ
+
+    def generate_positions(self, region_name, n_neurons, offset_um=None):
+        """Sample n neuron positions using the atlas as a spatial density prior.
+
+        The atlas is incomplete (only observed/segmented cells). Positions are
+        drawn by sampling atlas cells with replacement and adding Gaussian jitter
+        scaled to half the local inter-cell spacing. This interpolates through
+        unobserved gaps while preserving the real volumetric distribution.
+        Atlas coordinates are in voxels ≈ 1 μm/voxel.
+
+        Returns: (n_neurons, 3) tensor in atlas voxel units (~μm).
         """
         labels = self.label_map.get(region_name)
         if labels is None:
-            # Fallback: place near origin with small spread
             pos = np.random.randn(n_neurons, 3).astype(np.float32) * 20.0
             return torch.tensor(pos, device=self.device)
 
-        centroid, spread = self._get_region_stats(labels)
-        # Scale spread for smaller regions
-        scale = min(1.0, max(0.3, n_neurons / 300))
-        pos = np.random.default_rng(hash(region_name) % 2**32).normal(
-            loc=centroid,
-            scale=spread * scale,
-            size=(n_neurons, 3)
-        ).astype(np.float32)
+        self._load_atlas()
+        mask = np.isin(self._atlas_labels, labels)
+        atlas_pts = self._atlas_xyz[mask]
+
+        rng = np.random.default_rng(hash(region_name) % 2**32)
+        if len(atlas_pts) == 0:
+            centroid, spread = self._get_region_stats(labels)
+            pos = rng.normal(loc=centroid, scale=spread,
+                             size=(n_neurons, 3)).astype(np.float32)
+        else:
+            sigma = self._atlas_jitter_sigma(atlas_pts)
+            idx = rng.choice(len(atlas_pts), n_neurons, replace=True)
+            jitter = rng.normal(0, sigma, (n_neurons, 3)).astype(np.float32)
+            pos = atlas_pts[idx] + jitter
 
         if offset_um is not None:
             pos += np.array(offset_um, dtype=np.float32)
 
-        self._region_positions[region_name] = torch.tensor(pos, device=self.device)
-        return self._region_positions[region_name]
+        result = torch.tensor(pos, device=self.device)
+        self._region_positions[region_name] = result
+        return result
 
     def distance_matrix(self, region_a, region_b):
         """Compute pairwise Euclidean distance matrix (um) between two regions.
@@ -195,7 +226,11 @@ class SpatialRegistry:
         """Assign spatial positions to all regions of a ZebrafishBrainV2.
 
         Stores positions as .spatial_pos attribute on each module.
+        After position assignment, re-initialises all EILayer intra-layer
+        synapses with distance-dependent connectivity (λ from PNAS paper) and
+        applies retinotopic weighting to retina→tectum projection weights.
         """
+        from zebrav2.brain.connectome import get_region_lambda
         mappings = {
             # key: (atlas_region_name, n_neurons, offset_um)
             # -- Retinae (anterior, bilaterally separated) --
@@ -264,6 +299,61 @@ class SpatialRegistry:
                     break
             if obj is not None:
                 obj.spatial_pos = pos
+
+        # ── Distance-dependent EILayer intra-layer connectivity ──────────────
+        # Calls init_distance() on every EILayer to replace flat random
+        # init_sparse with distance-weighted connectivity (λ from PNAS paper).
+        ei_layers = [
+            # Tectum (λ=80 μm, Mes)
+            ('tectum.sfgs_b_L', 'tectum', brain.tectum.sfgs_b_L),
+            ('tectum.sfgs_d_L', 'tectum', brain.tectum.sfgs_d_L),
+            ('tectum.sgc_L',    'tectum', brain.tectum.sgc_L),
+            ('tectum.so_L',     'tectum', brain.tectum.so_L),
+            ('tectum.sfgs_b_R', 'tectum', brain.tectum.sfgs_b_R),
+            ('tectum.sfgs_d_R', 'tectum', brain.tectum.sfgs_d_R),
+            ('tectum.sgc_R',    'tectum', brain.tectum.sgc_R),
+            ('tectum.so_R',     'tectum', brain.tectum.so_R),
+            # Pallium (λ=120 μm, Tel sparse-modular)
+            ('pallium.pal_s', 'pallium', brain.pallium.pal_s),
+            ('pallium.pal_d', 'pallium', brain.pallium.pal_d),
+        ]
+        for pos_key, region_name, layer in ei_layers:
+            pos_all = self._region_positions.get(pos_key)
+            if pos_all is None or not hasattr(layer, 'init_distance'):
+                continue
+            lam = get_region_lambda(region_name)
+            n_e = layer.n_e
+            pos_e = pos_all[:n_e]
+            pos_i = pos_all[n_e:n_e + layer.n_i]
+            if len(pos_i) == 0:
+                pos_i = pos_e  # fallback for tiny layers
+            layer.init_distance(pos_e, pos_i, lam)
+
+        # ── Retinotopic weighting: retina → tectum ON/OFF projections ────────
+        # Topographic mapping preserves spatial order along nasal-temporal axis
+        # (axis=1 = y, which separates left/right retinal fields).
+        # W_on  → SFGS-b (broad); W_off → SFGS-d (deep) — different n_e, so
+        # the topo mask is resized separately for each weight matrix.
+        for ret_key, tec_key, W_on, W_off in [
+            ('retina_R', 'tectum.sfgs_b_L', brain.tectum.W_on_L, brain.tectum.W_off_L),
+            ('retina_L', 'tectum.sfgs_b_R', brain.tectum.W_on_R, brain.tectum.W_off_R),
+        ]:
+            topo = self.topographic_weight(ret_key, tec_key, src_axis=1, tgt_axis=1)
+            if topo is None:
+                continue
+            # topo: (n_ret_full, n_tec_all); topo_T: (n_tec_all, n_ret_full)
+            topo_T = topo.T.float()
+            with torch.no_grad():
+                for W in (W_on, W_off):
+                    w_shape = W.weight.shape  # (n_tec_e, N_RET_PER_TYPE)
+                    if topo_T.shape != w_shape:
+                        t = torch.nn.functional.interpolate(
+                            topo_T.unsqueeze(0).unsqueeze(0),
+                            size=w_shape, mode='bilinear', align_corners=False
+                        ).squeeze(0).squeeze(0)
+                    else:
+                        t = topo_T
+                    W.weight.data.mul_(t)
 
     def apply_distance_weights(self, weight_matrix, region_a, region_b,
                                 lambda_um=100.0, strength=0.5):

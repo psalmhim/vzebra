@@ -45,8 +45,8 @@ class SpikingPretectum(nn.Module):
         # predominantly excitatory in zebrafish, inhibition is inter-hemispheric)
         self.L = IzhikevichLayer(n_per_side, 'RS', device)  # left pretectum
         self.R = IzhikevichLayer(n_per_side, 'RS', device)  # right pretectum
-        self.L.i_tonic.fill_(-1.5)
-        self.R.i_tonic.fill_(-1.5)
+        # No tonic inhibition: baseline drive (3 pA) stays below RS threshold
+        # (~5 pA). The DS signal (gain=100) pushes the driven side above threshold.
 
         # State buffers
         self.register_buffer('rate_L', torch.zeros(n_per_side, device=device))
@@ -90,10 +90,11 @@ class SpikingPretectum(nn.Module):
         retinal_slip = (ds_R - ds_L) - eye_velocity * 0.5
 
         # Drive pretectal populations (contralateral: R retina → L pretectum)
-        # Both populations receive baseline + slip-proportional drive
-        I_L = torch.full((self.n_per_side,), 3.0 + ds_R * 15.0,
+        # Baseline 3 pA < threshold (~5 pA); DS gain=100 pushes stimulated side
+        # over threshold (ds≈0.02 → +2 pA → net 5 pA → fires).
+        I_L = torch.full((self.n_per_side,), 3.0 + ds_R * 100.0,
                          device=self.device)
-        I_R = torch.full((self.n_per_side,), 3.0 + ds_L * 15.0,
+        I_R = torch.full((self.n_per_side,), 3.0 + ds_L * 100.0,
                          device=self.device)
 
         # Run spiking dynamics (20 substeps, same as habenula)

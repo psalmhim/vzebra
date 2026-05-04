@@ -159,10 +159,16 @@ class RetinaV2(nn.Module):
         loom_rate   = loom_signal.expand(self.n_loom)  # (100,)
 
         # ---- Direction-selective: Reichardt correlator ----------------------
-        # Use the PREVIOUS frame (delay_buf) to correlate with current
-        ds_raw  = torch.clamp(intensity * delay_buf, 0.0, 1.0)          # (400,)
+        # Rightward detector: I(k,t) × I(k-1, t-1)  — pattern moved right
+        # Leftward  detector: I(k,t) × I(k+1, t-1)  — pattern moved left
+        # Net (positive = rightward, negative = leftward):
+        #   ds_net(k) = I(k) × prev(k-1) − I(k) × prev(k+1)
+        # Zero-padded at boundaries (no wraparound — retina is a strip).
+        prev_r = F.pad(delay_buf[1:],  (0, 1), 'constant', 0.0)  # prev shifted ←
+        prev_l = F.pad(delay_buf[:-1], (1, 0), 'constant', 0.0)  # prev shifted →
+        ds_raw  = (intensity * prev_r).clamp(0, 1) - (intensity * prev_l).clamp(0, 1)
         ds_rate = F.adaptive_avg_pool1d(
-            ds_raw.unsqueeze(0).unsqueeze(0), self.n_ds).squeeze()       # (100,)
+            ds_raw.clamp(-1, 1).unsqueeze(0).unsqueeze(0), self.n_ds).squeeze()
         # delay_buf is updated by caller AFTER this call (correct 1-step lag)
 
         # ---- UV prey detection (UV cones ~360 nm) ---------------------------

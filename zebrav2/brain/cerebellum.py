@@ -18,12 +18,13 @@ from zebrav2.brain.neurons import IzhikevichLayer
 
 
 class SpikingCerebellum(nn.Module):
-    def __init__(self, n_gc=200, n_pc=50, n_dcn=20, n_mossy=128, device=DEVICE):
+    def __init__(self, n_gc=200, n_pc=50, n_dcn=20, n_mossy=128, n_io=8, device=DEVICE):
         super().__init__()
         self.device = device
         self.n_gc = n_gc
         self.n_pc = n_pc
         self.n_dcn = n_dcn
+        self.n_io = n_io
 
         # Neuron populations
         self.GC = IzhikevichLayer(n_gc, 'RS', device)
@@ -55,6 +56,19 @@ class SpikingCerebellum(nn.Module):
         nn.init.xavier_uniform_(self.W_mf_dcn.weight, gain=0.3)
         self.W_mf_dcn.to(device)
 
+        # IO → PC topographic climbing fiber projection (1:1 mapping via interpolation)
+        # Each IO neuron drives its topographically corresponding PC population.
+        # Gaussian neighbourhood kernel: PC_i gets strongest drive from IO_j nearest in rank.
+        self.W_io_pc = nn.Linear(n_io, n_pc, bias=False)
+        with torch.no_grad():
+            i_idx = torch.arange(n_pc, dtype=torch.float32, device=device) / max(n_pc - 1, 1)
+            j_idx = torch.arange(n_io, dtype=torch.float32, device=device) / max(n_io - 1, 1)
+            sigma = 2.0 / n_pc  # narrow Gaussian → near-1:1 mapping
+            topo = torch.exp(-((i_idx.unsqueeze(1) - j_idx.unsqueeze(0)) ** 2) / (2 * sigma ** 2))
+            topo = topo / (topo.sum(dim=1, keepdim=True) + 1e-8)
+            self.W_io_pc.weight.copy_(topo)
+        self.W_io_pc.to(device)
+
         # State
         self.register_buffer('gc_rate', torch.zeros(n_gc, device=device))
         self.register_buffer('pc_rate', torch.zeros(n_pc, device=device))
@@ -65,11 +79,14 @@ class SpikingCerebellum(nn.Module):
         self.register_buffer('pf_elig', torch.zeros(n_pc, n_gc, device=device))
 
     @torch.no_grad()
-    def forward(self, mossy_input: torch.Tensor, climbing_fiber: float,
+    def forward(self, mossy_input: torch.Tensor,
+                climbing_fiber: float = 0.0,
+                climbing_fiber_rate: torch.Tensor = None,
                 DA: float = 0.5) -> dict:
         """
         mossy_input: (n_mossy,) sensory/motor context (tectum SFGS-b rates)
-        climbing_fiber: scalar error signal (pallium prediction error magnitude)
+        climbing_fiber: scalar fallback error (used only if climbing_fiber_rate is None)
+        climbing_fiber_rate: (n_io,) per-IO firing rate — projected 1:1 to PCs via W_io_pc
         DA: dopamine level for gating plasticity
         Returns: prediction error, DCN output rate
         """
@@ -98,9 +115,12 @@ class SpikingCerebellum(nn.Module):
             sp_gc = self.GC(I_mf_gc + torch.randn(self.n_gc, device=self.device) * 0.5)
             gc_spikes += sp_gc
 
-            # PC: parallel fiber (GC→PC) + climbing fiber error
+            # PC: parallel fiber (GC→PC) + per-PC climbing fiber (topographic IO→PC)
             I_pf = self.W_pf @ self.GC.rate * 15.0
-            I_cf = climbing_fiber * 5.0  # climbing fiber burst
+            if climbing_fiber_rate is not None:
+                I_cf = self.W_io_pc(climbing_fiber_rate) * 5.0  # (n_pc,) per-PC
+            else:
+                I_cf = torch.full((self.n_pc,), climbing_fiber * 5.0, device=self.device)
             sp_pc = self.PC(I_pf + I_cf)
             pc_spikes += sp_pc
 
@@ -116,20 +136,21 @@ class SpikingCerebellum(nn.Module):
 
         # Parallel fiber LTD: CF-driven depression at active GC→PC synapses
         # Biological rule: when CF fires AND GC was active, weaken PF synapse
-        if climbing_fiber > 0.1:
+        _cf_scalar = float(climbing_fiber_rate.mean()) if climbing_fiber_rate is not None else climbing_fiber
+        if _cf_scalar > 0.1:
             gc_active = (gc_spikes > 0).float()
             pc_active = (pc_spikes > 0).float()
             # Update eligibility
             self.pf_elig = 0.9 * self.pf_elig + torch.outer(pc_active, gc_active)
             # LTD: reduce PF weights where both CF and GC were active
-            ltd = -0.002 * climbing_fiber * DA * self.pf_elig
+            ltd = -0.002 * _cf_scalar * DA * self.pf_elig
             self.W_pf.data.add_(ltd)
             self.W_pf.data.clamp_(0.01, 1.0)
         else:
             self.pf_elig *= 0.95  # decay eligibility
 
         # Prediction error = how much CF had to correct
-        self.prediction_error.fill_(climbing_fiber)
+        self.prediction_error.fill_(_cf_scalar)
 
         gc_frac = float((gc_spikes > 0).float().mean())
         return {

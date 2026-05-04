@@ -130,6 +130,7 @@ class SpikingInferiorOlive(nn.Module):
             'precision': self.precision,
             'free_energy': self.free_energy,
             'rate': float(self.rate.mean()),
+            'rate_vec': self.rate,  # (n_io,) tensor for 1:1 PC projection
         }
 
     def reset(self):
