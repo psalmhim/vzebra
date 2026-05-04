@@ -1151,6 +1151,50 @@ $\Delta$ & $-0.40$ & $0$ & $-0.025$ ($-78\%$) \\
 \end{tabular}
 \end{table}
 
+\paragraph{Mauthner cell and C-start escape reflex.}
+
+Two Mauthner cells ($\text{M}_L$, $\text{M}_R$, one per hemisphere) are modelled
+as RS-type Izhikevich neurons with a tonic bias $I_\text{tonic} = -3.0$\,pA,
+placing them well below firing threshold and requiring at least 25\,pA of net
+excitatory input to spike.  Two commissural local (CoLo) interneurons per side
+complete the inhibitory feedback circuit; these are fast-spiking (FS-type),
+glycinergic, and monosynaptically excited by the ipsilateral M-cell.
+
+Visual drive arrives via the crossed tectobulbar tract: superficial grey cell
+(SGC) activity in the contralateral optic tectum is scaled by 120\,pA and
+summed onto the M-cell \citep{delbene2010}.  Acoustic and flow pressure
+detected by the ipsilateral lateral-line neuromasts is conveyed via VIII-nerve
+club-end synapses onto the M-cell at 80\,pA \citep{pereda2011}.  Both pathways
+are summed with the resting bias to give the total driving current
+$I_\text{M} = -3.0 + 120\,\bar{r}_\text{SGC}^\text{contra} +
+80\,P_\text{LL}^\text{ipsi}$, where $\bar{r}_\text{SGC}^\text{contra}$ is the
+mean SGC firing rate and $P_\text{LL}^\text{ipsi}$ is the normalised
+lateral-line pressure signal.
+
+Repeated sub-threshold stimuli lower the effective threshold through an
+electrical gap-junction facilitation mechanism.  A scalar state variable
+$g_\text{gap}$ accumulates whenever $I_\text{M} > -3.0$ but remains below
+spike threshold, and decays with time constant $\tau_\text{gap} = 8$ steps:
+\begin{equation}\label{eq:gap}
+  g_\text{gap}(t{+}1) = \lambda_\text{gap}\,g_\text{gap}(t)
+    + (1 - \lambda_\text{gap})\,
+      \mathbf{1}[{-3.0 < I_\text{M} < \theta_\text{M}}],
+  \quad \lambda_\text{gap} = 1 - 1/\tau_\text{gap}.
+\end{equation}
+The accumulated facilitation reduces the effective threshold by
+$\Delta\theta = 4\,g_\text{gap}$, so sustained near-threshold bombardment
+can recruit the M-cell even if no single stimulus is individually sufficient.
+
+When $\text{M}_L$ spikes, its ipsilateral CoLo cells fire in the same step
+and deliver a crossed glycinergic inhibitory current of $-60$\,pA to
+$\text{M}_R$, cross-suppressing the contralateral M-cell for 20 steps and
+enforcing the unidirectionality of the C-start \citep{kornfaber1975}.
+This circuitry supersedes the prior looming-threshold heuristic in the
+\texttt{ReticulospinalSystem}: the spiking M-cell output now provides the
+authoritative trigger for high-speed escape, and the heuristic pathway
+is activated only as a fallback when both M-cells are in their refractory
+period.
+
 \paragraph{Mauthner C-Start and T-Start Escape Circuits}
 
 Separate left and right Mauthner cells ($\text{M}_L$, $\text{M}_R$)
@@ -3562,6 +3606,16 @@ Mechanisms for selection of basic motor programs -- roles for the striatum and p
 Kiehn, O. (2016).
 Decoding the organization of spinal circuits that control locomotion.
 \textit{Nature Reviews Neuroscience}, 17(4):224--238.
+
+\bibitem[Korn and Faber, 1975]{kornfaber1975}
+Korn, H. and Faber, D.~S. (1975).
+An electrically mediated inhibition in goldfish medulla.
+\textit{Journal of Neurophysiology}, 38(2):452--471.
+
+\bibitem[Pereda and Faber, 2011]{pereda2011}
+Pereda, A.~E. and Faber, D.~S. (2011).
+Activity-dependent short-term enhancement of intercellular coupling.
+\textit{Journal of Neuroscience}, 16(3):983--992.
 
 \end{thebibliography}
 \fi
