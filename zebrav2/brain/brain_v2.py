@@ -62,6 +62,7 @@ from zebrav2.brain.mauthner import SpikingMauthner
 from zebrav2.brain.ipn import SpikingIPN
 from zebrav2.brain.raphe import SpikingRaphe
 from zebrav2.brain.locus_coeruleus import SpikingLocusCoeruleus
+from zebrav2.brain.vta import SpikingVTA
 from zebrav2.brain.habituation import SynapticDepression
 from zebrav2.brain.pectoral_fin import PectoralFinMotor
 from zebrav2.brain.nociception import SpikingNociception
@@ -239,6 +240,8 @@ class ZebrafishBrainV2(nn.Module):
         self.raphe = SpikingRaphe(device=device)
         # Spiking locus coeruleus: population-coded NA (overrides scalar neuromod.NA)
         self.lc = SpikingLocusCoeruleus(device=device)
+        # Spiking VTA/SNpc: population-coded DA (overrides scalar neuromod.DA)
+        self.vta = SpikingVTA(device=device)
         # Pectoral fin motor neurons: slow-turn kinematics (non-flee)
         self.pectoral_fin = PectoralFinMotor(device=device)
         # Senses added for biological completeness
@@ -1369,6 +1372,21 @@ class ZebrafishBrainV2(nn.Module):
             lc_out = {'na_level': self.neuromod.NA.item(), 'phasic': False,
                       'lc_rate': 0.0, 'wake_gate': 1.0, 'attention': 0.5}
 
+        # ── Spiking VTA/SNpc: override scalar DA with population-coded output ──
+        if self._active('vta'):
+            _nm_rpe = nm.get('RPE', 0.0)
+            vta_out = self.vta(
+                rpe=_nm_rpe,
+                lhb_rate=hab_out.get('lhb_rate', 0.0),
+                amygdala_stress=self.amygdala_alpha,
+                hpa_suppression=float(self.hpa.da_suppression()),
+                ipn_da_feedback=ipn_out.get('da_feedback', 0.0))
+            self.neuromod.DA.fill_(vta_out['da_level'])
+            self.neuromod.DA.clamp_(0.0, 1.0)
+        else:
+            vta_out = {'da_level': self.neuromod.DA.item(), 'phasic': False,
+                       'da_rate': torch.zeros(1, device=self.device), 'rpe_ema': 0.0}
+
         # ── Perturbation: apply drug multipliers to neuromodulators ──
         if self._perturbations is not None:
             _mults = self._perturbations.get_neuromod_multipliers()
@@ -1783,6 +1801,10 @@ class ZebrafishBrainV2(nn.Module):
             'lc_na': lc_out['na_level'],
             'lc_phasic': lc_out['phasic'],
             'lc_attention': lc_out.get('attention', 0.5),
+            # Spiking VTA (DA)
+            'vta_da': vta_out['da_level'],
+            'vta_phasic': vta_out['phasic'],
+            'vta_rpe_ema': vta_out['rpe_ema'],
             # Pectoral fin
             'pect_fin_turn': pect_out['fin_turn'],
             'pect_fin_active': pect_out['active'],
@@ -1960,6 +1982,7 @@ class ZebrafishBrainV2(nn.Module):
         self.ipn.reset()
         self.raphe.reset()
         self.lc.reset()
+        self.vta.reset()
         self.pectoral_fin.reset()
         self.predictive.reset()
         self.critic.reset()

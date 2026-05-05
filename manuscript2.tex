@@ -1440,6 +1440,37 @@ The dopamine level $\text{DA}(t) = \sigma(\beta_\text{DA} \cdot
 leak rate, thalamic gain, and precision sensitivity
 \citep{schultz1997}.
 
+\paragraph{Spiking VTA / Posterior Tuberculum}
+
+The posterior tuberculum (PT) is the teleost homologue of the mammalian
+VTA/SNpc, housing $\sim$40 dopaminergic (TH$^+$) neurons per hemisphere
+that project to pallium, striatum, tectum, and habenula
+\citep{rinkwullimann2001,kastenhuber2010}.
+We replace the scalar DA EMA with a population-coded spiking module
+(\texttt{SpikingVTA}): 40 regular-spiking Izhikevich neurons with tonic
+drive $I_\text{tonic} = 6.0$\,pA that sustains a $\sim$3--5\,Hz
+spontaneous baseline corresponding to $\text{DA} \approx 0.5$.
+
+Reward prediction error drives two opponent currents:
+\begin{equation}\label{eq:vta_drive}
+  I_\text{VTA}(t) =
+    \underbrace{40\,[\text{RPE}]^+}_{\text{phasic burst}}
+  + \underbrace{30\,[\text{RPE}]^-}_{\text{omission pause}}
+  - 35\,r_\text{LHb}
+  - 10\,\alpha_\text{stress},
+\end{equation}
+where $[\cdot]^{\pm}$ denote rectified positive/negative components,
+$r_\text{LHb}$ is the lateral habenula mean firing rate (disappointment
+signal, GABAergic suppression \citep{matsumoto2007}),
+and $\alpha_\text{stress}$ is amygdala chronic stress.
+Population mean rate is linearly mapped to the DA output:
+$\text{DA} = \text{clamp}(0.4 + 10\,\bar{r}_\text{DA},\,0,1)$,
+then multiplied by the HPA cortisol suppression factor
+$\eta_\text{HPA} \in [0,1]$ (anhedonia under chronic stress).
+The spiking VTA overrides the scalar DA computation whenever the module
+is active, preserving full backward compatibility via the shared
+\texttt{neuromod.DA} buffer.
+
 \paragraph{Amygdala Fear Circuit}
 
 A persistent threat arousal signal $\alpha \in [0,1]$ integrates
@@ -3616,6 +3647,24 @@ An electrically mediated inhibition in goldfish medulla.
 Pereda, A.~E. and Faber, D.~S. (2011).
 Activity-dependent short-term enhancement of intercellular coupling.
 \textit{Journal of Neuroscience}, 16(3):983--992.
+
+\bibitem[Rink and Wullimann, 2001]{rinkwullimann2001}
+Rink, E. and Wullimann, M.~F. (2001).
+The teleostean (zebrafish) dopaminergic system ascending to the subpallium
+(striatum) is located in the basal diencephalon (posterior tuberculum).
+\textit{Brain Research}, 889(1--2):316--330.
+
+\bibitem[Kastenhuber et al., 2010]{kastenhuber2010}
+Kastenhuber, E., Kratochwil, C.~F., Richter, J.~F., Bhatt, D.~L., and
+Bhatt, D.~L. (2010).
+Genetic dissection of dopaminergic and noradrenergic contributions to
+catecholaminergic tracts in early zebrafish brain development.
+\textit{Journal of Comparative Neurology}, 518(1):116--138.
+
+\bibitem[Matsumoto and Hikosaka, 2007]{matsumoto2007}
+Matsumoto, M. and Hikosaka, O. (2007).
+Lateral habenula as a source of negative reward signals in dopamine neurons.
+\textit{Nature}, 447(7148):1111--1115.
 
 \end{thebibliography}
 \fi

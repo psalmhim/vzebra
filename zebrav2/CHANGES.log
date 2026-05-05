@@ -220,3 +220,39 @@
   FEAT: Added \paragraph{Mauthner cell and C-start escape reflex}
   - Located in §Motor Control; describes M-cell + CoLo spiking circuit
   - New bibitems: pereda2011 (club endings), kornfaber1975 (CoLo inhibition)
+
+# ── 2026-05-04 (Spiking VTA / Posterior Tuberculum) ─────────────────────────
+
+[2026-05-04] zebrav2/brain/vta.py
+  NEW: Spiking VTA / posterior tuberculum — population-coded DA source
+  - 40 RS-type Izhikevich neurons; i_tonic=6.0 pA → baseline DA ≈ 0.5
+  - RPE phasic burst: +40 pA; reward omission pause: −30 pA (GABA)
+  - LHb GABA-mediated suppression: −35 pA × lhb_rate (Matsumoto & Hikosaka 2007)
+  - Amygdala chronic stress: −10 pA × amygdala_stress
+  - IPN aversion feedback: 15 pA × ipn_da_feedback
+  - Scale formula: da_raw = 0.4 + 10.0 × mean_rate (calibrated: baseline=0.492)
+  - HPA cortisol suppression: da_raw *= hpa_suppression
+  - phasic flag: rpe > 0.15 and I_rpe_phasic > 5.0
+  - 20-substep spiking loop, noise σ=0.8 pA
+  - References: Schultz et al. 1997; Rink & Wullimann 2001; Kastenhuber et al. 2010
+
+[2026-05-04] zebrav2/brain/brain_v2.py
+  FEAT: Wire SpikingVTA into neuromod pipeline
+  - Import + instantiate self.vta = SpikingVTA(device)
+  - VTA block runs after raphe/LC; reads nm['RPE'], hab_out['lhb_rate'],
+    amygdala_alpha, hpa.da_suppression(), ipn_out['da_feedback']
+  - Overrides neuromod.DA buffer (clamped 0–1)
+  - Output keys: vta_da, vta_phasic, vta_rpe_ema
+  - reset(): self.vta.reset()
+
+[2026-05-04] zebrav2/eval/plugins/t2_vta.py
+  NEW: T2 VTA eval plugin — 6/6 metrics PASS
+  - baseline_da=0.492 (>0.3), da_reward=1.0 (>0.6), da_omission=0.40 (<0.5)
+  - reward_vs_base=0.508 (>0.1), lhb_suppression=0.101 (>0.0), phasic=True
+  - Reference: Schultz et al. 1997; Kastenhuber et al. 2010
+
+[2026-05-04] manuscript2.tex
+  FEAT: Added \paragraph{Spiking VTA / Posterior Tuberculum} in §Neuromodulation
+  - Describes 40 RS-type PT neurons, RPE opponent currents (Eq. vta_drive)
+  - LHb GABA suppression, HPA anhedonia, neuromod.DA override
+  - New bibitems: rinkwullimann2001, kastenhuber2010, matsumoto2007
