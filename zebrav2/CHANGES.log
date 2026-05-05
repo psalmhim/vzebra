@@ -317,7 +317,8 @@
   - Reference: Miller & Gerlai 2011; Tunstrom et al. 2013
 
 [2026-05-06] zebrav2/brain/retina.py
-  FIX: adaptive_avg_pool1d CPU fallback for MPS device
-  - Apple Silicon (MPS) does not support non-divisible input/output sizes
-  - Both on_rate and off_rate pooling transferred to CPU if on MPS
-  - Unblocks retraining on Apple Silicon hardware
+  FIX: Replace adaptive_avg_pool1d with F.interpolate for MPS compatibility
+  - Root cause: 400→1000 RGC mapping is upsampling, not downsampling; MPS rejects
+    adaptive_avg_pool1d with non-divisible input/output sizes (400÷1000 = 0.4)
+  - Fix: F.interpolate(mode='linear', align_corners=False) for ON and OFF pathways
+  - CPU fallback removed (was ~45-103 min/round); MPS-native upsampling restores ~3 min/round
