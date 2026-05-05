@@ -107,8 +107,12 @@ class CheckpointManager:
         _load_compatible(brain.pallium, ckpt['pallium_state'])
         brain.habit.load_state_dict(ckpt['habit_state'])
 
-        brain.cerebellum.W_pf.data = torch.tensor(
-            ckpt['cerebellum_W_pf'], device=brain.device, dtype=torch.float32)
+        _wpf = torch.tensor(ckpt['cerebellum_W_pf'], device=brain.device, dtype=torch.float32)
+        if _wpf.shape == brain.cerebellum.W_pf.shape:
+            brain.cerebellum.W_pf.data = _wpf
+        else:
+            print(f'  cerebellum W_pf: shape mismatch {_wpf.shape} vs '
+                  f'{brain.cerebellum.W_pf.shape} — keeping fresh')
         brain.amygdala.W_la_cea.copy_(torch.tensor(
             ckpt['amygdala_W_la_cea'], device=brain.device, dtype=torch.float32))
         brain.amygdala.fear_baseline = ckpt['amygdala_fear_baseline']
@@ -124,10 +128,10 @@ class CheckpointManager:
         brain.geo_model.risk_score = np.array(ckpt['geo_risk'], dtype=np.float32)
         brain.geo_model.visit_count = np.array(ckpt['geo_visits'], dtype=np.float32)
 
-        brain.vae.pool.load_state_dict(ckpt['vae_pool'])
-        brain.vae.encoder.load_state_dict(ckpt['vae_encoder'])
-        brain.vae.decoder.load_state_dict(ckpt['vae_decoder'])
-        brain.vae.transition.load_state_dict(ckpt['vae_transition'])
+        _load_compatible(brain.vae.pool,       ckpt['vae_pool'])
+        _load_compatible(brain.vae.encoder,    ckpt['vae_encoder'])
+        _load_compatible(brain.vae.decoder,    ckpt['vae_decoder'])
+        _load_compatible(brain.vae.transition, ckpt['vae_transition'])
         n = ckpt['vae_memory_n']
         brain.vae.memory.centroids[:n] = np.array(ckpt['vae_memory_centroids'])
         brain.vae.memory.food_rate[:n] = np.array(ckpt['vae_memory_food'])
