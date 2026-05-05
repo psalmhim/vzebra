@@ -1471,6 +1471,54 @@ The spiking VTA overrides the scalar DA computation whenever the module
 is active, preserving full backward compatibility via the shared
 \texttt{neuromod.DA} buffer.
 
+\paragraph{Spiking Dorsal Raphe (5-HT)}
+
+The zebrafish dorsal raphe (DR) contains $\sim$30 serotonergic (TH$^-$/TPH$^+$)
+neurons projecting broadly to tectum, pallium, basal ganglia, and hypothalamus,
+with a smaller median raphe (MR, $\sim$10 neurons) modulating place-cell
+theta encoding \citep{lillesaar2011,yokogawa2012}.
+\texttt{SpikingRaphe} models both subpopulations as RS-type Izhikevich neurons.
+The net synaptic drive is
+\begin{equation}\label{eq:raphe_drive}
+  I_\text{DR}(t) = 3 + 5\,\phi_\text{circ}
+                 + 12\,r_\text{IPN}
+                 - 15\,r_\text{LHb}
+                 - 8\,\alpha_\text{stress}
+                 - 3\,\mathbb{1}[\text{flee}],
+\end{equation}
+where $\phi_\text{circ} \in [0.3,1.0]$ is the circadian activity drive,
+$r_\text{IPN}$ is the excitatory IPN relay, $r_\text{LHb}$ is the habenular
+disappointment signal (Tye et al.\ 2012 LHb→DRN GABA circuit), and
+$\mathbb{1}[\text{flee}]$ suppresses 5-HT during escape to allow rapid
+threat response.
+Population mean rate is converted to 5-HT level via
+$\text{HT5} = \text{clamp}(8\,\bar{r}_\text{DR},\,0,1)$
+with a 10-step EMA ($\tau \approx 0.9$).
+High 5-HT increases behavioral patience and reduces sensory gain
+(downstream effects: $\text{gain} = 1 - 0.3\,\text{HT5}$).
+
+\paragraph{Spiking Locus Coeruleus (NA)}
+
+The zebrafish locus coeruleus is a small bilateral nucleus ($\sim$10 neurons/side)
+in the posterior hindbrain projecting diffusely to thalamus, pallium, and amygdala
+\citep{astonjones2005,singh2015}.
+\texttt{SpikingLocusCoeruleus} implements the tonic/phasic dual-mode framework
+of Aston-Jones \& Cohen (2005): tonic drive sustains baseline vigilance
+($I_\text{tonic} = 2 + 3\phi_\text{circ} + 5\,a_\text{insula}$),
+while amygdala threat above a threshold $\theta_\text{LC} = 0.3$ injects a
+phasic current burst ($I_\text{phasic} = 15$\,pA, 5-step refractory period):
+\begin{equation}\label{eq:lc_phasic}
+  I_\text{LC}(t) = I_\text{tonic}(t)
+    + 15\,\mathbb{1}\!\left[\alpha > \theta_\text{LC},\;
+      k_\text{refrac}=0\right].
+\end{equation}
+NA level is derived from population rate via
+$\text{NA} = \text{clamp}(6\,\bar{r}_\text{LC},\,0,1)$
+with an 85-step EMA.
+Downstream effects: thalamic wake/gate $= \min(1, 2\,\text{NA})$;
+pallium signal-to-noise boost $= \min(1, 1.5\,\text{NA})$;
+phasic flag stored for amygdala LTP gating.
+
 \paragraph{Amygdala Fear Circuit}
 
 A persistent threat arousal signal $\alpha \in [0,1]$ integrates
@@ -3665,6 +3713,27 @@ catecholaminergic tracts in early zebrafish brain development.
 Matsumoto, M. and Hikosaka, O. (2007).
 Lateral habenula as a source of negative reward signals in dopamine neurons.
 \textit{Nature}, 447(7148):1111--1115.
+
+\bibitem[Lillesaar, 2011]{lillesaar2011}
+Lillesaar, C. (2011).
+The serotonergic system in fish.
+\textit{Journal of Chemical Neuroanatomy}, 41(4):294--308.
+
+\bibitem[Yokogawa et~al., 2012]{yokogawa2012}
+Yokogawa, T., Hannan, M.~C., and Bhatt, D.~L. (2012).
+The dorsal raphe modulates sensory responsiveness during arousal in zebrafish.
+\textit{Journal of Neuroscience}, 32(43):15205--15215.
+
+\bibitem[Aston-Jones and Cohen, 2005]{astonjones2005}
+Aston-Jones, G. and Cohen, J.~D. (2005).
+An integrative theory of locus coeruleus-norepinephrine function:
+adaptive gain and optimal performance.
+\textit{Annual Review of Neuroscience}, 28:403--450.
+
+\bibitem[Singh et~al., 2015]{singh2015}
+Singh, A.~P., Mueller, T., and Bhatt, D.~L. (2015).
+Noradrenergic modulation of brain-wide network dynamics in zebrafish.
+\textit{Current Biology}, 25(21):2804--2813.
 
 \end{thebibliography}
 \fi
