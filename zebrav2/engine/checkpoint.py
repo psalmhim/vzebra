@@ -8,6 +8,17 @@ import torch
 import numpy as np
 
 
+def _load_compatible(module, state_dict):
+    """Load only keys whose shapes match the current model; skip mismatches."""
+    current = module.state_dict()
+    filtered = {k: v for k, v in state_dict.items()
+                if k in current and current[k].shape == v.shape}
+    skipped = len(state_dict) - len(filtered)
+    module.load_state_dict(filtered, strict=False)
+    if skipped:
+        print(f'  {module.__class__.__name__}: skipped {skipped} incompatible tensors')
+
+
 class CheckpointManager:
     def __init__(self, save_dir='zebrav2/checkpoints'):
         self.save_dir = save_dir
@@ -93,7 +104,7 @@ class CheckpointManager:
 
         brain.critic.load_state_dict(ckpt['critic_state'])
         brain.classifier.load_state_dict(ckpt['classifier_state'])
-        brain.pallium.load_state_dict(ckpt['pallium_state'])
+        _load_compatible(brain.pallium, ckpt['pallium_state'])
         brain.habit.load_state_dict(ckpt['habit_state'])
 
         brain.cerebellum.W_pf.data = torch.tensor(
