@@ -138,16 +138,19 @@ class RetinaV2(nn.Module):
         # ---- ON cells: DoG center-excitatory --------------------------------
         on_rate = self._apply_dog(intensity, self.dog_on)   # (400,)
         # Pool to n_on — kernel already keeps 400 pixels, shape matches
-        on_rate = F.adaptive_avg_pool1d(
-            on_rate.unsqueeze(0).unsqueeze(0), self.n_on).squeeze()  # (400,)
+        # MPS doesn't support non-divisible adaptive pool — use CPU for this op
+        _on_t = on_rate.unsqueeze(0).unsqueeze(0)
+        if _on_t.device.type == 'mps':
+            _on_t = _on_t.cpu()
+        on_rate = F.adaptive_avg_pool1d(_on_t, self.n_on).squeeze().to(on_rate.device)
 
         # ---- OFF cells: DoG center-inhibitory + EMA -------------------------
-        # Temporal OFF transient (luminance decrease → positive)
         off_raw = torch.clamp((prev_int - intensity) * 2.0, 0.0, 1.0)  # (400,)
-        # EMA smoothing over 2 frames (new value, not in-place on leaf)
         new_off_ema = 0.5 * off_ema + 0.5 * off_raw                    # (400,)
-        off_rate = F.adaptive_avg_pool1d(
-            new_off_ema.unsqueeze(0).unsqueeze(0), self.n_off).squeeze()  # (400,)
+        _off_t = new_off_ema.unsqueeze(0).unsqueeze(0)
+        if _off_t.device.type == 'mps':
+            _off_t = _off_t.cpu()
+        off_rate = F.adaptive_avg_pool1d(_off_t, self.n_off).squeeze().to(new_off_ema.device)
 
         # ---- Looming: angular expansion rate dθ/dt --------------------------
         # theta_now: normalised angular extent of enemy [0, 1]
