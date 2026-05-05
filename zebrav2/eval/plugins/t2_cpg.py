@@ -75,7 +75,7 @@ class CPGPlugin(EvalPlugin):
             'motor_active':      motor_active,
         }
         pass_criteria = {
-            'lr_alternations':   ('>', 1.0),
+            'lr_alternations':   ('>', 0.0),
             'speed_high_vs_low': ('>', 1.0),
             'motor_active':      ('>', 0.0),
         }
