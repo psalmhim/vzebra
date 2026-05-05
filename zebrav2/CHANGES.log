@@ -285,9 +285,39 @@
   Food: 7, 3, 16, 14, 10, 14, 22, 18, 10 items per seed
 
 [2026-05-04] EVAL PLATFORM: Full 23-plugin run (T1–T5)
-  Expected: 22–23/23 PASS (t2_cpg threshold fixed for stochastic CPG)
+  23/23 PASS (confirmed with final fixes)
   T1 Neuron (3): all PASS
   T2 Circuit (10): all PASS (VTA + Mauthner + Retina + Cerebellum + CPG + ...)
   T3 System (4): all PASS
   T4 Behavior (3): all PASS (survival_rate=1, foraging, exploration)
   T5 Social (3): all PASS (shoaling, alarm substance, social recognition)
+
+# ── 2026-05-06 (Raphe/LC eval + shoaling deepening + MPS fix) ────────────────
+
+[2026-05-06] zebrav2/eval/plugins/t2_raphe.py
+  NEW: T2 SpikingRaphe eval plugin — 4/4 metrics PASS
+  - baseline_ht5=0.119 (>0.05), lhb_suppression>0, flee_suppression>0, ipn_excitation>0
+  - Warm-up 30 steps → test condition 30 steps (EMA tau=0.9 requires long settling)
+
+[2026-05-06] zebrav2/eval/plugins/t2_lc.py
+  NEW: T2 SpikingLC eval plugin — 4/4 metrics PASS
+  - baseline_na=0.097 (>0.05), threat_vs_base=0.04 (>0.02), night_suppression>0, phasic=True
+  - 3 threat steps needed to move EMA above baseline (tau=0.85)
+
+[2026-05-06] manuscript2.tex
+  FEAT: §Spiking Dorsal Raphe (5-HT) with Eq. raphe_drive (circadian + IPN + LHb + flee)
+  FEAT: §Spiking Locus Coeruleus (NA) with Eq. lc_phasic (tonic + amygdala burst)
+  - 4 new bibitems: lillesaar2011, yokogawa2012, astonjones2005, singh2015
+
+[2026-05-06] zebrav2/eval/plugins/t5_shoaling.py
+  REFACTOR: Deep shoaling validation — 5 metrics (was 2), 4 fish (was 3)
+  - mean_inter_fish_dist=288px (<400), mean_nnd=188px (<350)
+  - polarization=0.228 (>0, heading alignment)
+  - cohesion_maintained=0.5 (>0.2), shoal_size_cv<1.5
+  - Reference: Miller & Gerlai 2011; Tunstrom et al. 2013
+
+[2026-05-06] zebrav2/brain/retina.py
+  FIX: adaptive_avg_pool1d CPU fallback for MPS device
+  - Apple Silicon (MPS) does not support non-divisible input/output sizes
+  - Both on_rate and off_rate pooling transferred to CPU if on MPS
+  - Unblocks retraining on Apple Silicon hardware
