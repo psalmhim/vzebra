@@ -316,99 +316,106 @@ class TrainingEngine:
             total_efe += efe
             goals_log.append(self.brain.current_goal)
 
-            # Step data for real-time streaming
-            # Collect food positions
-            food_positions = []
-            for food in getattr(env, 'foods', []):
-                food_positions.append([float(food[0]), float(food[1])])
-            # Collect rock positions (with polygon vertices if available)
-            rock_positions = []
-            for rock in getattr(env, 'rock_formations', []):
-                r = [float(rock.get('cx', 0)), float(rock.get('cy', 0)),
-                     float(rock.get('radius', 30))]
-                if 'vertices' in rock:
-                    r.append(rock['vertices'])  # polygon vertices
-                rock_positions.append(r)
+            # Step data: build only when dashboard/recorder is active.
+            # The spikes dict alone forces 15 MPS GPU→CPU syncs per step
+            # (~50-100 ms each on Apple Silicon) — skip when not streaming.
+            _need_step_data = bool(self.on_step or self.recorder is not None)
+            if _need_step_data:
+                food_positions = [[float(f[0]), float(f[1])] for f in getattr(env, 'foods', [])]
+                rock_positions = []
+                for rock in getattr(env, 'rock_formations', []):
+                    r = [float(rock.get('cx', 0)), float(rock.get('cy', 0)),
+                         float(rock.get('radius', 30))]
+                    if 'vertices' in rock:
+                        r.append(rock['vertices'])
+                    rock_positions.append(r)
 
-            step_data = {
-                'round': round_num,
-                'step': t,
-                'goal': GOAL_NAMES[self.brain.current_goal],
-                'turn': float(out['turn']),
-                'speed': float(out['speed']),
-                'energy': float(self.brain.energy),
-                'food_total': total_eaten,
-                'free_energy': float(efe),
-                'total_free_energy': float(out.get('total_free_energy', 0)),
-                'module_fe': {k: round(v, 4) for k, v in self.brain.get_module_free_energies().items()},
-                'DA': float(out['DA']),
-                'NA': float(out['NA']),
-                '5HT': float(out['5HT']),
-                'ACh': float(out['ACh']),
-                'amygdala': float(out['amygdala']),
-                'critic_value': float(out.get('critic_value', 0)),
-                'surprise': float(out.get('predictive_surprise', 0)),
-                'novelty': float(out.get('novelty', 0)),
-                'heart_rate': float(out.get('insula_heart_rate', 2)),
-                'valence': float(out.get('insula_valence', 0)),
-                'vae_nodes': int(out.get('vae_memory_nodes', 0)),
-                'fish_x': float(getattr(env, 'fish_x', 400)),
-                'fish_y': float(getattr(env, 'fish_y', 300)),
-                'fish_heading': float(getattr(env, 'fish_heading', 0)),
-                'pred_x': float(getattr(env, 'pred_x', -100)),
-                'pred_y': float(getattr(env, 'pred_y', -100)),
-                'pred_heading': float(getattr(env, 'pred_heading', 0)),
-                'pred_energy': float(pred_brain.energy) if pred_brain else 0,
-                'pred_stamina': float(pred_brain.stamina) if pred_brain else 0,
-                'pred_state': pred_brain.state if pred_brain else '',
-                'pred_heatmap': [[float(pred_brain.place.cx[j]),
-                                  float(pred_brain.place.cy[j]),
-                                  float(pred_brain.place.prey_density[j])]
-                                 for j in range(pred_brain.place.n_cells)] if pred_brain else [],
-                'foods': food_positions,
-                'rocks': rock_positions,
-                'arena_w': int(getattr(env, 'arena_w', 800)),
-                'arena_h': int(getattr(env, 'arena_h', 600)),
-                # Retinal view (subsampled for dashboard — 40 pixels per eye)
-                'retina_L': [float(x) for x in env.brain_L[:400:10]] if hasattr(env, 'brain_L') else [],
-                'retina_R': [float(x) for x in env.brain_R[:400:10]] if hasattr(env, 'brain_R') else [],
-                'retina_L_type': [float(x) for x in env.brain_L[400::10]] if hasattr(env, 'brain_L') else [],
-                'retina_R_type': [float(x) for x in env.brain_R[400::10]] if hasattr(env, 'brain_R') else [],
-                # Regional spike counts (for raster plots)
-                'spikes': {
-                    'sfgs_b': float(self.brain.tectum.sfgs_b_L.spike_E.sum() + self.brain.tectum.sfgs_b_R.spike_E.sum()),
-                    'sfgs_d': float(self.brain.tectum.sfgs_d_L.spike_E.sum() + self.brain.tectum.sfgs_d_R.spike_E.sum()),
-                    'sgc':    float(self.brain.tectum.sgc_L.spike_E.sum()    + self.brain.tectum.sgc_R.spike_E.sum()),
-                    'so':     float(self.brain.tectum.so_L.spike_E.sum()     + self.brain.tectum.so_R.spike_E.sum()),
-                    'tc':     float(self.brain.thalamus_L.TC.rate.sum()      + self.brain.thalamus_R.TC.rate.sum()),
-                    'trn':    float(self.brain.thalamus_L.TRN.rate.sum()     + self.brain.thalamus_R.TRN.rate.sum()),
-                    'pal_s': float(self.brain.pallium.pal_s.spike_E.sum()),
-                    'pal_d': float(self.brain.pallium.pal_d.spike_E.sum()),
-                    'amygdala': float(self.brain.amygdala.CeA.rate.sum()),
-                    'cerebellum': float(self.brain.cerebellum.gc_rate.sum()),
-                    'habenula': float(self.brain.habenula.lhb_rate.sum()),
-                    'd1': float(self.brain.bg.d1_rate.sum()),
-                    'd2': float(self.brain.bg.d2_rate.sum()),
-                    'critic': float(self.brain.critic.hidden_rate.sum()),
-                    'insula': float(self.brain.insula.hunger_rate.sum() + self.brain.insula.stress_rate.sum()),
-                },
-            }
-            self.current_step_data = step_data
-            if self.on_step:
-                self.on_step(step_data)
-            # Structured recorder
-            if self.recorder is not None:
-                self.recorder.record_step(
-                    step_data,
-                    pos=(step_data['fish_x'], step_data['fish_y']),
-                    energy=step_data['energy'])
-                if env._eaten_now > 0:
-                    self.recorder.record_event('food_eaten', step=t,
-                                                count=env._eaten_now)
-            # Record for replay (skip large arrays to save memory)
-            self._recording.append({k: v for k, v in step_data.items()
-                                     if k not in ('spikes', 'retina_L', 'retina_R',
-                                                  'retina_L_type', 'retina_R_type')})
+                step_data = {
+                    'round': round_num,
+                    'step': t,
+                    'goal': GOAL_NAMES[self.brain.current_goal],
+                    'turn': float(out['turn']),
+                    'speed': float(out['speed']),
+                    'energy': float(self.brain.energy),
+                    'food_total': total_eaten,
+                    'free_energy': float(efe),
+                    'total_free_energy': float(out.get('total_free_energy', 0)),
+                    'module_fe': {k: round(v, 4) for k, v in self.brain.get_module_free_energies().items()},
+                    'DA': float(out['DA']),
+                    'NA': float(out['NA']),
+                    '5HT': float(out['5HT']),
+                    'ACh': float(out['ACh']),
+                    'amygdala': float(out['amygdala']),
+                    'critic_value': float(out.get('critic_value', 0)),
+                    'surprise': float(out.get('predictive_surprise', 0)),
+                    'novelty': float(out.get('novelty', 0)),
+                    'heart_rate': float(out.get('insula_heart_rate', 2)),
+                    'valence': float(out.get('insula_valence', 0)),
+                    'vae_nodes': int(out.get('vae_memory_nodes', 0)),
+                    'fish_x': float(getattr(env, 'fish_x', 400)),
+                    'fish_y': float(getattr(env, 'fish_y', 300)),
+                    'fish_heading': float(getattr(env, 'fish_heading', 0)),
+                    'pred_x': float(getattr(env, 'pred_x', -100)),
+                    'pred_y': float(getattr(env, 'pred_y', -100)),
+                    'pred_heading': float(getattr(env, 'pred_heading', 0)),
+                    'pred_energy': float(pred_brain.energy) if pred_brain else 0,
+                    'pred_stamina': float(pred_brain.stamina) if pred_brain else 0,
+                    'pred_state': pred_brain.state if pred_brain else '',
+                    'pred_heatmap': [[float(pred_brain.place.cx[j]),
+                                      float(pred_brain.place.cy[j]),
+                                      float(pred_brain.place.prey_density[j])]
+                                     for j in range(pred_brain.place.n_cells)] if pred_brain else [],
+                    'foods': food_positions,
+                    'rocks': rock_positions,
+                    'arena_w': int(getattr(env, 'arena_w', 800)),
+                    'arena_h': int(getattr(env, 'arena_h', 600)),
+                    'retina_L': [float(x) for x in env.brain_L[:400:10]] if hasattr(env, 'brain_L') else [],
+                    'retina_R': [float(x) for x in env.brain_R[:400:10]] if hasattr(env, 'brain_R') else [],
+                    'retina_L_type': [float(x) for x in env.brain_L[400::10]] if hasattr(env, 'brain_L') else [],
+                    'retina_R_type': [float(x) for x in env.brain_R[400::10]] if hasattr(env, 'brain_R') else [],
+                    'spikes': {
+                        'sfgs_b': float(self.brain.tectum.sfgs_b_L.spike_E.sum() + self.brain.tectum.sfgs_b_R.spike_E.sum()),
+                        'sfgs_d': float(self.brain.tectum.sfgs_d_L.spike_E.sum() + self.brain.tectum.sfgs_d_R.spike_E.sum()),
+                        'sgc':    float(self.brain.tectum.sgc_L.spike_E.sum()    + self.brain.tectum.sgc_R.spike_E.sum()),
+                        'so':     float(self.brain.tectum.so_L.spike_E.sum()     + self.brain.tectum.so_R.spike_E.sum()),
+                        'tc':     float(self.brain.thalamus_L.TC.rate.sum()      + self.brain.thalamus_R.TC.rate.sum()),
+                        'trn':    float(self.brain.thalamus_L.TRN.rate.sum()     + self.brain.thalamus_R.TRN.rate.sum()),
+                        'pal_s': float(self.brain.pallium.pal_s.spike_E.sum()),
+                        'pal_d': float(self.brain.pallium.pal_d.spike_E.sum()),
+                        'amygdala': float(self.brain.amygdala.CeA.rate.sum()),
+                        'cerebellum': float(self.brain.cerebellum.gc_rate.sum()),
+                        'habenula': float(self.brain.habenula.lhb_rate.sum()),
+                        'd1': float(self.brain.bg.d1_rate.sum()),
+                        'd2': float(self.brain.bg.d2_rate.sum()),
+                        'critic': float(self.brain.critic.hidden_rate.sum()),
+                        'insula': float(self.brain.insula.hunger_rate.sum() + self.brain.insula.stress_rate.sum()),
+                    },
+                }
+                self.current_step_data = step_data
+                if self.on_step:
+                    self.on_step(step_data)
+                if self.recorder is not None:
+                    self.recorder.record_step(
+                        step_data,
+                        pos=(step_data['fish_x'], step_data['fish_y']),
+                        energy=step_data['energy'])
+                    if env._eaten_now > 0:
+                        self.recorder.record_event('food_eaten', step=t,
+                                                    count=env._eaten_now)
+                self._recording.append({k: v for k, v in step_data.items()
+                                         if k not in ('spikes', 'retina_L', 'retina_R',
+                                                      'retina_L_type', 'retina_R_type')})
+            else:
+                # Lightweight record — no GPU syncs, safe for headless training
+                self.current_step_data = None
+                self._recording.append({
+                    'round': round_num, 'step': t,
+                    'goal': GOAL_NAMES[self.brain.current_goal],
+                    'energy': float(self.brain.energy),
+                    'food_total': total_eaten,
+                    'fish_x': float(getattr(env, 'fish_x', 400)),
+                    'fish_y': float(getattr(env, 'fish_y', 300)),
+                })
 
             # Food respawn: when food runs low, add a new small patch
             if cfg.get('env.food_respawn', True) and len(getattr(env, 'foods', [])) < cfg.get('env.food_respawn_min', 5):
@@ -458,6 +465,10 @@ class TrainingEngine:
         if len(self.saved_replays) > self.max_replays:
             self.saved_replays.pop(0)
         self._recording = []
+        # Free MPS allocator pool to prevent progressive memory fragmentation
+        import torch
+        if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+            torch.mps.empty_cache()
         return metrics
 
     def run_round_multi(self, round_num, brains, n_fish=5):
@@ -628,106 +639,109 @@ class TrainingEngine:
             total_efe += efe
             goals_log.append(focal_brain.current_goal)
 
-            # Collect food/rock positions
-            food_positions = [[float(f[0]), float(f[1])]
-                              for f in getattr(env, 'foods', [])]
-            rock_positions = []
-            for rock in getattr(env, 'rock_formations', []):
-                r = [float(rock.get('cx', 0)), float(rock.get('cy', 0)),
-                     float(rock.get('radius', 30))]
-                if 'vertices' in rock:
-                    r.append(rock['vertices'])
-                rock_positions.append(r)
+            # Step data: build only when dashboard/recorder is active.
+            _need_step_data = bool(self.on_step or self.recorder is not None)
+            if _need_step_data:
+                food_positions = [[float(f[0]), float(f[1])]
+                                  for f in getattr(env, 'foods', [])]
+                rock_positions = []
+                for rock in getattr(env, 'rock_formations', []):
+                    r = [float(rock.get('cx', 0)), float(rock.get('cy', 0)),
+                         float(rock.get('radius', 30))]
+                    if 'vertices' in rock:
+                        r.append(rock['vertices'])
+                    rock_positions.append(r)
 
-            # Build other_fish array (fish 1..n-1)
-            other_fish_data = []
-            for i in range(1, n_fish):
-                f = all_fish[i]
-                other_fish_data.append({
-                    'x': float(f['x']),
-                    'y': float(f['y']),
-                    'heading': float(f['heading']),
-                    'goal': f['goal'],
-                    'energy': float(f['energy']),
-                    'alive': f['alive'],
-                    'personality': f.get('personality', 'default'),
-                    'food_eaten': f['food_eaten'],
-                })
+                other_fish_data = []
+                for i in range(1, n_fish):
+                    f = all_fish[i]
+                    other_fish_data.append({
+                        'x': float(f['x']),
+                        'y': float(f['y']),
+                        'heading': float(f['heading']),
+                        'goal': f['goal'],
+                        'energy': float(f['energy']),
+                        'alive': f['alive'],
+                        'personality': f.get('personality', 'default'),
+                        'food_eaten': f['food_eaten'],
+                    })
 
-            step_data = {
-                'round': round_num,
-                'step': t,
-                'mode': 'multi-agent',
-                'goal': GOAL_NAMES[focal_brain.current_goal],
-                'turn': float(focal_out.get('turn', 0)),
-                'speed': float(focal_out.get('speed', 0)),
-                'energy': float(focal_brain.energy),
-                'food_total': total_eaten[0],
-                'free_energy': float(efe),
-                'total_free_energy': float(focal_out.get('total_free_energy', 0)),
-                'module_fe': {k: round(v, 4) for k, v in focal_brain.get_module_free_energies().items()},
-                'DA': float(focal_out.get('DA', 0)),
-                'NA': float(focal_out.get('NA', 0)),
-                '5HT': float(focal_out.get('5HT', 0)),
-                'ACh': float(focal_out.get('ACh', 0)),
-                'amygdala': float(focal_out.get('amygdala', 0)),
-                'critic_value': float(focal_out.get('critic_value', 0)),
-                'surprise': float(focal_out.get('predictive_surprise', 0)),
-                'novelty': float(focal_out.get('novelty', 0)),
-                'heart_rate': float(focal_out.get('insula_heart_rate', 2)),
-                'valence': float(focal_out.get('insula_valence', 0)),
-                'vae_nodes': int(focal_out.get('vae_memory_nodes', 0)),
-                'fish_x': float(focal['x']),
-                'fish_y': float(focal['y']),
-                'fish_heading': float(focal['heading']),
-                'pred_x': float(getattr(env, 'pred_x', -100)),
-                'pred_y': float(getattr(env, 'pred_y', -100)),
-                'pred_heading': float(getattr(env, 'pred_heading', 0)),
-                'pred_energy': float(pred_brain.energy) if pred_brain else 0,
-                'pred_stamina': float(pred_brain.stamina) if pred_brain else 0,
-                'pred_state': pred_brain.state if pred_brain else '',
-                'pred_heatmap': (
-                    [[float(pred_brain.place.centroids[j, 0]),
-                      float(pred_brain.place.centroids[j, 1]),
-                      float(pred_brain.place.prey_density[j])]
-                     for j in range(pred_brain.place.n_cells)]
-                    if pred_brain else []),
-                'foods': food_positions,
-                'rocks': rock_positions,
-                'arena_w': int(getattr(env, 'arena_w', 800)),
-                'arena_h': int(getattr(env, 'arena_h', 600)),
-                'retina_L': ([float(x) for x in env.brain_L[:400:10]]
-                             if hasattr(env, 'brain_L') else []),
-                'retina_R': ([float(x) for x in env.brain_R[:400:10]]
-                             if hasattr(env, 'brain_R') else []),
-                'retina_L_type': ([float(x) for x in env.brain_L[400::10]]
-                                  if hasattr(env, 'brain_L') else []),
-                'retina_R_type': ([float(x) for x in env.brain_R[400::10]]
-                                  if hasattr(env, 'brain_R') else []),
-                'spikes': {
-                    'sfgs_b': float(focal_brain.tectum.sfgs_b_L.spike_E.sum() + focal_brain.tectum.sfgs_b_R.spike_E.sum()),
-                    'sfgs_d': float(focal_brain.tectum.sfgs_d_L.spike_E.sum() + focal_brain.tectum.sfgs_d_R.spike_E.sum()),
-                    'sgc':    float(focal_brain.tectum.sgc_L.spike_E.sum()    + focal_brain.tectum.sgc_R.spike_E.sum()),
-                    'so':     float(focal_brain.tectum.so_L.spike_E.sum()     + focal_brain.tectum.so_R.spike_E.sum()),
-                    'tc':     float(focal_brain.thalamus_L.TC.rate.sum()      + focal_brain.thalamus_R.TC.rate.sum()),
-                    'trn':    float(focal_brain.thalamus_L.TRN.rate.sum()     + focal_brain.thalamus_R.TRN.rate.sum()),
-                    'pal_s': float(focal_brain.pallium.pal_s.spike_E.sum()),
-                    'pal_d': float(focal_brain.pallium.pal_d.spike_E.sum()),
-                    'amygdala': float(focal_brain.amygdala.CeA.rate.sum()),
-                    'cerebellum': float(focal_brain.cerebellum.gc_rate.sum()),
-                    'habenula': float(focal_brain.habenula.lhb_rate.sum()),
-                    'd1': float(focal_brain.bg.d1_rate.sum()),
-                    'd2': float(focal_brain.bg.d2_rate.sum()),
-                    'critic': float(focal_brain.critic.hidden_rate.sum()),
-                    'insula': float(
-                        focal_brain.insula.hunger_rate.sum()
-                        + focal_brain.insula.stress_rate.sum()),
-                },
-                'other_fish': other_fish_data,
-            }
-            self.current_step_data = step_data
-            if self.on_step:
-                self.on_step(step_data)
+                step_data = {
+                    'round': round_num,
+                    'step': t,
+                    'mode': 'multi-agent',
+                    'goal': GOAL_NAMES[focal_brain.current_goal],
+                    'turn': float(focal_out.get('turn', 0)),
+                    'speed': float(focal_out.get('speed', 0)),
+                    'energy': float(focal_brain.energy),
+                    'food_total': total_eaten[0],
+                    'free_energy': float(efe),
+                    'total_free_energy': float(focal_out.get('total_free_energy', 0)),
+                    'module_fe': {k: round(v, 4) for k, v in focal_brain.get_module_free_energies().items()},
+                    'DA': float(focal_out.get('DA', 0)),
+                    'NA': float(focal_out.get('NA', 0)),
+                    '5HT': float(focal_out.get('5HT', 0)),
+                    'ACh': float(focal_out.get('ACh', 0)),
+                    'amygdala': float(focal_out.get('amygdala', 0)),
+                    'critic_value': float(focal_out.get('critic_value', 0)),
+                    'surprise': float(focal_out.get('predictive_surprise', 0)),
+                    'novelty': float(focal_out.get('novelty', 0)),
+                    'heart_rate': float(focal_out.get('insula_heart_rate', 2)),
+                    'valence': float(focal_out.get('insula_valence', 0)),
+                    'vae_nodes': int(focal_out.get('vae_memory_nodes', 0)),
+                    'fish_x': float(focal['x']),
+                    'fish_y': float(focal['y']),
+                    'fish_heading': float(focal['heading']),
+                    'pred_x': float(getattr(env, 'pred_x', -100)),
+                    'pred_y': float(getattr(env, 'pred_y', -100)),
+                    'pred_heading': float(getattr(env, 'pred_heading', 0)),
+                    'pred_energy': float(pred_brain.energy) if pred_brain else 0,
+                    'pred_stamina': float(pred_brain.stamina) if pred_brain else 0,
+                    'pred_state': pred_brain.state if pred_brain else '',
+                    'pred_heatmap': (
+                        [[float(pred_brain.place.centroids[j, 0]),
+                          float(pred_brain.place.centroids[j, 1]),
+                          float(pred_brain.place.prey_density[j])]
+                         for j in range(pred_brain.place.n_cells)]
+                        if pred_brain else []),
+                    'foods': food_positions,
+                    'rocks': rock_positions,
+                    'arena_w': int(getattr(env, 'arena_w', 800)),
+                    'arena_h': int(getattr(env, 'arena_h', 600)),
+                    'retina_L': ([float(x) for x in env.brain_L[:400:10]]
+                                 if hasattr(env, 'brain_L') else []),
+                    'retina_R': ([float(x) for x in env.brain_R[:400:10]]
+                                 if hasattr(env, 'brain_R') else []),
+                    'retina_L_type': ([float(x) for x in env.brain_L[400::10]]
+                                      if hasattr(env, 'brain_L') else []),
+                    'retina_R_type': ([float(x) for x in env.brain_R[400::10]]
+                                      if hasattr(env, 'brain_R') else []),
+                    'spikes': {
+                        'sfgs_b': float(focal_brain.tectum.sfgs_b_L.spike_E.sum() + focal_brain.tectum.sfgs_b_R.spike_E.sum()),
+                        'sfgs_d': float(focal_brain.tectum.sfgs_d_L.spike_E.sum() + focal_brain.tectum.sfgs_d_R.spike_E.sum()),
+                        'sgc':    float(focal_brain.tectum.sgc_L.spike_E.sum()    + focal_brain.tectum.sgc_R.spike_E.sum()),
+                        'so':     float(focal_brain.tectum.so_L.spike_E.sum()     + focal_brain.tectum.so_R.spike_E.sum()),
+                        'tc':     float(focal_brain.thalamus_L.TC.rate.sum()      + focal_brain.thalamus_R.TC.rate.sum()),
+                        'trn':    float(focal_brain.thalamus_L.TRN.rate.sum()     + focal_brain.thalamus_R.TRN.rate.sum()),
+                        'pal_s': float(focal_brain.pallium.pal_s.spike_E.sum()),
+                        'pal_d': float(focal_brain.pallium.pal_d.spike_E.sum()),
+                        'amygdala': float(focal_brain.amygdala.CeA.rate.sum()),
+                        'cerebellum': float(focal_brain.cerebellum.gc_rate.sum()),
+                        'habenula': float(focal_brain.habenula.lhb_rate.sum()),
+                        'd1': float(focal_brain.bg.d1_rate.sum()),
+                        'd2': float(focal_brain.bg.d2_rate.sum()),
+                        'critic': float(focal_brain.critic.hidden_rate.sum()),
+                        'insula': float(
+                            focal_brain.insula.hunger_rate.sum()
+                            + focal_brain.insula.stress_rate.sum()),
+                    },
+                    'other_fish': other_fish_data,
+                }
+                self.current_step_data = step_data
+                if self.on_step:
+                    self.on_step(step_data)
+            else:
+                self.current_step_data = None
 
             # Food respawn
             if (cfg.get('env.food_respawn', True)
@@ -777,6 +791,9 @@ class TrainingEngine:
             'critic_mean_value': float(brains[0].critic.values.mean()),
             'personality': 'mixed',
         }
+        import torch
+        if hasattr(torch, 'mps') and hasattr(torch.mps, 'empty_cache'):
+            torch.mps.empty_cache()
         return metrics
 
     def train_multi(self, n_rounds=None, n_fish=5):
