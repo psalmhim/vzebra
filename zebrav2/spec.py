@@ -26,6 +26,10 @@ import os
 
 
 def _get_device() -> torch.device:
+    # ZEBRA_DEVICE env var overrides auto-detection (useful for CPU training)
+    override = os.environ.get('ZEBRA_DEVICE', '').strip()
+    if override:
+        return torch.device(override)
     if torch.cuda.is_available():
         gpu_id = os.environ.get('CUDA_VISIBLE_DEVICES', None)
         if gpu_id is not None:

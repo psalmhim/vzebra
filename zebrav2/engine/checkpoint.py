@@ -102,10 +102,10 @@ class CheckpointManager:
         """Load checkpoint into brain."""
         ckpt = torch.load(path, map_location=brain.device, weights_only=False)
 
-        brain.critic.load_state_dict(ckpt['critic_state'])
-        brain.classifier.load_state_dict(ckpt['classifier_state'])
-        _load_compatible(brain.pallium, ckpt['pallium_state'])
-        brain.habit.load_state_dict(ckpt['habit_state'])
+        _load_compatible(brain.critic,      ckpt['critic_state'])
+        _load_compatible(brain.classifier,  ckpt['classifier_state'])
+        _load_compatible(brain.pallium,     ckpt['pallium_state'])
+        _load_compatible(brain.habit,       ckpt['habit_state'])
 
         _wpf = torch.tensor(ckpt['cerebellum_W_pf'], device=brain.device, dtype=torch.float32)
         if _wpf.shape == brain.cerebellum.W_pf.shape:

@@ -11,11 +11,20 @@ Options:
     --food N         Food items per episode (default: 20)
     --steps N        Max steps per episode (default: 500)
     --save-every N   Save checkpoint every N rounds (default: 5)
+    --device D       Compute device: cpu, mps, cuda (default: auto)
 """
 
 import os
 import sys
 import argparse
+
+# Parse --device before any zebrav2 imports so ZEBRA_DEVICE is set
+# before spec.py evaluates _get_device() at module load time.
+_pre = argparse.ArgumentParser(add_help=False)
+_pre.add_argument('--device', type=str, default=None)
+_pre_args, _ = _pre.parse_known_args()
+if _pre_args.device:
+    os.environ['ZEBRA_DEVICE'] = _pre_args.device
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if PROJECT_ROOT not in sys.path:
@@ -34,6 +43,8 @@ def main():
     parser.add_argument('--food',       type=int, default=20)
     parser.add_argument('--steps',      type=int, default=500)
     parser.add_argument('--save-every', type=int, default=5)
+    parser.add_argument('--device',     type=str, default=None,
+                        help='Compute device: cpu, mps, cuda (default: auto)')
     args = parser.parse_args()
 
     ckpt_dir = os.path.join(PROJECT_ROOT, 'zebrav2', 'checkpoints')
