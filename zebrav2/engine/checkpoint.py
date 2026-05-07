@@ -19,6 +19,44 @@ def _load_compatible(module, state_dict):
         print(f'  {module.__class__.__name__}: skipped {skipped} incompatible tensors')
 
 
+def _load_pallium(pallium, state_dict, device):
+    """
+    Restore pallium state including sparse synapse topology (_row/_col/_val).
+
+    Sparse COO triplets encode both connectivity topology AND learned weights.
+    They cannot be loaded by _load_compatible because every random init produces
+    a different number of non-zeros. We must resize the buffers to match the
+    checkpoint's topology before restoring weights.
+    """
+    SPARSE_KEYS = ('_row', '_col', '_val')
+
+    def _restore_synapse(syn, prefix, sd, dev):
+        for suffix in SPARSE_KEYS:
+            key = f'{prefix}.{suffix}'
+            if key in sd:
+                t = sd[key].to(dev)
+                # Replace the buffer in-place by reassigning the attribute
+                setattr(syn, suffix[1:], t)  # strip leading _ for attribute
+                # Also update the registered buffer so state_dict() stays consistent
+                syn.register_buffer(suffix, t)
+
+    synapse_paths = [
+        ('pal_s.syn_ee', pallium.pal_s.syn_ee),
+        ('pal_s.syn_ei', pallium.pal_s.syn_ei),
+        ('pal_s.syn_ie', pallium.pal_s.syn_ie),
+        ('pal_s.syn_ii', pallium.pal_s.syn_ii),
+        ('pal_d.syn_ee', pallium.pal_d.syn_ee),
+        ('pal_d.syn_ei', pallium.pal_d.syn_ei),
+        ('pal_d.syn_ie', pallium.pal_d.syn_ie),
+        ('pal_d.syn_ii', pallium.pal_d.syn_ii),
+    ]
+    for prefix, syn in synapse_paths:
+        _restore_synapse(syn, prefix, state_dict, device)
+
+    # Load all remaining (shape-compatible) keys via _load_compatible
+    _load_compatible(pallium, state_dict)
+
+
 class CheckpointManager:
     def __init__(self, save_dir='zebrav2/checkpoints'):
         self.save_dir = save_dir
@@ -104,7 +142,7 @@ class CheckpointManager:
 
         _load_compatible(brain.critic,      ckpt['critic_state'])
         _load_compatible(brain.classifier,  ckpt['classifier_state'])
-        _load_compatible(brain.pallium,     ckpt['pallium_state'])
+        _load_pallium(brain.pallium, ckpt['pallium_state'], brain.device)
         _load_compatible(brain.habit,       ckpt['habit_state'])
 
         _wpf = torch.tensor(ckpt['cerebellum_W_pf'], device=brain.device, dtype=torch.float32)
