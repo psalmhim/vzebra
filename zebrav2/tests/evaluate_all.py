@@ -1,15 +1,23 @@
 """
 Comprehensive evaluation: decision scenarios, multi-seed, ablation, v1 vs v2, paper figures.
 
-Run: .venv/bin/python -u -m zebrav2.tests.evaluate_all
+Run: .venv/bin/python -u -m zebrav2.tests.evaluate_all [--checkpoint PATH]
 """
-import os, sys, time, math, json
+import os, sys, time, math, json, argparse
 import numpy as np
 import torch
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from collections import Counter
+
+# Parse --checkpoint before any device-sensitive imports
+_pre = argparse.ArgumentParser(add_help=False)
+_pre.add_argument('--checkpoint', type=str, default=None)
+_pre.add_argument('--device', type=str, default=None)
+_pre_args, _ = _pre.parse_known_args()
+if _pre_args.device:
+    os.environ['ZEBRA_DEVICE'] = _pre_args.device
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if PROJECT_ROOT not in sys.path:
@@ -19,10 +27,20 @@ from zebrav2.spec import DEVICE
 from zebrav2.brain.brain_v2 import ZebrafishBrainV2
 from zebrav2.brain.sensory_bridge import inject_sensory
 from zebrav1.gym_env.zebrafish_env import ZebrafishPreyPredatorEnv
+from zebrav2.engine.checkpoint import CheckpointManager
 
 PLOT_DIR = os.path.join(PROJECT_ROOT, 'plots', 'v2_paper')
 os.makedirs(PLOT_DIR, exist_ok=True)
 GOAL_NAMES = ['FORAGE', 'FLEE', 'EXPLORE', 'SOCIAL']
+_CKPT_PATH = _pre_args.checkpoint
+_CM = CheckpointManager()
+
+
+def _make_brain():
+    brain = ZebrafishBrainV2(device=DEVICE)
+    if _CKPT_PATH:
+        _CM.load(brain, _CKPT_PATH)
+    return brain
 
 
 def run_episode(brain, seed=42, n_food=15, max_steps=500, collect_traces=False):
@@ -74,7 +92,7 @@ def eval_decision_scenarios():
     print("\n" + "="*60)
     print("  PART 1: Decision Scenarios (A-E)")
     print("="*60)
-    brain = ZebrafishBrainV2(device=DEVICE)
+    brain = _make_brain()
 
     def run_scenario(setup_fn, score_fn, T=100):
         env = ZebrafishPreyPredatorEnv(render_mode=None, n_food=0, max_steps=T)
@@ -172,7 +190,7 @@ def eval_multi_seed(n_seeds=10, max_steps=500):
     print("\n" + "="*60)
     print(f"  PART 2: Multi-Seed Evaluation ({n_seeds} seeds × {max_steps} steps)")
     print("="*60)
-    brain = ZebrafishBrainV2(device=DEVICE)
+    brain = _make_brain()
     results = []
     for seed in range(n_seeds):
         r = run_episode(brain, seed=seed*7+1, max_steps=max_steps)
@@ -216,7 +234,7 @@ def eval_ablation(n_seeds=3, max_steps=300):
     for name, disable in ablations.items():
         survivals, foods = [], []
         for seed in range(n_seeds):
-            brain = ZebrafishBrainV2(device=DEVICE)
+            brain = _make_brain()
             # Disable modules by zeroing their outputs
             for mod_name in disable:
                 mod = getattr(brain, mod_name, None)
@@ -270,7 +288,7 @@ def eval_v1_vs_v2(n_seeds=5, max_steps=500):
         v1_results.append({'survived': t+1, 'food': v1_food, 'reward': v1_reward})
 
         # v2
-        brain = ZebrafishBrainV2(device=DEVICE)
+        brain = _make_brain()
         r = run_episode(brain, seed=seed*7+1, max_steps=max_steps)
         v2_results.append(r)
 
@@ -296,7 +314,7 @@ def generate_paper_figures(scenario_scores, scenario_goals, multi_seed, ablation
     print("="*60)
 
     # --- Fig 1: Full closed-loop trace ---
-    brain = ZebrafishBrainV2(device=DEVICE)
+    brain = _make_brain()
     r = run_episode(brain, seed=42, max_steps=500, collect_traces=True)
     tr = r['traces']
 
@@ -494,6 +512,7 @@ def generate_paper_figures(scenario_scores, scenario_goals, multi_seed, ablation
 if __name__ == '__main__':
     t0 = time.time()
     print(f"Device: {DEVICE}")
+    print(f"Checkpoint: {_CKPT_PATH or '(fresh brain)'}")
     print(f"Comprehensive v2 Evaluation")
 
     scores, goals = eval_decision_scenarios()

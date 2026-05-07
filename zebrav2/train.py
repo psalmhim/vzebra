@@ -42,25 +42,35 @@ def main():
                         choices=['none', 'simple', 'intelligent'])
     parser.add_argument('--food',       type=int, default=20)
     parser.add_argument('--steps',      type=int, default=500)
-    parser.add_argument('--save-every', type=int, default=5)
-    parser.add_argument('--device',     type=str, default=None,
+    parser.add_argument('--save-every',  type=int, default=5)
+    parser.add_argument('--seed-salt',   type=int, default=0,
+                        help='Shift training seeds by this amount to explore different scenarios')
+    parser.add_argument('--device',      type=str, default=None,
                         help='Compute device: cpu, mps, cuda (default: auto)')
     args = parser.parse_args()
 
     ckpt_dir = os.path.join(PROJECT_ROOT, 'zebrav2', 'checkpoints')
     checkpoint = args.checkpoint
     if checkpoint is None:
-        pts = sorted(f for f in os.listdir(ckpt_dir) if f.endswith('.pt'))
-        if pts:
-            checkpoint = os.path.join(ckpt_dir, pts[-1])
-            print(f"  Auto-selected checkpoint: {pts[-1]}")
+        # Prefer ckpt_best.pt if it exists, else latest numbered checkpoint
+        best = os.path.join(ckpt_dir, 'ckpt_best.pt')
+        if os.path.exists(best):
+            checkpoint = best
+            print(f"  Auto-selected checkpoint: ckpt_best.pt")
+        else:
+            pts = sorted(f for f in os.listdir(ckpt_dir)
+                         if f.startswith('ckpt_round_') and f.endswith('.pt'))
+            if pts:
+                checkpoint = os.path.join(ckpt_dir, pts[-1])
+                print(f"  Auto-selected checkpoint: {pts[-1]}")
 
     config = TrainingConfig()
-    config.data['training']['n_rounds']   = args.rounds
-    config.data['training']['save_every'] = args.save_every
-    config.data['env']['predator_ai']     = args.predator
-    config.data['env']['n_food']          = args.food
-    config.data['env']['max_steps']       = args.steps
+    config.data['training']['n_rounds']    = args.rounds
+    config.data['training']['save_every']  = args.save_every
+    config.data['training']['seed_salt']   = args.seed_salt
+    config.data['env']['predator_ai']      = args.predator
+    config.data['env']['n_food']           = args.food
+    config.data['env']['max_steps']        = args.steps
     if checkpoint:
         config.data['training']['load_checkpoint'] = checkpoint
 

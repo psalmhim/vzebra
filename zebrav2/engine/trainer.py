@@ -230,7 +230,8 @@ class TrainingEngine:
 
         seed = cfg.get('env.seed')
         if seed is None:
-            seed = round_num * 7 + 1
+            salt = cfg.get('training.seed_salt', 0)
+            seed = round_num * 7 + 1 + salt
 
         env = self._create_env()
         obs, info = env.reset(seed=seed)
@@ -482,7 +483,8 @@ class TrainingEngine:
         cfg = self.config
         seed = cfg.get('env.seed')
         if seed is None:
-            seed = round_num * 7 + 1
+            salt = cfg.get('training.seed_salt', 0)
+            seed = round_num * 7 + 1 + salt
 
         env = self._create_env()
         obs, info = env.reset(seed=seed)
@@ -893,12 +895,14 @@ class TrainingEngine:
 
         self.running = True
         self.brain = self._create_brain()
+        best_fitness = -float('inf')
 
         print(f"\n{'='*60}")
         print(f"  Training: {n_rounds} rounds")
         print(f"  Config: {self.config.get('fish.personality_mode')} personality, "
               f"{self.config.get('env.n_food')} food, "
               f"predator={self.config.get('env.predator_ai')}")
+        print(f"  Seed salt: {self.config.get('training.seed_salt', 0)}")
         print(f"{'='*60}")
 
         for r in range(1, n_rounds + 1):
@@ -917,18 +921,27 @@ class TrainingEngine:
             self.brain.on_episode_end(
                 metrics['fitness'], metrics.get('goal_distribution', {}))
 
+            fitness = metrics['fitness']
+            best_tag = ' ★' if fitness > best_fitness else ''
             print(f"  Round {round_num}: survived={metrics['survived']}, "
-                  f"food={metrics['food_eaten']}, fitness={metrics['fitness']:.0f}, "
-                  f"EFE={metrics['mean_efe']:.4f} ({elapsed:.0f}s)")
+                  f"food={metrics['food_eaten']}, fitness={fitness:.0f}, "
+                  f"EFE={metrics['mean_efe']:.4f} ({elapsed:.0f}s){best_tag}")
 
             if self.on_round_end:
                 self.on_round_end(metrics)
 
-            # Save checkpoint
-            if r % save_every == 0 or r == n_rounds:
+            # Save periodic checkpoint; also save when fitness is new best
+            should_save = (r % save_every == 0 or r == n_rounds or fitness > best_fitness)
+            if should_save:
                 path = self.checkpoint_mgr.save(
                     self.brain, round_num, metrics, self.config)
                 print(f"    Checkpoint saved: {path}")
+                if fitness > best_fitness:
+                    best_fitness = fitness
+                    import shutil as _shutil
+                    best_path = os.path.join(self.checkpoint_mgr.save_dir, 'ckpt_best.pt')
+                    _shutil.copy2(path, best_path)
+                    print(f"    Best checkpoint updated: {fitness:.0f}")
             # Autosave world knowledge every round (cheap, ~200KB)
             if self.config.get('training.autosave_world', False):
                 self.checkpoint_mgr.save_world_only(self.brain, tag='latest', step=round_num)
