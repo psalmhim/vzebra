@@ -52,6 +52,9 @@ class SpikingVTA(nn.Module):
         self.register_buffer('da_rate',      torch.zeros(n_da, device=device))
         self.register_buffer('rpe_ema',      torch.tensor(0.0, device=device))
 
+        # Pre-allocated noise buffer (avoids per-step MPS allocation)
+        self.register_buffer('_noise_da', torch.zeros(n_da, device=device))
+
     @torch.no_grad()
     def forward(self,
                 rpe: float = 0.0,
@@ -91,8 +94,7 @@ class SpikingVTA(nn.Module):
         # 20-substep spiking loop
         spikes_acc = torch.zeros(self.n_da, device=self.device)
         for _ in range(20):
-            noise = torch.randn(self.n_da, device=self.device) * 0.8
-            I_step = torch.full((self.n_da,), I_total, device=self.device) + noise
+            I_step = torch.full((self.n_da,), I_total, device=self.device) + self._noise_da.normal_(std=0.8)
             sp = self.DA_pop(I_step)
             spikes_acc += sp
 

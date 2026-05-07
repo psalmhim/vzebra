@@ -60,6 +60,9 @@ class SpikingLateralLineEfferent(nn.Module):
         self.precision = 1.0
         self.free_energy = 0.0
 
+        # Pre-allocated noise buffer (avoids per-step MPS allocation)
+        self.register_buffer('_noise', torch.zeros(n_neurons, device=device))
+
     @torch.no_grad()
     def forward(self, motor_command: float = 0.0,
                 lateral_line_input: float = 0.0,
@@ -115,7 +118,7 @@ class SpikingLateralLineEfferent(nn.Module):
         I[7] = self.external_flow * 10.0        # residual external signal
 
         for _ in range(10):
-            self.neurons(I + torch.randn(self.n, device=self.device) * 0.3)
+            self.neurons(I + self._noise.normal_(std=0.3))
         self.rate.copy_(self.neurons.rate)
 
         # --- FEP prediction ---

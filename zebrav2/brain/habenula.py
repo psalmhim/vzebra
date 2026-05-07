@@ -55,6 +55,9 @@ class SpikingHabenula(nn.Module):
         self.register_buffer('lhb_rate',  torch.zeros(n_lhb,  device=device))
         self.register_buffer('rmhb_rate', torch.zeros(n_rmhb, device=device))
         self.register_buffer('lmhb_rate', torch.zeros(n_lmhb, device=device))
+        self.register_buffer('_noise_lhb',  torch.zeros(n_lhb,  device=device))
+        self.register_buffer('_noise_rmhb', torch.zeros(n_rmhb, device=device))
+        self.register_buffer('_noise_lmhb', torch.zeros(n_lmhb, device=device))
         # Backward-compatible mhb_rate = mean of both sides
         self.register_buffer('mhb_rate',  torch.zeros(1, device=device))
         self.register_buffer('disappointment', torch.tensor(0.0, device=device))
@@ -104,9 +107,9 @@ class SpikingHabenula(nn.Module):
         I_lmhb = torch.full((self.n_lmhb,), aversion * 10.0, device=self.device)
         lhb_spikes = torch.zeros(self.n_lhb,  device=self.device)
         for _ in range(20):
-            sp_l  = self.LHb(I_lhb  + torch.randn(self.n_lhb,  device=self.device) * 0.5)
-            self.rMHb(I_rmhb + torch.randn(self.n_rmhb, device=self.device) * 0.5)
-            self.lMHb(I_lmhb + torch.randn(self.n_lmhb, device=self.device) * 0.5)
+            sp_l  = self.LHb(I_lhb  + self._noise_lhb.normal_(std=0.5))
+            self.rMHb(I_rmhb + self._noise_rmhb.normal_(std=0.5))
+            self.lMHb(I_lmhb + self._noise_lmhb.normal_(std=0.5))
             lhb_spikes += sp_l
         self.lhb_rate.copy_(self.LHb.rate)
         self.rmhb_rate.copy_(self.rMHb.rate)

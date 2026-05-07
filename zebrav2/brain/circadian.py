@@ -32,6 +32,8 @@ class SpikingCircadian(nn.Module):
 
         self.register_buffer('day_rate', torch.zeros(n_day, device=device))
         self.register_buffer('night_rate', torch.zeros(n_night, device=device))
+        self.register_buffer('_noise_day', torch.zeros(n_day, device=device))
+        self.register_buffer('_noise_night', torch.zeros(n_night, device=device))
 
         self._step = 0
         self.phase = 0.0  # 0=dawn, 0.5=dusk, 1.0=next dawn
@@ -56,9 +58,9 @@ class SpikingCircadian(nn.Module):
 
         for _ in range(10):  # reduced substeps (6 neurons don't need 50ms)
             self.day_pop(I_day - float(self.night_rate.mean()) * 5.0
-                         + torch.randn(self.n_day, device=self.device) * 0.3)
+                         + self._noise_day.normal_(std=0.3))
             self.night_pop(I_night - float(self.day_rate.mean()) * 5.0
-                           + torch.randn(self.n_night, device=self.device) * 0.3)
+                           + self._noise_night.normal_(std=0.3))
 
         self.day_rate.copy_(self.day_pop.rate)
         self.night_rate.copy_(self.night_pop.rate)

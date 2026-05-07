@@ -65,6 +65,10 @@ class SpikingIPN(nn.Module):
         self.register_buffer('dipn_rate', torch.zeros(n_dipn, device=device))
         self.register_buffer('aversion_memory', torch.tensor(0.0, device=device))
 
+        # Pre-allocated noise buffers (avoids per-step MPS allocation)
+        self.register_buffer('_noise_v', torch.zeros(n_vipn, device=device))
+        self.register_buffer('_noise_d', torch.zeros(n_dipn, device=device))
+
         # Output signals
         self.behavioral_inhibition = 0.0  # 0-1: how much to suppress speed
         self.da_feedback = 0.0            # negative = suppress DA
@@ -110,10 +114,8 @@ class SpikingIPN(nn.Module):
 
         # Run spiking dynamics (20 substeps)
         for _ in range(20):
-            noise_v = torch.randn(self.n_vipn, device=self.device) * 0.5
-            noise_d = torch.randn(self.n_dipn, device=self.device) * 0.5
-            self.vIPN(I_v + noise_v)
-            self.dIPN(I_d + noise_d)
+            self.vIPN(I_v + self._noise_v.normal_(std=0.5))
+            self.dIPN(I_d + self._noise_d.normal_(std=0.5))
 
         self.vipn_rate.copy_(self.vIPN.rate)
         self.dipn_rate.copy_(self.dIPN.rate)

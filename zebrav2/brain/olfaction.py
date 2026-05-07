@@ -81,6 +81,11 @@ class SpikingOlfaction(nn.Module):
         self.register_buffer('food_rate',     torch.zeros(n_food,     device=device))
         self.register_buffer('bilateral_rate', torch.zeros(n_bilateral, device=device))
 
+        # Pre-allocated noise buffers (avoids per-step MPS allocation)
+        self.register_buffer('_noise_alarm',    torch.zeros(n_alarm,    device=device))
+        self.register_buffer('_noise_food',     torch.zeros(n_food,     device=device))
+        self.register_buffer('_noise_bilateral', torch.zeros(n_bilateral, device=device))
+
         # Public state (read by brain_v2)
         self.alarm_level       = 0.0
         self.food_gradient_dir = 0.0   # relative angle to strongest food odor (rad)
@@ -245,14 +250,13 @@ class SpikingOlfaction(nn.Module):
         I_bilateral[:self.n_bilateral_side]  = I_bilateral_L
         I_bilateral[self.n_bilateral_side:]  = I_bilateral_R
 
-        noise = 0.3
         for _ in range(10):   # reduced substeps
             self.alarm_pop(
-                I_alarm + torch.randn(self.n_alarm, device=self.device) * noise)
+                I_alarm + self._noise_alarm.normal_(std=0.3))
             self.food_pop(
-                I_food  + torch.randn(self.n_food,  device=self.device) * noise)
+                I_food  + self._noise_food.normal_(std=0.3))
             self.bilateral_pop(
-                I_bilateral + torch.randn(self.n_bilateral, device=self.device) * noise)
+                I_bilateral + self._noise_bilateral.normal_(std=0.3))
 
         self.alarm_rate.copy_(self.alarm_pop.rate)
         self.food_rate.copy_(self.food_pop.rate)

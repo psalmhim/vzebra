@@ -57,6 +57,9 @@ class SpikingInferiorOlive(nn.Module):
         self.precision = 1.0
         self.free_energy = 0.0
 
+        # Pre-allocated noise buffer (avoids per-step MPS allocation)
+        self.register_buffer('_noise', torch.zeros(n_neurons, device=device))
+
     @torch.no_grad()
     def forward(self, sensory_surprise: float = 0.0,
                 motor_mismatch: float = 0.0,
@@ -108,7 +111,7 @@ class SpikingInferiorOlive(nn.Module):
         I[7] = self.climbing_fiber * 10.0   # climbing fiber output
 
         for _ in range(10):
-            self.neurons(I + torch.randn(self.n, device=self.device) * 0.3)
+            self.neurons(I + self._noise.normal_(std=0.3))
         self.rate.copy_(self.neurons.rate)
 
         # --- FEP prediction ---

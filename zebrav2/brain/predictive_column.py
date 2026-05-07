@@ -133,6 +133,9 @@ class PredictiveCodingColumn(nn.Module):
         self.register_buffer('dp_rate_ch',
             torch.zeros(n_channels, device=device))
         self.free_energy = 0.0
+        # Pre-allocated noise buffers (avoid per-substep MPS allocation)
+        self.register_buffer('_noise_pop', torch.zeros(self.n_pop, device=device))
+        self.register_buffer('_noise_inh', torch.zeros(self.n_inh, device=device))
 
     # ------------------------------------------------------------------
     # Channel ↔ population indexing
@@ -209,8 +212,10 @@ class PredictiveCodingColumn(nn.Module):
         noise_scale = 0.4
 
         for _ in range(self.substeps):
-            noise_pop = torch.randn(self.n_pop, device=self.device) * noise_scale
-            noise_inh = torch.randn(self.n_inh, device=self.device) * noise_scale
+            self._noise_pop.normal_(std=noise_scale)
+            self._noise_inh.normal_(std=noise_scale)
+            noise_pop = self._noise_pop
+            noise_inh = self._noise_inh
 
             # ---- 1. DP: prediction neurons driven by top-down ----
             # Also receives ascending PE from previous substep

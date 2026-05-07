@@ -118,6 +118,11 @@ class SpikingDlPallium(nn.Module):
         self.precision = 1.0
         self.free_energy = 0.0
 
+        # Pre-allocated noise buffers (avoids per-step MPS allocation)
+        self.register_buffer('_noise_dg',  torch.zeros(n_dg,  device=device))
+        self.register_buffer('_noise_ca3', torch.zeros(n_ca3, device=device))
+        self.register_buffer('_noise_ca1', torch.zeros(n_ca1, device=device))
+
     @torch.no_grad()
     def forward(self, place_activation: torch.Tensor,
                 pos_x: float = 400.0, pos_y: float = 300.0,
@@ -158,7 +163,7 @@ class SpikingDlPallium(nn.Module):
 
         # High threshold → only strongest inputs fire (pattern separation)
         for _ in range(8):
-            self.dg(dg_drive + torch.randn(self.n_dg, device=self.device) * 0.2)
+            self.dg(dg_drive + self._noise_dg.normal_(std=0.2))
         self.rate_dg.copy_(self.dg.rate)
 
         # Sparsity metric
@@ -180,7 +185,7 @@ class SpikingDlPallium(nn.Module):
         I_ca3 = I_mossy * encode_weight * 15.0 + I_recurrent * retrieve_weight * 3.0
 
         for _ in range(20):
-            self.ca3(I_ca3 + torch.randn(self.n_ca3, device=self.device) * 0.3)
+            self.ca3(I_ca3 + self._noise_ca3.normal_(std=0.3))
         self.rate_ca3.copy_(self.ca3.rate)
 
         # Attractor convergence metric (compare CA3 activity across steps)
@@ -199,7 +204,7 @@ class SpikingDlPallium(nn.Module):
         ctx_gate = 1.0 + 0.3 * ctx_tensor.mean()  # mild context modulation
 
         for _ in range(8):
-            self.ca1(I_ca1 * ctx_gate + torch.randn(self.n_ca1, device=self.device) * 0.2)
+            self.ca1(I_ca1 * ctx_gate + self._noise_ca1.normal_(std=0.2))
         self.rate_ca1.copy_(self.ca1.rate)
 
         # Combined rate

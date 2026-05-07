@@ -115,6 +115,9 @@ class SpinalCPG(nn.Module):
         self.motor_L         = 0.0
         self.motor_R         = 0.0
 
+        # Pre-allocated noise buffer (avoids per-step MPS allocation)
+        self.register_buffer('_noise', torch.zeros(self.n_total, device=device))
+
     # ------------------------------------------------------------------
     @torch.no_grad()
     def step(self, cpg_drive: float, turn: float = 0.0):
@@ -190,7 +193,8 @@ class SpinalCPG(nn.Module):
         I_syn[self._R_mn] -= self.w_di6_mn * Rdi6
 
         # ---- 5. LIF integration ----
-        noise_t = torch.randn(self.n_total, device=self.device) * self.noise
+        self._noise.normal_(std=self.noise)
+        noise_t = self._noise
         I_net = I_ext + I_syn + noise_t
         v_new = self.tau_m * self.v + (1.0 - self.tau_m) * I_net
         spike  = (v_new >= self.v_thresh).float()

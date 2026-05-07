@@ -43,6 +43,9 @@ class SpikingVestibular(nn.Module):
         self.precision = 1.0
         self.free_energy = 0.0
 
+        # Pre-allocated noise buffer (avoids per-step MPS allocation)
+        self.register_buffer('_noise', torch.zeros(n_neurons, device=device))
+
     @torch.no_grad()
     def forward(self, heading: float, speed: float, turn_rate: float,
                 predicted_turn: float = None, predicted_speed: float = None) -> dict:
@@ -65,7 +68,7 @@ class SpikingVestibular(nn.Module):
         I[4] = self.tilt * 8.0            # roll right
         I[5] = self.tilt * 8.0            # roll left
         for _ in range(10):
-            self.neurons(I + torch.randn(self.n, device=self.device) * 0.3)
+            self.neurons(I + self._noise.normal_(std=0.3))
         self.rate.copy_(self.neurons.rate)
 
         # --- FEP: two-compartment vestibular prediction (Lee et al. 2026) ---

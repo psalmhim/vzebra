@@ -46,6 +46,7 @@ class SpikingLocusCoeruleus(nn.Module):
         # State buffers
         self.register_buffer('lc_rate', torch.zeros(n_lc, device=device))
         self.register_buffer('na_level', torch.tensor(0.3, device=device))
+        self.register_buffer('_noise', torch.zeros(n_lc, device=device))
 
         # Phasic mode state
         self._phasic = False
@@ -85,7 +86,7 @@ class SpikingLocusCoeruleus(nn.Module):
                           device=self.device)
 
         for _ in range(20):
-            self.LC(I_lc + torch.randn(self.n_lc, device=self.device) * 0.5)
+            self.LC(I_lc + self._noise.normal_(std=0.5))
 
         self.lc_rate.copy_(self.LC.rate)
         lc_mean = float(self.lc_rate.mean())

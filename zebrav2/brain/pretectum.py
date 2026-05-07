@@ -53,6 +53,9 @@ class SpikingPretectum(nn.Module):
         self.register_buffer('rate_R', torch.zeros(n_per_side, device=device))
         self.register_buffer('okr_velocity', torch.tensor(0.0, device=device))
 
+        # Pre-allocated noise buffer (avoids per-step MPS allocation)
+        self.register_buffer('_noise', torch.zeros(n_per_side, device=device))
+
         # OKR temporal filter state
         self._okr_filtered = 0.0
         # Direction selectivity tracking
@@ -99,10 +102,8 @@ class SpikingPretectum(nn.Module):
 
         # Run spiking dynamics (20 substeps, same as habenula)
         for _ in range(20):
-            noise = torch.randn(self.n_per_side, device=self.device) * 0.5
-            self.L(I_L + noise)
-            noise = torch.randn(self.n_per_side, device=self.device) * 0.5
-            self.R(I_R + noise)
+            self.L(I_L + self._noise.normal_(std=0.5))
+            self.R(I_R + self._noise.normal_(std=0.5))
 
         self.rate_L.copy_(self.L.rate)
         self.rate_R.copy_(self.R.rate)

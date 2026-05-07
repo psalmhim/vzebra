@@ -58,6 +58,7 @@ class SpikingMauthner(nn.Module):
         # Rate buffers for visualizer
         self.register_buffer('rate_L', torch.tensor(0.0, device=device))
         self.register_buffer('rate_R', torch.tensor(0.0, device=device))
+        self.register_buffer('_noise', torch.zeros(1, device=device))
 
     @torch.no_grad()
     def forward(self,
@@ -103,7 +104,7 @@ class SpikingMauthner(nn.Module):
         colo_inh_L = 0.0  # inhibitory pA from CoLo_R → M_L
 
         for _ in range(20):
-            noise = torch.randn(1, device=self.device) * 0.5
+            noise = self._noise.normal_(std=0.5)
 
             I_ml = (I_vis_L + I_ll + I_gap_L - colo_inh_L) * torch.ones(1, device=self.device) + noise
             I_mr = (I_vis_R + I_ll + I_gap_R - colo_inh_R) * torch.ones(1, device=self.device) + noise

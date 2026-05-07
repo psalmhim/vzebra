@@ -57,6 +57,9 @@ class SpikingCritic(nn.Module):
         self.prev_goal = 0
         self.td_error = 0.0
 
+        # Pre-allocated noise buffer (avoids per-step MPS allocation)
+        self.register_buffer('_noise', torch.zeros(n_hidden, device=device))
+
     def _build_features(self, energy: float, threat: float,
                         food_visible: float, goal: int,
                         cls_probs: torch.Tensor = None,
@@ -99,7 +102,7 @@ class SpikingCritic(nn.Module):
         v_spikes = torch.zeros(self.n_goals, device=self.device)
 
         for _ in range(20):  # reduced substeps
-            sp_h = self.hidden(I_in + torch.randn(self.n_hidden, device=self.device) * 0.3)
+            sp_h = self.hidden(I_in + self._noise.normal_(std=0.3))
             h_spikes += sp_h
 
             I_out = self.W_out(self.hidden.rate.unsqueeze(0)).squeeze(0).detach()

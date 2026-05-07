@@ -43,6 +43,9 @@ class NucleusIsthmi(nn.Module):
         self.register_buffer('rate_L', torch.zeros(n_per_side, device=device))
         self.register_buffer('rate_R', torch.zeros(n_per_side, device=device))
 
+        # Pre-allocated noise buffer (avoids per-step MPS allocation)
+        self.register_buffer('_noise', torch.zeros(n_per_side, device=device))
+
     @torch.no_grad()
     def forward(self, sgc_L_mean: float, sgc_R_mean: float) -> dict:
         """
@@ -69,9 +72,8 @@ class NucleusIsthmi(nn.Module):
         I_R = torch.full((self.n_per_side,), sgc_R_mean * 60.0, device=self.device)
 
         for _ in range(15):
-            noise = torch.randn(self.n_per_side, device=self.device) * 0.5
-            self.NI_L(I_L + noise)
-            self.NI_R(I_R + noise)
+            self.NI_L(I_L + self._noise.normal_(std=0.5))
+            self.NI_R(I_R + self._noise.normal_(std=0.5))
 
         self.rate_L.copy_(self.NI_L.rate)
         self.rate_R.copy_(self.NI_R.rate)

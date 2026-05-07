@@ -47,6 +47,8 @@ class PectoralFinMotor(nn.Module):
         # State buffers
         self.register_buffer('rate_L', torch.zeros(n_per_side, device=device))
         self.register_buffer('rate_R', torch.zeros(n_per_side, device=device))
+        self.register_buffer('_noise_L', torch.zeros(n_per_side, device=device))
+        self.register_buffer('_noise_R', torch.zeros(n_per_side, device=device))
 
         # Goal-dependent gain
         self._goal_gains = {
@@ -93,8 +95,8 @@ class PectoralFinMotor(nn.Module):
                          device=self.device)
 
         for _ in range(15):
-            self.fin_L(I_L + torch.randn(self.n_per_side, device=self.device) * 0.3)
-            self.fin_R(I_R + torch.randn(self.n_per_side, device=self.device) * 0.3)
+            self.fin_L(I_L + self._noise_L.normal_(std=0.3))
+            self.fin_R(I_R + self._noise_R.normal_(std=0.3))
 
         self.rate_L.copy_(self.fin_L.rate)
         self.rate_R.copy_(self.fin_R.rate)

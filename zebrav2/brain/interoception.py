@@ -124,6 +124,9 @@ class SpikingInsularCortex(nn.Module):
         self.valence = 0.0
         self.arousal = 0.0
 
+        # Pre-allocated noise buffer (avoids per-step MPS allocation)
+        self.register_buffer('_noise', torch.zeros(n_per_channel, device=device))
+
     @torch.no_grad()
     def forward(self, energy: float, stress: float, fatigue: float,
                 reward: float = 0.0, threat_acute: bool = False) -> dict:
@@ -154,10 +157,9 @@ class SpikingInsularCortex(nn.Module):
         s_spikes = torch.zeros(self.n_ch, device=self.device)
 
         for _ in range(15):
-            noise = lambda: torch.randn(self.n_ch, device=self.device) * 0.5
-            h_spikes += self.hunger_pop(I_h + noise())
-            f_spikes += self.fatigue_pop(I_f + noise())
-            s_spikes += self.stress_pop(I_s + noise())
+            h_spikes += self.hunger_pop(I_h + self._noise.normal_(std=0.5))
+            f_spikes += self.fatigue_pop(I_f + self._noise.normal_(std=0.5))
+            s_spikes += self.stress_pop(I_s + self._noise.normal_(std=0.5))
 
         self.hunger_rate.copy_(self.hunger_pop.rate)
         self.fatigue_rate.copy_(self.fatigue_pop.rate)

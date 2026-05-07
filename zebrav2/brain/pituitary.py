@@ -75,6 +75,9 @@ class SpikingPituitary(nn.Module):
         self.precision = 1.0
         self.free_energy = 0.0
 
+        # Pre-allocated noise buffer (avoids per-step MPS allocation)
+        self.register_buffer('_noise', torch.zeros(n_neurons, device=device))
+
     @torch.no_grad()
     def forward(self, crh_release: float = 0.0,
                 stress: float = 0.0,
@@ -149,7 +152,7 @@ class SpikingPituitary(nn.Module):
         I[11] = (1.0 - stress) * 8.0     # social calm signal
 
         for _ in range(10):
-            self.neurons(I + torch.randn(self.n, device=self.device) * 0.3)
+            self.neurons(I + self._noise.normal_(std=0.3))
         self.rate.copy_(self.neurons.rate)
 
         # --- FEP prediction ---

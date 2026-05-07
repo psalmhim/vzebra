@@ -1643,8 +1643,10 @@ class ZebrafishBrainV2(nn.Module):
         if self._step_count % self.cfg.plasticity.vae_training_every == 0:
             self.vae.train_step(tect_all, state_ctx)
         z_now, _ = self.vae.encode(tect_all, state_ctx)
-        # Transition training
-        if self._z_prev is not None and self._last_action_ctx is not None:
+        # Transition training — gated to same frequency as VAE training to avoid
+        # 500 backward passes per round fragmenting the MPS allocator pool.
+        if (self._z_prev is not None and self._last_action_ctx is not None
+                and self._step_count % self.cfg.plasticity.vae_training_every == 0):
             self.vae.update_transition(self._z_prev, self._last_action_ctx, z_now)
         self._z_prev = z_now.copy()
         goal_oh = np.zeros(3, dtype=np.float32)

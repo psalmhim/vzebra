@@ -51,6 +51,9 @@ class SpikingTactile(nn.Module):
         self._predicted_tail = 0.0
         self._swim_speed = 0.0
 
+        # Pre-allocated noise buffer (avoids per-step MPS allocation)
+        self.register_buffer('_noise', torch.zeros(n_neurons, device=device))
+
     @torch.no_grad()
     def forward(self, collision: bool = False, wall_proximity: float = 0.0,
                 heading_to_wall: float = 0.0,
@@ -135,7 +138,7 @@ class SpikingTactile(nn.Module):
         I[5] = tail * 8.0        # tail -
 
         for _ in range(10):
-            self.neurons(I + torch.randn(self.n, device=self.device) * 0.3)
+            self.neurons(I + self._noise.normal_(std=0.3))
         self.rate.copy_(self.neurons.rate)
 
         # --- FEP prediction: self-touch vs external ---

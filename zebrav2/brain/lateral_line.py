@@ -75,6 +75,10 @@ class SpikingLateralLine(nn.Module):
         self.threat_pe = 0.0
         self.free_energy = 0.0
 
+        # Pre-allocated noise buffers (avoids per-step MPS allocation)
+        self.register_buffer('_noise4', torch.zeros(4, device=device))
+        self.register_buffer('_noise8', torch.zeros(8, device=device))
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -249,8 +253,8 @@ class SpikingLateralLine(nn.Module):
         # === 5. Simulate ===
 
         for _ in range(_SUBSTEPS):
-            noise4 = torch.randn(4, device=self.device) * 0.5
-            noise8 = torch.randn(8, device=self.device) * 0.5
+            noise4 = self._noise4.normal_(std=0.5)
+            noise8 = self._noise8.normal_(std=0.5)
             self.superficial_ant(I_sup_ant   + noise8)
             self.superficial_post(I_sup_post + noise8)
             self.canal_ant(I_can_ant         + noise4)

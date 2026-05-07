@@ -57,6 +57,9 @@ class SpikingPredictiveNet(nn.Module):
         # Learning rate
         self.lr = 5e-4
 
+        # Pre-allocated noise buffer (avoids per-step MPS allocation)
+        self.register_buffer('_noise', torch.zeros(n_hidden, device=device))
+
     def _pool_input(self, retinal: torch.Tensor) -> torch.Tensor:
         """Pool retinal input to n_input size."""
         if retinal.shape[0] == self.n_input:
@@ -74,7 +77,7 @@ class SpikingPredictiveNet(nn.Module):
         I_enc = I_enc * (6.0 / (I_enc.abs().mean() + 1e-8))
 
         for _ in range(20):  # reduced substeps
-            self.enc_hidden(I_enc + torch.randn(self.n_hidden, device=self.device) * 0.3)
+            self.enc_hidden(I_enc + self._noise.normal_(std=0.3))
 
         self.enc_rate.copy_(self.enc_hidden.rate)
         latent = self.W_enc_lat(self.enc_hidden.rate.unsqueeze(0)).squeeze(0).detach()
@@ -91,7 +94,7 @@ class SpikingPredictiveNet(nn.Module):
         I_dec = I_dec * (6.0 / (I_dec.abs().mean() + 1e-8))
 
         for _ in range(20):  # reduced substeps
-            self.dec_hidden(I_dec + torch.randn(self.n_hidden, device=self.device) * 0.3)
+            self.dec_hidden(I_dec + self._noise.normal_(std=0.3))
 
         self.dec_rate.copy_(self.dec_hidden.rate)
         pred = self.W_dec_out(self.dec_hidden.rate.unsqueeze(0)).squeeze(0).detach()

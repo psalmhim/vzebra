@@ -42,6 +42,7 @@ class SpikingColorVision(nn.Module):
         self.register_buffer('blue_rate', torch.zeros(n_per_channel, device=device))
         self.register_buffer('green_rate', torch.zeros(n_per_channel, device=device))
         self.register_buffer('red_rate', torch.zeros(n_per_channel, device=device))
+        self.register_buffer('_noise_uv', torch.zeros(n_per_channel, device=device))
 
         # Spectral signature templates
         self.signatures = {
@@ -97,10 +98,10 @@ class SpikingColorVision(nn.Module):
         I_r = torch.full((self.n_ch,), actual[3] * 10.0, device=self.device)
 
         for _ in range(10):
-            self.uv_pop(I_uv + torch.randn(self.n_ch, device=self.device) * 0.3)
-            self.blue_pop(I_b + torch.randn(self.n_ch, device=self.device) * 0.3)
-            self.green_pop(I_g + torch.randn(self.n_ch, device=self.device) * 0.3)
-            self.red_pop(I_r + torch.randn(self.n_ch, device=self.device) * 0.3)
+            self.uv_pop(I_uv + self._noise_uv.normal_(std=0.3))
+            self.blue_pop(I_b + self._noise_uv.normal_(std=0.3))
+            self.green_pop(I_g + self._noise_uv.normal_(std=0.3))
+            self.red_pop(I_r + self._noise_uv.normal_(std=0.3))
 
         self.uv_rate.copy_(self.uv_pop.rate)
         self.blue_rate.copy_(self.blue_pop.rate)

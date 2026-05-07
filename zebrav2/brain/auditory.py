@@ -34,6 +34,7 @@ class SpikingAuditory(nn.Module):
         self.neurons = IzhikevichLayer(n_neurons, 'RS', device)
         self.neurons.i_tonic.fill_(-1.0)
         self.register_buffer('rate', torch.zeros(n_neurons, device=device))
+        self.register_buffer('_noise', torch.zeros(n_neurons, device=device))
 
         # FEP: 3 frequency bands (low <200Hz, mid 200-1000Hz, high >1000Hz)
         self.pc = TwoCompColumn(n_channels=3, n_per_ch=4, substeps=8, device=device)
@@ -123,7 +124,7 @@ class SpikingAuditory(nn.Module):
         I[5] = self.high_freq * 8.0    # high freq -
 
         for _ in range(10):
-            self.neurons(I + torch.randn(self.n, device=self.device) * 0.3)
+            self.neurons(I + self._noise.normal_(std=0.3))
         self.rate.copy_(self.neurons.rate)
 
         # --- FEP prediction ---

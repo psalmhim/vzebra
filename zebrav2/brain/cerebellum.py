@@ -74,6 +74,7 @@ class SpikingCerebellum(nn.Module):
         self.register_buffer('pc_rate', torch.zeros(n_pc, device=device))
         self.register_buffer('dcn_rate', torch.zeros(n_dcn, device=device))
         self.register_buffer('prediction_error', torch.tensor(0.0, device=device))
+        self.register_buffer('_noise_gc', torch.zeros(n_gc, device=device))
 
         # Eligibility trace for parallel fiber LTD
         self.register_buffer('pf_elig', torch.zeros(n_pc, n_gc, device=device))
@@ -112,7 +113,7 @@ class SpikingCerebellum(nn.Module):
 
         for _ in range(20):  # reduced substeps
             # GC: mossy fiber driven, sparse
-            sp_gc = self.GC(I_mf_gc + torch.randn(self.n_gc, device=self.device) * 0.5)
+            sp_gc = self.GC(I_mf_gc + self._noise_gc.normal_(std=0.5))
             gc_spikes += sp_gc
 
             # PC: parallel fiber (GC→PC) + per-PC climbing fiber (topographic IO→PC)

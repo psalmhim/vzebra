@@ -52,6 +52,10 @@ class SpikingRaphe(nn.Module):
         # EMA smoothing for stable output (prevents oscillation)
         self._ht5_ema = 0.5
 
+        # Pre-allocated noise buffers (avoids per-step MPS allocation)
+        self.register_buffer('_noise_dr', torch.zeros(n_dr, device=device))
+        self.register_buffer('_noise_mr', torch.zeros(n_mr, device=device))
+
     @torch.no_grad()
     def forward(self, lhb_rate: float = 0.0, ipn_raphe_drive: float = 0.0,
                 amygdala_stress: float = 0.0, circadian: float = 0.7,
@@ -77,8 +81,8 @@ class SpikingRaphe(nn.Module):
         I_mr = torch.full((self.n_mr,), max(0.0, base * 0.7), device=self.device)
 
         for _ in range(20):
-            self.DR(I_dr + torch.randn(self.n_dr, device=self.device) * 0.5)
-            self.MR(I_mr + torch.randn(self.n_mr, device=self.device) * 0.5)
+            self.DR(I_dr + self._noise_dr.normal_(std=0.5))
+            self.MR(I_mr + self._noise_mr.normal_(std=0.5))
 
         self.dr_rate.copy_(self.DR.rate)
         self.mr_rate.copy_(self.MR.rate)

@@ -90,6 +90,10 @@ class TwoCompColumn(nn.Module):
         self.n_total = n_channels * n_per_ch
         self.substeps = substeps
 
+        # Pre-allocated noise buffer — filled in-place each substep to avoid
+        # repeated MPS tensor allocation that fragments the GPU memory pool.
+        self.register_buffer('_noise', torch.zeros(self.n_total, device=device))
+
         # Izhikevich parameters
         a, b, c, d = IZHI_PRESETS[cell_type]
         self.register_buffer('izhi_a', torch.full((self.n_total,), a, device=device))
@@ -236,8 +240,8 @@ class TwoCompColumn(nn.Module):
 
         # --- 4. Izhikevich spiking dynamics ---
         for _ in range(self.substeps):
-            noise = torch.randn(self.n_total, device=self.device) * 0.3
-            I_step = I_total + noise
+            self._noise.normal_(std=0.3)   # in-place: reuses buffer, no MPS alloc
+            I_step = I_total + self._noise
 
             # Half-step Euler (numerical stability)
             v_h = self.v_s + 0.5 * (0.04 * self.v_s ** 2 + 5 * self.v_s

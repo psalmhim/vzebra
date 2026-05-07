@@ -54,6 +54,9 @@ class SpikingAmygdalaV2(nn.Module):
         self.retinal_gain = 0.08
         self.proximity_range = 200.0
 
+        # Pre-allocated noise buffer (avoids per-step MPS allocation)
+        self.register_buffer('_noise_la', torch.zeros(n_la, device=device))
+
     @torch.no_grad()
     def forward(self, enemy_pixels: float, pred_dist: float,
                 stress: float = 0.0, pred_facing: float = 0.0) -> float:
@@ -79,7 +82,7 @@ class SpikingAmygdalaV2(nn.Module):
 
         for _ in range(20):  # reduced substeps
             # LA: sensory-driven
-            la_sp = self.LA(I_la_base + torch.randn(self.n_la, device=self.device) * 1.0)
+            la_sp = self.LA(I_la_base + self._noise_la.normal_(std=1.0))
             la_spike_acc += la_sp
 
             # ITC: extinction gate (LA → ITC)

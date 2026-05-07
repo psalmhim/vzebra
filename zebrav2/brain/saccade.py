@@ -42,6 +42,8 @@ class SpikingSaccade(nn.Module):
 
         self.register_buffer('dir_rate', torch.zeros(n_dir, device=device))
         self.register_buffer('trigger_rate', torch.zeros(n_trigger, device=device))
+        self.register_buffer('_noise_dir', torch.zeros(n_dir, device=device))
+        self.register_buffer('_noise_trigger', torch.zeros(n_trigger, device=device))
 
         self.gaze_offset = 0.0  # radians relative to body heading
         self.saccade_active = False
@@ -109,8 +111,8 @@ class SpikingSaccade(nn.Module):
             I_trigger[0 if target_gaze > 0 else 1] = gaze_error * 15.0
 
         for _ in range(10):
-            self.dir_pop(I_dir + torch.randn(self.n_dir, device=self.device) * 0.3)
-            self.trigger_pop(I_trigger + torch.randn(self.n_trigger, device=self.device) * 0.3)
+            self.dir_pop(I_dir + self._noise_dir.normal_(std=0.3))
+            self.trigger_pop(I_trigger + self._noise_trigger.normal_(std=0.3))
 
         self.dir_rate.copy_(self.dir_pop.rate)
         self.trigger_rate.copy_(self.trigger_pop.rate)

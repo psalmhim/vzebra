@@ -48,6 +48,9 @@ class SpikingWorkingMemory(nn.Module):
         self.register_buffer('exc_rate', torch.zeros(n_exc, device=device))
         self.register_buffer('inh_rate', torch.zeros(n_inh, device=device))
         self.register_buffer('slot_activity', torch.zeros(n_slots, device=device))
+        # Pre-allocated noise buffers (avoid per-step MPS allocation)
+        self.register_buffer('_noise_exc', torch.zeros(n_exc, device=device))
+        self.register_buffer('_noise_inh', torch.zeros(n_inh, device=device))
 
     @torch.no_grad()
     def forward(self, input_drive: torch.Tensor = None,
@@ -74,11 +77,12 @@ class SpikingWorkingMemory(nn.Module):
             # Inhibition
             I_inh_to_exc = self.W_inh_back @ self.inh.rate * 8.0
 
-            self.exc(I_ext + I_rec + I_inh_to_exc
-                     + torch.randn(self.n_exc, device=self.device) * 0.3)
+            self._noise_exc.normal_(std=0.3)
+            self.exc(I_ext + I_rec + I_inh_to_exc + self._noise_exc)
 
             I_exc_to_inh = self.W_inh @ self.exc.rate * 5.0
-            self.inh(I_exc_to_inh + torch.randn(self.n_inh, device=self.device) * 0.3)
+            self._noise_inh.normal_(std=0.3)
+            self.inh(I_exc_to_inh + self._noise_inh)
 
         self.exc_rate.copy_(self.exc.rate)
         self.inh_rate.copy_(self.inh.rate)

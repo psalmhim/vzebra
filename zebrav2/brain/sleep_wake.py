@@ -27,6 +27,8 @@ class SpikingSleepWake(nn.Module):
 
         self.register_buffer('wake_rate', torch.zeros(n_wake, device=device))
         self.register_buffer('sleep_rate', torch.zeros(n_sleep, device=device))
+        self.register_buffer('_noise_wake', torch.zeros(n_wake, device=device))
+        self.register_buffer('_noise_sleep', torch.zeros(n_sleep, device=device))
 
         self.is_sleeping = False
         self.sleep_pressure = 0.0  # accumulates with time awake
@@ -60,9 +62,9 @@ class SpikingSleepWake(nn.Module):
 
         for _ in range(10):  # reduced substeps (4 neurons)
             self.wake_pop(I_wake - float(self.sleep_rate.mean()) * 8.0
-                          + torch.randn(self.n_wake, device=self.device) * 0.3)
+                          + self._noise_wake.normal_(std=0.3))
             self.sleep_pop(I_sleep - float(self.wake_rate.mean()) * 8.0
-                           + torch.randn(self.n_sleep, device=self.device) * 0.3)
+                           + self._noise_sleep.normal_(std=0.3))
 
         self.wake_rate.copy_(self.wake_pop.rate)
         self.sleep_rate.copy_(self.sleep_pop.rate)

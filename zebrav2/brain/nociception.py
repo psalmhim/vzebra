@@ -32,6 +32,7 @@ class SpikingNociception(nn.Module):
         self.neurons = IzhikevichLayer(n_neurons, 'RS', device)
         self.neurons.i_tonic.fill_(-1.0)
         self.register_buffer('rate', torch.zeros(n_neurons, device=device))
+        self.register_buffer('_noise', torch.zeros(n_neurons, device=device))
 
         # FEP: 3 channels (mechanical, thermal, chemical)
         self.pc = TwoCompColumn(n_channels=3, n_per_ch=4, substeps=8, device=device)
@@ -126,7 +127,7 @@ class SpikingNociception(nn.Module):
         I[5] = self.chemical_pain * 10.0  # chemical noci -
 
         for _ in range(10):
-            self.neurons(I + torch.randn(self.n, device=self.device) * 0.3)
+            self.neurons(I + self._noise.normal_(std=0.3))
         self.rate.copy_(self.neurons.rate)
 
         # --- FEP prediction ---

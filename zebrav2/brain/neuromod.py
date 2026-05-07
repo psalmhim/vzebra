@@ -23,6 +23,7 @@ class NeuromodSystem(nn.Module):
         self.register_buffer('V',     torch.tensor(0.0, device=device))
         # Accumulators
         self.register_buffer('flee_frac_ema', torch.tensor(0.0, device=device))
+        self.register_buffer('_noise', torch.zeros(1, device=device))
 
     def update(self, reward: float, amygdala_alpha: float, cms: float,
                flee_active: bool, fatigue: float, circadian: float,
@@ -35,7 +36,7 @@ class NeuromodSystem(nn.Module):
         # --- DA (dopamine): reward prediction error ---
         RPE = r - self.V
         self.V.copy_(self.V + 0.05 * RPE)
-        DA_new = torch.sigmoid(3.0 * RPE) + 0.01 * torch.randn(1, device=self.device).squeeze()
+        DA_new = torch.sigmoid(3.0 * RPE) + 0.01 * self._noise.normal_(std=1.0).squeeze()
         self.DA.copy_(DA_new.clamp(0.0, 1.0))
         # --- NA (noradrenaline): arousal/threat ---
         na_drive = 0.3 + 0.5 * amygdala_alpha + 0.2 * cms
