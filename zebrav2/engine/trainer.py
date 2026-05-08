@@ -211,16 +211,22 @@ class TrainingEngine:
         self.recorder = Recorder(channels=channels)
 
     def _compute_fitness(self, survived, food_eaten, mean_efe, energy_final,
-                          geo_coverage):
+                          geo_coverage, goal_dist=None):
         """Compute fitness score from objectives config."""
         obj = self.config.data.get('objectives', {})
         fitness = (
-            obj.get('survival_weight', 1.5) * survived +           # raised from 1.0
+            obj.get('survival_weight', 1.0) * survived +
             obj.get('food_weight', 50.0) * food_eaten +
-            obj.get('efe_weight', -5.0) * mean_efe +               # softer: was -10.0
+            obj.get('efe_weight', -5.0) * mean_efe +
             obj.get('energy_weight', 0.5) * energy_final +
-            obj.get('exploration_weight', 5.0) * min(5.0, geo_coverage * 100)  # capped
+            obj.get('exploration_weight', 5.0) * min(5.0, geo_coverage * 100)
         )
+        # Penalise FLEE over-use: any FLEE fraction above 70% is taxed.
+        # This prevents the fish from optimising survival by never foraging.
+        if goal_dist is not None and survived > 0:
+            flee_frac = goal_dist.get('FLEE', 0) / survived
+            flee_excess = max(0.0, flee_frac - obj.get('flee_cap', 0.70))
+            fitness -= obj.get('flee_penalty', 80.0) * survived * flee_excess
         return float(fitness)
 
     def run_round(self, round_num):
@@ -453,7 +459,8 @@ class TrainingEngine:
             'geo_coverage': geo_coverage,
             'goal_distribution': {GOAL_NAMES[g]: gc.get(g, 0) for g in range(4)},
             'fitness': self._compute_fitness(survived, total_eaten, mean_efe,
-                                              self.brain.energy, geo_coverage),
+                                              self.brain.energy, geo_coverage,
+                                              goal_dist={GOAL_NAMES[g]: gc.get(g, 0) for g in range(4)}),
             'vae_memory_nodes': self.brain.vae.memory.n_allocated,
             'critic_mean_value': float(self.brain.critic.values.mean()),
             'personality': self.brain.personality.get('description', 'default'),
@@ -788,7 +795,8 @@ class TrainingEngine:
                 GOAL_NAMES[g]: gc.get(g, 0) for g in range(4)},
             'fitness': self._compute_fitness(
                 survived, sum(total_eaten), mean_efe,
-                brains[0].energy, geo_coverage),
+                brains[0].energy, geo_coverage,
+                goal_dist={GOAL_NAMES[g]: gc.get(g, 0) for g in range(4)}),
             'vae_memory_nodes': brains[0].vae.memory.n_allocated,
             'critic_mean_value': float(brains[0].critic.values.mean()),
             'personality': 'mixed',
