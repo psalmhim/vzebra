@@ -685,6 +685,11 @@ class ZebrafishBrainV2(nn.Module):
         energy_urgency = (starvation * starvation * _ec.starvation_urgency_weight + future_crisis * _ec.future_crisis_weight + energy_anxiety) * float(_mw[7])
         _mc[7] = starvation * starvation * _ec.starvation_urgency_weight + future_crisis * _ec.future_crisis_weight + energy_anxiety
         G_forage = _ec.forage_uncertainty_weight * U + _ec.forage_food_weight * p_food + _ec.forage_offset - energy_urgency
+        # Threat-food proximity penalty: visible food near a visible predator is
+        # risky — discount FORAGE proportionally to co-activation of food and enemy cues.
+        # This fixes scenario A (safe vs risky food): fish learns to avoid predator-zone food.
+        _food_threat_coeff = getattr(_ec, 'food_threat_coeff', 0.8)
+        G_forage -= _food_threat_coeff * p_food * p_enemy
         G_flee   = _ec.flee_cms_weight * self.cms + _ec.flee_enemy_weight * p_enemy + _ec.flee_offset
         G_explore = 0.3 * U - 0.3 + _ec.explore_offset + starvation * _ec.explore_starvation_weight + future_crisis * _ec.explore_future_crisis_weight
         G_social  = _ec.social_offset + starvation * _ec.social_starvation_weight + future_crisis * _ec.social_future_crisis_weight
@@ -797,8 +802,11 @@ class ZebrafishBrainV2(nn.Module):
         novelty = 0.5 * vae_novelty + 0.5 * place_novelty
         self._novelty_ema = 0.98 * self._novelty_ema + 0.02 * novelty
         # High novelty → explore more (lower G_explore = more preferred) (mod_w[3])
-        if self._novelty_ema > 0.5:
-            _novelty_contrib = 0.3 * (self._novelty_ema - 0.5) * float(_mw[3])
+        # Lowered threshold 0.5→0.35 and increased scale 0.3→0.5 to improve scenario E.
+        _novelty_threshold = getattr(_ec, 'novelty_threshold', 0.35)
+        _novelty_scale = getattr(_ec, 'novelty_scale', 0.5)
+        if self._novelty_ema > _novelty_threshold:
+            _novelty_contrib = _novelty_scale * (self._novelty_ema - _novelty_threshold) * float(_mw[3])
             G_explore -= _novelty_contrib
             self._exploration_phase = True
             _mc[3] = _novelty_contrib

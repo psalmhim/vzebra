@@ -35,11 +35,18 @@ class EILayer(nn.Module):
         self.syn_ie = Synapse(self.n_i, self.n_e, 'GABA_A', G_IE, device)
         self.syn_ii = Synapse(self.n_i, self.n_i, 'GABA_A', G_II, device)
 
-        # Initialize connectivity
+        # Initialize connectivity with fixed seed so topology is reproducible
+        # across restarts, enabling clean checkpoint transfers.
+        # hashlib gives a deterministic result regardless of PYTHONHASHSEED.
+        import hashlib as _hl
+        _seed = int(_hl.md5(f'{name}_{n_total}'.encode()).hexdigest()[:8], 16) % (2 ** 31)
+        _rng_state = torch.get_rng_state()
+        torch.manual_seed(_seed)
         self.syn_ee.init_sparse(P_EE, 1.0)
         self.syn_ei.init_sparse(P_EI, 1.0)
         self.syn_ie.init_sparse(P_IE, 1.0)
         self.syn_ii.init_sparse(P_II, 1.0)
+        torch.set_rng_state(_rng_state)
 
         # State: accumulated spikes over behavioral step
         self.register_buffer('spike_E', torch.zeros(self.n_e, device=device))
@@ -88,10 +95,15 @@ class EILayer(nn.Module):
         Called by SpatialRegistry.assign_to_brain after neuron positions are known.
         Uses p_max = P_EE/EI/IE/II so the mean density matches the flat init.
         """
+        import hashlib as _hl
+        _seed = int(_hl.md5(f'{self.name}_{self.n_total}_dist'.encode()).hexdigest()[:8], 16) % (2 ** 31)
+        _rng_state = torch.get_rng_state()
+        torch.manual_seed(_seed)
         self.syn_ee.init_distance_sparse(pos_e, pos_e, lambda_um, P_EE)
         self.syn_ei.init_distance_sparse(pos_e, pos_i, lambda_um, P_EI)
         self.syn_ie.init_distance_sparse(pos_i, pos_e, lambda_um, P_IE)
         self.syn_ii.init_distance_sparse(pos_i, pos_i, lambda_um, P_II)
+        torch.set_rng_state(_rng_state)
 
     def reset(self):
         self.E.reset()

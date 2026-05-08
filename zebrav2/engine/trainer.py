@@ -229,12 +229,12 @@ class TrainingEngine:
             fitness -= obj.get('flee_penalty', 80.0) * survived * flee_excess
         return float(fitness)
 
-    def run_round(self, round_num):
+    def run_round(self, round_num, seed_override=None):
         """Run one episode/round. Returns metrics dict."""
         self.current_round = round_num
         cfg = self.config
 
-        seed = cfg.get('env.seed')
+        seed = seed_override if seed_override is not None else cfg.get('env.seed')
         if seed is None:
             salt = cfg.get('training.seed_salt', 0)
             seed = round_num * 7 + 1 + salt
@@ -905,11 +905,13 @@ class TrainingEngine:
         self.brain = self._create_brain()
         best_fitness = -float('inf')
 
+        n_seeds = self.config.get('training.seeds_per_round', 1)
         print(f"\n{'='*60}")
-        print(f"  Training: {n_rounds} rounds")
+        print(f"  Training: {n_rounds} rounds × {n_seeds} seed(s)/round")
         print(f"  Config: {self.config.get('fish.personality_mode')} personality, "
               f"{self.config.get('env.n_food')} food, "
-              f"predator={self.config.get('env.predator_ai')}")
+              f"predator={self.config.get('env.predator_ai')}, "
+              f"steps={self.config.get('env.max_steps', 500)}")
         print(f"  Seed salt: {self.config.get('training.seed_salt', 0)}")
         print(f"{'='*60}")
 
@@ -919,7 +921,34 @@ class TrainingEngine:
 
             round_num = self.total_rounds_done + r
             t0 = time.time()
-            metrics = self.run_round(round_num)
+            n_seeds = self.config.get('training.seeds_per_round', 1)
+            salt = self.config.get('training.seed_salt', 0)
+
+            if n_seeds <= 1:
+                metrics = self.run_round(round_num)
+            else:
+                # Run n_seeds episodes sequentially; brain accumulates world
+                # knowledge across all of them — same as a long multi-phase episode.
+                # Average numeric metrics to reduce seed-variance in fitness.
+                sub_metrics = []
+                for si in range(n_seeds):
+                    s = round_num * 7 + 1 + salt + si * 10000
+                    sub_metrics.append(self.run_round(round_num, seed_override=s))
+                # Average scalar fields; use first run's non-scalar fields
+                metrics = dict(sub_metrics[0])
+                for key in ('survived', 'food_eaten', 'mean_efe', 'energy_final',
+                            'geo_coverage', 'fitness'):
+                    metrics[key] = float(np.mean([m[key] for m in sub_metrics]))
+                # Aggregate goal counts across seeds for FLEE% display
+                from collections import Counter as _Counter
+                merged_gc = _Counter()
+                for m in sub_metrics:
+                    for g, cnt in m.get('goal_distribution', {}).items():
+                        merged_gc[g] += cnt
+                metrics['goal_distribution'] = dict(merged_gc)
+                metrics['survived_per_seed'] = [m['survived'] for m in sub_metrics]
+                metrics['food_per_seed'] = [m['food_eaten'] for m in sub_metrics]
+
             elapsed = time.time() - t0
 
             metrics['elapsed_sec'] = elapsed
@@ -931,9 +960,10 @@ class TrainingEngine:
 
             fitness = metrics['fitness']
             best_tag = ' ★' if fitness > best_fitness else ''
-            print(f"  Round {round_num}: survived={metrics['survived']}, "
-                  f"food={metrics['food_eaten']}, fitness={fitness:.0f}, "
-                  f"EFE={metrics['mean_efe']:.4f} ({elapsed:.0f}s){best_tag}")
+            seed_info = (f"  seeds={metrics['survived_per_seed']}" if n_seeds > 1 else '')
+            print(f"  Round {round_num}: survived={metrics['survived']:.0f}, "
+                  f"food={metrics['food_eaten']:.1f}, fitness={fitness:.0f}, "
+                  f"EFE={metrics['mean_efe']:.4f} ({elapsed:.0f}s){best_tag}{seed_info}")
 
             if self.on_round_end:
                 self.on_round_end(metrics)

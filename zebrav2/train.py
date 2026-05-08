@@ -36,16 +36,19 @@ from zebrav2.engine.trainer import TrainingEngine
 
 def main():
     parser = argparse.ArgumentParser(description='Single-agent training')
-    parser.add_argument('--rounds',     type=int, default=30)
-    parser.add_argument('--checkpoint', type=str, default=None)
-    parser.add_argument('--predator',   type=str, default='intelligent',
+    parser.add_argument('--rounds',          type=int, default=30)
+    parser.add_argument('--checkpoint',      type=str, default=None)
+    parser.add_argument('--predator',        type=str, default='intelligent',
                         choices=['none', 'simple', 'intelligent'])
-    parser.add_argument('--food',       type=int, default=20)
-    parser.add_argument('--steps',      type=int, default=500)
-    parser.add_argument('--save-every',  type=int, default=5)
-    parser.add_argument('--seed-salt',   type=int, default=0,
-                        help='Shift training seeds by this amount to explore different scenarios')
-    parser.add_argument('--device',      type=str, default=None,
+    parser.add_argument('--food',            type=int, default=20)
+    parser.add_argument('--steps',           type=int, default=1000,
+                        help='Max steps per episode (default: 1000)')
+    parser.add_argument('--save-every',      type=int, default=5)
+    parser.add_argument('--seed-salt',       type=int, default=0,
+                        help='Shift training seeds to explore different scenarios')
+    parser.add_argument('--seeds-per-round', type=int, default=3,
+                        help='Episodes per round (averaged for stable fitness, default: 3)')
+    parser.add_argument('--device',          type=str, default=None,
                         help='Compute device: cpu, mps, cuda (default: auto)')
     args = parser.parse_args()
 
@@ -65,12 +68,13 @@ def main():
                 print(f"  Auto-selected checkpoint: {pts[-1]}")
 
     config = TrainingConfig()
-    config.data['training']['n_rounds']    = args.rounds
-    config.data['training']['save_every']  = args.save_every
-    config.data['training']['seed_salt']   = args.seed_salt
-    config.data['env']['predator_ai']      = args.predator
-    config.data['env']['n_food']           = args.food
-    config.data['env']['max_steps']        = args.steps
+    config.data['training']['n_rounds']       = args.rounds
+    config.data['training']['save_every']     = args.save_every
+    config.data['training']['seed_salt']      = args.seed_salt
+    config.data['training']['seeds_per_round'] = args.seeds_per_round
+    config.data['env']['predator_ai']         = args.predator
+    config.data['env']['n_food']              = args.food
+    config.data['env']['max_steps']           = args.steps
     if checkpoint:
         config.data['training']['load_checkpoint'] = checkpoint
 
