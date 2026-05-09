@@ -92,9 +92,9 @@ enemy (NA-gated) categories from behavioral confirmation signals.
 The reticulospinal voluntary pathway, driven by pallium-D left/right
 asymmetry gated through the basal ganglia, contributes to non-escape
 motor output alongside the primary retinal turn signal.
-Ablation reveals that interoception and amygdala are the most impactful
-modules ($-20\%$ and $-7\%$ survival steps respectively when removed),
-while the RL critic and habenula each contribute to foraging efficiency.
+Ablation reveals that olfaction is the only module whose removal reduces
+survival ($-7\%$), while habenula and olfaction each reduce food intake by
+$-35\%$, followed by RL critic ($-28\%$) and amygdala ($-25\%$).
 The system achieves 84/100 on a five-scenario decision rationality
 benchmark: safe food selection (A=78/100), predator-charge detection
 perfect (B=100/100), starvation dilemma (C=100/100), easy foraging
@@ -1962,16 +1962,24 @@ prediction errors.
 
 Systematic ablation of individual spiking modules reveals their
 contributions to foraging and survival (Figure~\ref{fig:ablation}).
-In 300-step episodes with $n=3$ seeds per condition, removal of the
-interoceptive system (insula) produced the largest survival decrement
-($-10\%$, from 300 to $270 \pm 42$ steps), confirming its role in
-allostatic homeostasis and arousal-gated decision urgency.
-All other module removals left survival at the 300-step ceiling,
+In 300-step episodes with $n=3$ seeds per condition, olfaction removal
+is the only ablation that degrades survival ($280 \pm 28$ vs.\ $300 \pm 0$
+steps, $-7\%$), confirming its role in non-visual gradient-based food
+detection; without olfactory guidance the fish cannot locate food
+outside the visual field, leading to occasional energy depletion
+and predator capture.
+All other module removals leave survival at the 300-step ceiling,
 confirming the brain's fault tolerance under single-module ablation.
-Food intake was most affected by RL critic removal ($-28\%$, from
-$8.7$ to $6.3$ items), followed by interoception ($-23\%$)
-and olfaction ($-16\%$), while habenula removal unexpectedly
-increased food intake, suggesting compensatory goal switching.
+Food intake is most affected by habenula and olfaction removal (both
+$-35\%$, from $10.7$ to $7.0$ items), with the habenula effect reflecting
+its frustration-gated redirect signal: without habenula activity, the
+fish persists in unproductive foraging locations rather than exploring
+alternatives.
+RL critic removal reduces food by $-28\%$ ($7.7$ items) and amygdala
+removal by $-25\%$ ($8.0$ items), while VAE removal reduces food by
+$-16\%$ and cerebellum removal by $-13\%$.
+Predictive net and interoception removals have the smallest effects
+($-7\%$ and $-9\%$ respectively).
 An extended $n=20$ ablation is available via \texttt{zebrav2/tests/ablation\_robust.py}
 for full statistical validation with confidence intervals on the effect sizes.
 
@@ -3228,9 +3236,9 @@ classifier; and (6)~online VAE ELBO minimization for latent world
 modeling.
 Key results (Table~\ref{tab:v2summary}) include 84/100 decision
 rationality (round~177 checkpoint), perfect 10/10 seed survival
-(500-step episodes, 0 predator captures), interoception and amygdala
-identified as most impactful via ablation, and a 96.2\% spiking
-classifier with online fine-tuning.
+(500-step episodes, 0 predator captures), olfaction and habenula
+identified as most impactful via ablation ($-35\%$ food each), and
+a 96.2\% spiking classifier with online fine-tuning.
 The model demonstrates that the free energy principle provides a
 unified computational language sufficient to organize the diverse
 functions of a vertebrate brain---from retinal sampling through
