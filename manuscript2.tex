@@ -101,8 +101,9 @@ starvation dilemma 32/100, and easy foraging 81/100 (corrected from
 42/100 after fixing a right-eye centroid sign error).
 Across 10~seeds, mean survival is $483 \pm 50$ steps with 9/10 seeds
 reaching the full 500-step episode, consuming $11.8 \pm 3.5$ food items.
-Across 5~matched seeds, v2 outperforms v1 by 47\% in survival
-($399$ vs.\ $272$ steps) and 254\% in food intake ($9.2$ vs.\ $2.6$).
+Across 5~matched seeds, v2 outperforms v1 by 34\% in survival
+($406 \pm 126$ vs.\ $303 \pm 183$ steps) and 206\% in food intake
+($10.4 \pm 6.1$ vs.\ $3.4 \pm 2.6$ items).
 A multi-agent configuration with 5~fish---each with a full v2 brain
 (35,000 total spiking neurons) and individual personality profiles
 (bold, shy, explorer, social)---demonstrates emergent competitive
@@ -1966,17 +1967,14 @@ Systematic ablation of individual spiking modules reveals their
 contributions to foraging and survival (Figure~\ref{fig:ablation}).
 In 300-step episodes with $n=3$ seeds per condition, removal of the
 interoceptive system (insula) produced the largest survival decrement
-($-20\%$, from 300 to $241 \pm 83$ steps), confirming its role in
+($-10\%$, from 300 to $270 \pm 42$ steps), confirming its role in
 allostatic homeostasis and arousal-gated decision urgency.
-Removal of the amygdala reduced survival by $-7\%$
-($280 \pm 28$ steps), consistent with its role in fear conditioning.
-Removal of the cerebellum or habenula each reduced food intake by
-approximately 20--30\%, while removal of the VAE or olfaction
-produced smaller food decrements.
-Removal of the RL critic or predictive coding did not significantly
-degrade survival at the 300-step window, suggesting these modules
-provide benefits primarily over longer timescales or in more
-resource-scarce environments.
+All other module removals left survival at the 300-step ceiling,
+confirming the brain's fault tolerance under single-module ablation.
+Food intake was most affected by RL critic removal ($-28\%$, from
+$8.7$ to $6.3$ items), followed by interoception ($-23\%$)
+and olfaction ($-16\%$), while habenula removal unexpectedly
+increased food intake, suggesting compensatory goal switching.
 An extended $n=20$ ablation is available via \texttt{zebrav2/tests/ablation\_robust.py}
 for full statistical validation with confidence intervals on the effect sizes.
 
@@ -1995,8 +1993,8 @@ for full statistical validation with confidence intervals on the effect sizes.
 
 Direct comparison against the predecessor v1 architecture
 (Figure~\ref{fig:v1v2}) on identical seeds reveals that v2 outperforms
-v1 by 47\% in survival ($399 \pm 133$ vs.\ $272 \pm 173$ steps) and
-254\% in food intake ($9.2 \pm 3.9$ vs.\ $2.6 \pm 2.2$ items).
+v1 by 34\% in survival ($406 \pm 126$ vs.\ $303 \pm 183$ steps) and
+206\% in food intake ($10.4 \pm 6.1$ vs.\ $3.4 \pm 2.6$ items).
 The improvement is attributed to three factors:
 (1)~conductance-based E/I balance eliminates signal death in deep
 layers;
@@ -2010,7 +2008,7 @@ overrides and forage-lock misfires that dominated v1 goal switching.
 \caption{v1 (blue) versus v2 (red) on 5 matched seeds (500 steps each).
   Left: survival steps.
   Right: food eaten.
-  v2 achieves 47\% higher survival and 254\% higher food intake.}
+  v2 achieves 34\% higher survival and 206\% higher food intake.}
 \label{fig:v1v2}
 \end{figure}
 
@@ -3138,7 +3136,7 @@ directs the fish toward food sources outside the visual field;
 non-visible threats; and (3)~predictive EFE that balances foraging
 urgency against starvation risk rather than responding only to
 current sensory evidence.
-The v2 model's 47\% survival advantage over v1 further demonstrates
+The v2 model's 34\% survival advantage over v1 further demonstrates
 that the added biological realism of E/I balance, multi-axis
 neuromodulation, and STDP provides functional benefit beyond the
 reactive and v1 baselines.
@@ -3264,7 +3262,7 @@ classifier; and (6)~online VAE ELBO minimization for latent world
 modeling.
 Key results include 70/100 decision rationality (round~177 checkpoint),
 $483 \pm 50$ step mean survival across 10~seeds (9/10 reaching full episode),
-47\% improvement in survival and 254\% improvement in foraging over v1,
+34\% improvement in survival and 206\% improvement in foraging over v1,
 interoception and amygdala identified as most impactful via ablation,
 and a 96.2\% spiking classifier with online fine-tuning.
 The model demonstrates that the free energy principle provides a
@@ -3362,8 +3360,8 @@ Inhibitory neurons       & 0\%                 & 25\% per layer \\
 Neuromodulatory axes     & 1 (DA)              & 4 (DA/NA/5-HT/ACh) \\
 Modules                  & 42 steps            & 48 modules \\
 Classifier accuracy      & 90.6\%              & 96.2\% \\
-Mean survival (5 seeds)  & 272 steps           & 399 steps (+47\%) \\
-Mean food (5 seeds)      & 2.6                 & 9.2 (+254\%) \\
+Mean survival (5 seeds)  & 303 steps           & 406 steps (+34\%) \\
+Mean food (5 seeds)      & 3.4                 & 10.4 (+206\%) \\
 Escape rate              & 2/5 full episode    & 3/5 full episode \\
 Multi-seed survival (10) & --                  & $483 \pm 50$ steps (9/10 full) \\
 Decision rationality     & 84/100              & 70/100 (round~177) \\

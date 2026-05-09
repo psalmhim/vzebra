@@ -1,78 +1,78 @@
 {
   "decision_scores": {
-    "A": 58,
+    "A": 72,
     "B": 100,
-    "C": 0,
-    "D": 73,
+    "C": 32,
+    "D": 81,
     "E": 66
   },
-  "decision_avg": 59.4,
+  "decision_avg": 70.2,
   "multi_seed": {
-    "survival_mean": 450.4,
-    "survival_std": 105.30356119334236,
-    "food_mean": 12.7,
-    "food_std": 3.9509492530276824
+    "survival_mean": 483.4,
+    "survival_std": 49.8,
+    "food_mean": 11.8,
+    "food_std": 3.4583232931581165
   },
   "v1_vs_v2": {
-    "v1_survival": 271.8,
-    "v2_survival": 398.6,
-    "v1_food": 2.6,
-    "v2_food": 9.2
+    "v1_survival": 303.4,
+    "v2_survival": 405.8,
+    "v1_food": 3.4,
+    "v2_food": 10.4
   },
   "ablation": {
     "Full model": {
-      "survival_mean": 274.6666666666667,
-      "survival_std": 35.82674358011841,
-      "food_mean": 4.666666666666667,
-      "food_std": 3.858612300930075
+      "survival_mean": 299.6666666666667,
+      "survival_std": 0.4714045207910317,
+      "food_mean": 8.666666666666666,
+      "food_std": 1.699673171197595
     },
     "No cerebellum": {
       "survival_mean": 300.0,
       "survival_std": 0.0,
-      "food_mean": 7.0,
-      "food_std": 1.632993161855452
+      "food_mean": 7.666666666666667,
+      "food_std": 1.8856180831641267
     },
     "No habenula": {
-      "survival_mean": 285.6666666666667,
-      "survival_std": 20.27039439401436,
-      "food_mean": 7.666666666666667,
-      "food_std": 3.6817870057290873
-    },
-    "No RL critic": {
-      "survival_mean": 300.0,
-      "survival_std": 0.0,
-      "food_mean": 8.333333333333334,
-      "food_std": 0.4714045207910317
-    },
-    "No amygdala": {
       "survival_mean": 300.0,
       "survival_std": 0.0,
       "food_mean": 9.333333333333334,
       "food_std": 1.247219128924647
     },
+    "No RL critic": {
+      "survival_mean": 300.0,
+      "survival_std": 0.0,
+      "food_mean": 6.333333333333333,
+      "food_std": 2.0548046676563256
+    },
+    "No amygdala": {
+      "survival_mean": 300.0,
+      "survival_std": 0.0,
+      "food_mean": 7.666666666666667,
+      "food_std": 1.247219128924647
+    },
     "No predictive": {
       "survival_mean": 300.0,
       "survival_std": 0.0,
-      "food_mean": 10.666666666666666,
-      "food_std": 2.494438257849294
+      "food_mean": 11.0,
+      "food_std": 2.160246899469287
     },
     "No interoception": {
-      "survival_mean": 233.66666666666666,
-      "survival_std": 93.8094996374153,
+      "survival_mean": 270.3333333333333,
+      "survival_std": 41.95500235040182,
       "food_mean": 6.666666666666667,
-      "food_std": 2.8674417556808756
+      "food_std": 1.247219128924647
     },
     "No VAE": {
       "survival_mean": 300.0,
       "survival_std": 0.0,
-      "food_mean": 8.0,
-      "food_std": 3.559026084010437
+      "food_mean": 7.666666666666667,
+      "food_std": 3.0912061651652345
     },
     "No olfaction": {
       "survival_mean": 300.0,
       "survival_std": 0.0,
-      "food_mean": 8.0,
-      "food_std": 1.632993161855452
+      "food_mean": 7.333333333333333,
+      "food_std": 2.494438257849294
     }
   },
   "total_snn_neurons": 7006,
