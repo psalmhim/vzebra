@@ -181,6 +181,7 @@ class VAEWorldModelV2:
                 ctx_t = torch.zeros(1, self.state_ctx_dim, device=self.device)
             enc_input = torch.cat([pooled, ctx_t], dim=-1)
             mu, logvar = self.encoder(enc_input)
+            logvar = logvar.clamp(-10.0, 4.0)  # prevent exp overflow → NaN std/z
             std = torch.exp(0.5 * logvar)
             z = mu + std * torch.randn_like(std)
         z_np = z[0].cpu().numpy().astype(np.float32)

@@ -99,6 +99,19 @@ def eval_decision_scenarios():
         obs, info = env.reset(seed=42)
         brain.reset()
         setup_fn(env)
+        # Seed pred_model with actual predator position when predator is inside the arena.
+        # Off-screen predators (negative coords) stay at default center to avoid
+        # spurious pred_visible state that misfires the flee direction fallback.
+        _raw_px = float(getattr(env, 'pred_x', -1))
+        _raw_py = float(getattr(env, 'pred_y', -1))
+        if _raw_px >= 0 and _raw_py >= 0:
+            brain.pred_model.x = max(0.0, min(800.0, _raw_px))
+            brain.pred_model.y = max(0.0, min(600.0, _raw_py))
+            brain.pred_model.vx = 0.0
+            brain.pred_model.vy = 0.0
+            brain.pred_model.pos_var = 60.0 ** 2
+            brain.pred_model.intent = 0.0
+            brain.pred_model.steps_since_seen = 5  # pred_visible=True
         goals, positions = [], []
         for t in range(T):
             if hasattr(env, 'set_flee_active'):

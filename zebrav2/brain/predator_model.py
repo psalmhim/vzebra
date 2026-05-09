@@ -131,10 +131,14 @@ class PredatorModel:
     def _infer_intent(self, fish_pos):
         dx = fish_pos[0] - self.x
         dy = fish_pos[1] - self.y
+        if not (math.isfinite(dx) and math.isfinite(dy)):
+            return
         dist = math.sqrt(dx * dx + dy * dy) + 1e-8
         speed = math.sqrt(self.vx ** 2 + self.vy ** 2) + 1e-8
         v_toward = (self.vx * dx + self.vy * dy) / (dist * speed + 1e-8)
-        self.intent = 1.0 / (1.0 + math.exp(-v_toward * speed * 0.3))
+        # Clamp exponent to prevent exp overflow → NaN intent
+        exponent = max(-20.0, min(20.0, -v_toward * speed * 0.3))
+        self.intent = 1.0 / (1.0 + math.exp(exponent))
 
     def get_flee_direction(self, fish_pos, horizon=5):
         """Flee angle away from predicted future position + urgency."""
@@ -165,12 +169,16 @@ class PredatorModel:
     def get_threat_level(self, fish_pos):
         dx = fish_pos[0] - self.x
         dy = fish_pos[1] - self.y
+        if not (math.isfinite(dx) and math.isfinite(dy)):
+            return 0.0
         dist = math.sqrt(dx * dx + dy * dy) + 1e-8
         prox = max(0.0, 1.0 - dist / 400.0)
-        conf = 1.0 / (1.0 + math.sqrt(self.pos_var) / 80.0)
+        pos_var_safe = max(0.0, self.pos_var) if math.isfinite(self.pos_var) else 40000.0
+        conf = 1.0 / (1.0 + math.sqrt(pos_var_safe) / 80.0)
         if not self.visible:
             conf *= max(0.1, 1.0 - self.steps_since_seen / 80.0)
-        return float(prox * conf * (0.2 + 0.8 * self.intent))
+        intent_safe = self.intent if math.isfinite(self.intent) else 0.0
+        return float(prox * conf * (0.2 + 0.8 * intent_safe))
 
     def get_vigilance(self):
         if self.visible:

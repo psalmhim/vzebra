@@ -707,16 +707,16 @@ class ZebrafishBrainV2(nn.Module):
         G_flee += allo_bias[1]
         G_explore += allo_bias[2]
         G_social += allo_bias[3]
-        # World model EFE (mod_w[0])
+        # World model EFE (mod_w[0]) — replace NaN per-goal with 0.0 (don't block all)
         wm_efe = self.world_model.compute_efe_per_goal(
             self.energy, self.pred_model, fish_pos, pc_bonus, self.allostasis)
         _wm_scale = _ec.world_model_efe_scale * float(_mw[0])
-        if all(math.isfinite(float(x)) for x in wm_efe):
-            G_forage += _wm_scale * wm_efe[0]
-            G_flee += _wm_scale * wm_efe[1]
-            G_explore += _wm_scale * wm_efe[2]
-            G_social += _wm_scale * wm_efe[3]
-            _mc[0] = _wm_scale * sum(abs(float(x)) for x in wm_efe)
+        _wm_safe = [float(x) if math.isfinite(float(x)) else 0.0 for x in wm_efe]
+        G_forage  += _wm_scale * _wm_safe[0]
+        G_flee    += _wm_scale * _wm_safe[1]
+        G_explore += _wm_scale * _wm_safe[2]
+        G_social  += _wm_scale * _wm_safe[3]
+        _mc[0] = _wm_scale * sum(abs(x) for x in _wm_safe)
         # Interoceptive spiking bias (gated — ablation showed insula hurts performance)
         if self._active('insula'):
             int_bias = self.insula.get_allostatic_bias()
@@ -913,7 +913,9 @@ class ZebrafishBrainV2(nn.Module):
         if p_enemy > effective_flee_threshold and has_threat_evidence and starvation < 0.6:
             new_goal = GOAL_FLEE
         # Close proximity flee: lateral line detects predator nearby
-        if ll_proximity > _gs.ll_close_threshold or (pred_dist < _gs.pred_close_distance and enemy_px > 1):
+        # Starvation gate: critically starving fish (starvation>0.65) ignores
+        # moderate ll_proximity — starvation panic above already chose FORAGE.
+        if (ll_proximity > _gs.ll_close_threshold or (pred_dist < _gs.pred_close_distance and enemy_px > 1)) and starvation < 0.65:
             new_goal = GOAL_FLEE
         # Lateral line + amygdala: predator close even if not visible
         elif ll_proximity > _gs.ll_proximity_threshold and self.amygdala_alpha > _gs.amygdala_moderate_threshold and starvation < 0.5:
@@ -975,6 +977,14 @@ class ZebrafishBrainV2(nn.Module):
                 else:
                     self._escape_side = 1.0 if retinal_flee > 0 else -1.0
                 flee_turn = max(-1.0, min(1.0, retinal_flee * 2.5))
+                self._last_flee_turn = flee_turn
+            elif pred_visible:
+                # SNN type-channel too noisy to detect enemy → use pred_model position
+                esc_ang = math.atan2(fy - self.pred_model.y, fx - self.pred_model.x)
+                esc_diff = math.atan2(
+                    math.sin(esc_ang - fish_heading),
+                    math.cos(esc_ang - fish_heading))
+                flee_turn = float(np.clip(-esc_diff * 2.0, -1.0, 1.0))
                 self._last_flee_turn = flee_turn
             elif ll_dist < 150:
                 flee_turn = self._last_flee_turn * 0.3

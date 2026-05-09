@@ -1,8 +1,8 @@
 # Neurobiological Pipeline — Technical Report
 
-**Date**: 2026-04-21 15:12
+**Date**: 2026-05-01 19:45
 **Test Suite**: 22 tests across 11 neural processing stages
-**Pass Rate**: 22/22 (100%)
+**Pass Rate**: 20/22 (91%)
 
 ## Overview
 
@@ -34,7 +34,7 @@ Stage 11: Homeostasis         → Cerebellum PE, circadian, insula, rock avoidan
 | Test | Status | Details |
 |------|--------|---------|
 | Full signal flow cascade (11 stages) | PASS | 29/30 regions active. Cascade: sensory=1.39 → tectum=1.10 → pallium=0.73 → motor=0.70 |
-| Pipeline execution speed | PASS | 0.087 ms/step (11557 steps/sec) |
+| Pipeline execution speed | PASS | 0.070 ms/step (14274 steps/sec) |
 
 **Metrics:**
 
@@ -45,8 +45,8 @@ Stage 11: Homeostasis         → Cerebellum PE, circadian, insula, rock avoidan
   - pallium: 0.7340
   - motor: 0.6983
 - **Pipeline execution speed**:
-  - ms_per_step: 0.0865
-  - steps_per_sec: 11556.5466
+  - ms_per_step: 0.0701
+  - steps_per_sec: 14274.0738
 
 ### Stage 1: Sensory Input
 
@@ -111,30 +111,27 @@ Stage 11: Homeostasis         → Cerebellum PE, circadian, insula, rock avoidan
 
 | Test | Status | Details |
 |------|--------|---------|
-| Amygdala episodic fear conditioning | PASS | Fear peaks at 3.000, persists at 3.000 (decay_ratio=1.00) |
+| Amygdala episodic fear conditioning | FAIL | Fear dynamics wrong: peak=3.000, after=0.000 |
 
 **Metrics:**
 
 - **Amygdala episodic fear conditioning**:
   - peak_during: 3.0000
-  - peak_after: 3.0000
-  - persistence_ratio: 1.0000
+  - peak_after: 0.0000
 
 ### Stage 6: Neuromodulation
 
 | Test | Status | Details |
 |------|--------|---------|
-| Neuromodulation (DA/NA/5HT/ACh) | PASS | NA: baseline=0.300 → threat=1.819; DA: baseline=0.499, reward=0.832 |
+| Neuromodulation (DA/NA/5HT/ACh) | FAIL | Neuromod dynamics unexpected: NA base=0.300 threat=0.000 |
 
 **Metrics:**
 
 - **Neuromodulation (DA/NA/5HT/ACh)**:
   - NA_baseline: 0.3000
-  - NA_threat: 1.8187
-  - DA_baseline: 0.4986
-  - DA_reward: 0.8323
-  - _5HT: 0.4844
-  - ACh: 0.7814
+  - NA_threat: 0
+  - DA_baseline: 0.4989
+  - DA_reward: 0.5036
 
 ### Stage 7: Place Cells
 
@@ -154,7 +151,7 @@ Stage 11: Homeostasis         → Cerebellum PE, circadian, insula, rock avoidan
 | Test | Status | Details |
 |------|--------|---------|
 | EFE goal selection (5 goals) | PASS | Goal accuracy: 75% (3/4). food_only=FORAGE(OK), pred_only=FLEE(OK), empty=FORAGE(WRONG), night=SLEEP(OK) |
-| Habenula frustration-driven strategy switch | PASS | Frustration drove 2 goal switches: {'FORAGE', 'SOCIAL'}. Frustration levels: [0.037, 0.0, 0.0, 0.048] |
+| Habenula frustration-driven strategy switch | PASS | Frustration drove 3 goal switches: {'FLEE', 'FORAGE', 'SOCIAL'}. Frustration levels: [0.131, 0.0, 0.0, 0.048] |
 
 **Metrics:**
 
@@ -165,9 +162,9 @@ Stage 11: Homeostasis         → Cerebellum PE, circadian, insula, rock avoidan
   - goal_empty: FORAGE
   - goal_night: SLEEP
 - **Habenula frustration-driven strategy switch**:
-  - n_goals: 2
-  - goals: ['FORAGE', 'SOCIAL']
-  - frustration: [0.03669578217261672, 0.0, 0.0, 0.04834445939176363]
+  - n_goals: 3
+  - goals: ['FLEE', 'FORAGE', 'SOCIAL']
+  - frustration: [0.13133124015396105, 0.0, 0.0, 0.04834445939176363]
 
 ### Stage 9: Basal Ganglia
 
@@ -189,7 +186,7 @@ Stage 11: Homeostasis         → Cerebellum PE, circadian, insula, rock avoidan
 |------|--------|---------|
 | Mauthner C-start escape reflex | PASS | C-start triggered: timer=2, speed sequence=[0.09, 0.25, 1.1, 0.95, 0.1], max_speed=1.10 |
 | Voluntary motor (pallium L/R turn) | PASS | Heading changed by 15.7° toward food (h: 0.00 → 0.27) |
-| CPG swimming rhythm | PASS | CPG rhythm: range=[0.601, 0.738], amplitude=0.137 |
+| CPG swimming rhythm | PASS | CPG rhythm: range=[0.597, 0.738], amplitude=0.141 |
 
 **Metrics:**
 
@@ -198,86 +195,40 @@ Stage 11: Homeostasis         → Cerebellum PE, circadian, insula, rock avoidan
   - max_speed: 1.1006
   - reticulospinal: 2.0637
 - **Voluntary motor (pallium L/R turn)**:
-  - heading_change_deg: 15.7469
+  - heading_change_deg: 15.7408
 - **CPG swimming rhythm**:
-  - cpg_min: 0.6007
+  - cpg_min: 0.5968
   - cpg_max: 0.7376
 
 ### Stage 11: Homeostasis / Cerebellum
 
 | Test | Status | Details |
 |------|--------|---------|
-| Cerebellum prediction error | PASS | Cerebellum PE: steady=0.301, surprise=0.553 |
+| Cerebellum prediction error | PASS | Cerebellum PE: steady=0.301, surprise=0.581 |
 | Circadian cycle (6000 steps) | PASS | Full cycle: phases={'DAWN', 'DAY', 'DUSK', 'NIGHT'}, light=[0.10, 1.00] |
-| Sleep: shelter-seeking + energy recovery | PASS | Sleep: 100% steps sleeping, energy 25.0→26.3, nearest rock: 96px |
+| Sleep: shelter-seeking + energy recovery | PASS | Sleep: 100% steps sleeping, energy 25.0→26.4, nearest rock: 96px |
 | Rock collision avoidance | PASS | Pushed out by 48.0px, steered 54.0° |
 
 **Metrics:**
 
 - **Cerebellum prediction error**:
   - cb_steady: 0.3014
-  - cb_surprise: 0.5534
+  - cb_surprise: 0.5807
 - **Circadian cycle (6000 steps)**:
   - phases: ['DAWN', 'DAY', 'DUSK', 'NIGHT']
   - light_min: 0.1000
   - light_max: 1.0000
 - **Sleep: shelter-seeking + energy recovery**:
   - sleep_pct: 100.0000
-  - energy_recovered: 1.2500
-  - nearest_rock: 95.8791
+  - energy_recovered: 1.3500
+  - nearest_rock: 95.8742
 - **Rock collision avoidance**:
   - push_dist: 48.0000
   - steer_deg: 54.0000
 
-## Multi-Species Validation (vzlab)
-
-The v2 zebrafish brain is one of four species validated through the
-**vzlab** cross-species virtual laboratory framework.
-
-### Four-Tier Validation Protocol
-
-| Tier | Method | Threshold |
-|------|--------|-----------|
-| T1 | Behavioural battery (survival, prey capture, threat response) | Species-specific |
-| T2 | Spearman rank atlas correspondence (r_s vs biological reference) | r_s > 0.50 |
-| T3 | Lesion replication (ablation reproduces published deficit) | Ablation-specific |
-| T4 | Sensory dropout robustness (10/30/50% input masking) | 80/50/20% retention |
-
-### Species Results
-
-| Species | Neurons | T1 | T2 r_s | T3 | T4 RI | Grade |
-|---------|---------|----|---------|----|--------|-------|
-| *Danio rerio* (zebrafish) | 7,316 | PASS | 0.81 | PASS | 1.000 | **A+** |
-| *C. elegans* | 302 | PASS | 0.72 | PASS | 0.960 | **A+** |
-| *Drosophila melanogaster* | 2,145 | PASS | 0.68 | PASS | 0.946 | **A+** |
-| *Xenopus laevis* tadpole | 150 | PASS | 1.00 | PASS | 1.000 | **A+** |
-
-**Grade A+** = all four tiers pass.
-
-### STDP Synaptic Dropout
-
-The zebrafish v2 STDP learning rule now includes `dropout_p=0.10` in
-each `EligibilitySTDP.consolidate()` call. On each consolidation step,
-10% of synapses are randomly silenced before weight update, preventing
-co-adaptation and forcing distributed fault-tolerant representations
-(analogous to biological synaptic unreliability ~10–20%).
-
-Configured via `PlasticityConfig.stdp_dropout_p` (default 0.10).
-
-### Social Validation (Tier 1, Zebrafish)
-
-Two social tests added to the zebrafish Tier 1 battery:
-- **Shoaling cohesion** (3 agents, 60 steps): cohesion ≥ 0.20 — tests
-  group proximity maintenance driven by SocialField signals.
-- **Social alarm propagation** (3 agents, alarm stimulus at t=20):
-  mean propagation ≥ 0.50 — tests chemical alarm relay through
-  conspecific detection.
-
-Both tests pass, completing the cells→circuits→behaviour→social chain.
-
 ## Summary
 
-**Performance**: 0.087 ms/step (11557 steps/sec)
+**Performance**: 0.070 ms/step (14274 steps/sec)
 
 **Activation cascade** (simultaneous rich-environment step):
 
@@ -290,7 +241,9 @@ Both tests pass, completing the cells→circuits→behaviour→social chain.
 
 ### Key Findings
 
-- All 22 tests passed across all 11 neural processing stages
+- 2 test(s) failed:
+  - Stage 5: Amygdala episodic fear conditioning — Fear dynamics wrong: peak=3.000, after=0.000
+  - Stage 6: Neuromodulation (DA/NA/5HT/ACh) — Neuromod dynamics unexpected: NA base=0.300 threat=0.000
 
 ### Neurobiological Validity
 
