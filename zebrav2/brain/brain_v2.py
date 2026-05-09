@@ -711,11 +711,12 @@ class ZebrafishBrainV2(nn.Module):
         wm_efe = self.world_model.compute_efe_per_goal(
             self.energy, self.pred_model, fish_pos, pc_bonus, self.allostasis)
         _wm_scale = _ec.world_model_efe_scale * float(_mw[0])
-        G_forage += _wm_scale * wm_efe[0]
-        G_flee += _wm_scale * wm_efe[1]
-        G_explore += _wm_scale * wm_efe[2]
-        G_social += _wm_scale * wm_efe[3]
-        _mc[0] = _wm_scale * sum(abs(float(x)) for x in wm_efe)
+        if all(math.isfinite(float(x)) for x in wm_efe):
+            G_forage += _wm_scale * wm_efe[0]
+            G_flee += _wm_scale * wm_efe[1]
+            G_explore += _wm_scale * wm_efe[2]
+            G_social += _wm_scale * wm_efe[3]
+            _mc[0] = _wm_scale * sum(abs(float(x)) for x in wm_efe)
         # Interoceptive spiking bias (gated — ablation showed insula hurts performance)
         if self._active('insula'):
             int_bias = self.insula.get_allostatic_bias()
@@ -1636,6 +1637,9 @@ class ZebrafishBrainV2(nn.Module):
 
         # === 7d. VAE WORLD MODEL (online training) ===
         tect_all = tect_out['all_e'].unsqueeze(0)  # [1, N]
+        _pal_fe = pal_out['free_energy']
+        if not math.isfinite(_pal_fe):
+            _pal_fe = 0.0
         state_ctx = np.array([
             px / 800.0, py / 600.0, fish_heading / math.pi,
             self.energy / 100.0,
@@ -1644,9 +1648,10 @@ class ZebrafishBrainV2(nn.Module):
             float(self._cls_probs[1].detach()),
             float(self._cls_probs[2].detach()),
             float(self._cls_probs[4].detach()),
-            pal_out['free_energy'],
+            _pal_fe,
             self.cms,
         ], dtype=np.float32)
+        np.nan_to_num(state_ctx, nan=0.0, posinf=0.0, neginf=0.0, copy=False)
         # VAE training every 10 steps — backprop every step is wasteful (125k steps/50 rounds)
         if self._step_count % self.cfg.plasticity.vae_training_every == 0:
             self.vae.train_step(tect_all, state_ctx)

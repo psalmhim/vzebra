@@ -213,6 +213,9 @@ class TrainingEngine:
     def _compute_fitness(self, survived, food_eaten, mean_efe, energy_final,
                           geo_coverage, goal_dist=None):
         """Compute fitness score from objectives config."""
+        import math as _math
+        if not _math.isfinite(mean_efe):
+            mean_efe = 2.0  # baseline EFE when computation fails
         obj = self.config.data.get('objectives', {})
         fitness = (
             obj.get('survival_weight', 1.0) * survived +
@@ -320,6 +323,8 @@ class TrainingEngine:
                     env.fish_y = fy + push * dy / dist
 
             efe = out.get('free_energy', 0)
+            if isinstance(efe, float) and not (efe == efe):  # nan check
+                efe = 0.0
             total_efe += efe
             goals_log.append(self.brain.current_goal)
 
@@ -903,7 +908,19 @@ class TrainingEngine:
 
         self.running = True
         self.brain = self._create_brain()
+        # Initialise best_fitness from the loaded checkpoint so that
+        # the first round cannot overwrite a better pre-existing ckpt_best.pt.
+        ckpt_path = self.config.get('training.load_checkpoint')
         best_fitness = -float('inf')
+        if ckpt_path and os.path.exists(ckpt_path):
+            try:
+                import torch as _torch
+                _d = _torch.load(ckpt_path, map_location='cpu', weights_only=False)
+                _f = _d.get('metrics', {}).get('fitness', None)
+                if _f is not None and isinstance(_f, float) and _f == _f:
+                    best_fitness = _f
+            except Exception:
+                pass
 
         n_seeds = self.config.get('training.seeds_per_round', 1)
         print(f"\n{'='*60}")

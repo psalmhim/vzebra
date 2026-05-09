@@ -83,9 +83,10 @@ def main():
     # Print per-round summary
     def on_round(m):
         goal_dist = m['goal_distribution']
-        flee_pct = round(100 * goal_dist.get('FLEE', 0) / max(1, m['survived']), 0)
-        print(f"  Round {m['round']:3d}: survived={m['survived']:3d}  "
-              f"food={m['food_eaten']}  fitness={m['fitness']:.0f}  "
+        total_goals = max(1, sum(goal_dist.values()))
+        flee_pct = round(100 * goal_dist.get('FLEE', 0) / total_goals, 0)
+        print(f"  Round {m['round']:3d}: survived={m['survived']:6.1f}  "
+              f"food={m['food_eaten']:.1f}  fitness={m['fitness']:.0f}  "
               f"FLEE={int(flee_pct)}%  ({m.get('elapsed_sec', 0):.0f}s)", flush=True)
 
     engine.on_round_end = on_round

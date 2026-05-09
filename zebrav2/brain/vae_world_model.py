@@ -204,12 +204,15 @@ class VAEWorldModelV2:
         pooled = F.relu(self.pool(batch_oF))
         enc_input = torch.cat([pooled, batch_ctx], dim=-1)
         mu, logvar = self.encoder(enc_input)
+        logvar = logvar.clamp(-10.0, 4.0)  # prevent exp overflow → nan KL
         std = torch.exp(0.5 * logvar)
         z = mu + std * torch.randn_like(std)
         recon = self.decoder(z)
         recon_loss = F.mse_loss(recon, pooled)
         kl_loss = -0.5 * torch.mean(1.0 + logvar - mu.pow(2) - logvar.exp())
         loss = recon_loss + self.kl_beta * kl_loss
+        if not torch.isfinite(loss):
+            return
         self.vae_optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.vae_params, 1.0)

@@ -75,6 +75,8 @@ class MetaGoalWeights(nn.Module):
             self._mod_steps = 0
 
     def _do_update(self, fitness: float):
+        if not math.isfinite(fitness):
+            return
         # Bootstrap baseline on first episode: record fitness but skip update
         if self._fitness_ema is None:
             self._fitness_ema = float(fitness)
