@@ -257,6 +257,42 @@ The multi-species platform validates that the same active inference
 architecture generalises across four phylogenetically distant
 organisms spanning 302 to 100{,}000 neurons.
 
+Figure~\ref{fig:overview} provides a schematic overview of the complete
+system: the virtual environment with annotated sensory modalities
+(Panel A), the five-layer biologically grounded brain architecture
+(Panel B), the closed active inference perception--action loop
+(Panel C), and key benchmark results (Panel D).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{plots/paper/fig0_intro_overview.png}
+\caption{Overview of the Virtual Zebrafish system.
+\textbf{(A)}~Behavioral arena: the fish (blue ellipse) navigates an
+800$\times$600\,px environment containing food items (green),
+rocks (grey), and an intelligent 5-state predator (red).
+Annotated sensor modalities include the binocular visual field
+($\pm$55°, 3-channel color), the lateral-line mechanosensory ring
+(24 Izhikevich neurons, 200\,px range), and the olfactory gradient
+field (28 neurons, Fick diffusion model).
+\textbf{(B)}~Brain architecture: five functional layers---sensory
+periphery (retina 256 + olfaction + lateral line + color vision),
+subcortical processing (optic tectum 3,200 neurons, amygdala,
+cerebellum, habenula), predictive coding (thalamo-pallial loop
+3,036 neurons with anti-Hebbian $W_\text{FB}$), learning and
+neuromodulation (DA-gated STDP, RL critic, four-axis neuromodulation),
+and action--goal selection (EFE minimisation, WTA attractor,
+reticulospinal pathway).
+\textbf{(C)}~Active inference loop: perception minimises prediction
+error (PE), Expected Free Energy (EFE) is computed across four
+goal policies (FORAGE, FLEE, EXPLORE, SOCIAL), a winner-take-all
+attractor selects the active goal, and the resulting motor command
+closes the sensorimotor loop.
+\textbf{(D)}~Decision rationality benchmark across five structured
+scenarios (A--E), with average 84/100 (dashed line) and summary
+statistics from 10-seed evaluation.}
+\label{fig:overview}
+\end{figure}
+
 % =====================================================================
 \section{Related Work}\label{sec:related}
 
