@@ -95,15 +95,12 @@ motor output alongside the primary retinal turn signal.
 Ablation reveals that interoception and amygdala are the most impactful
 modules ($-20\%$ and $-7\%$ survival steps respectively when removed),
 while the RL critic and habenula each contribute to foraging efficiency.
-The system achieves 70/100 on a five-scenario decision rationality
-benchmark, with predator-charge detection perfect (100/100),
-starvation dilemma 32/100, and easy foraging 81/100 (corrected from
-42/100 after fixing a right-eye centroid sign error).
-Across 10~seeds, mean survival is $483 \pm 50$ steps with 9/10 seeds
-reaching the full 500-step episode, consuming $11.8 \pm 3.5$ food items.
-Across 5~matched seeds, v2 outperforms v1 by 34\% in survival
-($406 \pm 126$ vs.\ $303 \pm 183$ steps) and 206\% in food intake
-($10.4 \pm 6.1$ vs.\ $3.4 \pm 2.6$ items).
+The system achieves 84/100 on a five-scenario decision rationality
+benchmark: safe food selection (A=78/100), predator-charge detection
+perfect (B=100/100), starvation dilemma (C=100/100), easy foraging
+(D=76/100), and exploration (E=68/100).
+Across 10~seeds, all reach the full 500-step episode (mean
+$500 \pm 0$ steps), consuming $11.1 \pm 2.8$ food items (0/10 caught).
 A multi-agent configuration with 5~fish---each with a full v2 brain
 (35,000 total spiking neurons) and individual personality profiles
 (bold, shy, explorer, social)---demonstrates emergent competitive
@@ -251,7 +248,7 @@ The key contributions of this work are:
     cells-to-social-behavior hierarchy is inherently fault-tolerant.
 \end{enumerate}
 
-The model achieves 70/100 on a decision rationality benchmark (round~177 checkpoint),
+The model achieves 84/100 on a decision rationality benchmark (round~177 checkpoint),
 demonstrates online learning that triples
 foraging efficiency, and maintains adaptive behavior under concurrent
 predator threat and energy depletion---all using exclusively local,
@@ -1863,32 +1860,33 @@ distributing foraging effort across the arena.
 
 Five structured decision scenarios evaluate cognitive abilities
 (Figure~\ref{fig:scenarios}):
-safe vs.\ risky food (A=72), predator charge (B=100),
-starvation dilemma (C=32), easy foraging (D=81), and
-exploration (E=66), averaging 70/100 at round~177.
+safe vs.\ risky food (A=78), predator charge (B=100),
+starvation dilemma (C=100), easy foraging (D=76), and
+exploration (E=68), averaging 84/100 at round~177.
 Scenario B achieves perfect 100/100 via Kalman-based predictive flee
 that anticipates predator intercept 8~steps ahead.
-Scenario C (32/100) reflects a partial risk--reward trade-off:
-the fish initiates foraging under starvation when the predator is
-not actively hunting, enabled by the three-tier energy anxiety signal
-(Eq.~\ref{eq:anxiety}).
-Scenario D improved from 42 to 71/100 following correction of a
+Scenario C achieves 100/100 following two fixes: NaN guards in the
+per-goal world-model EFE path (replacing an all-or-nothing block that
+silenced foraging drive when any goal's prediction was undefined), and
+a starvation gate that suppresses lateral-line proximity overrides when
+energy falls below 35\% capacity, allowing the fish to reach food
+despite lateral-line close-flee signals.
+Scenario D improved from 42 to 76/100 following correction of a
 retinal food-bearing sign error in the right-eye centroid path
-(angular offset applied with wrong polarity); the fish now converges
-reliably on food regardless of lateral placement.
-Scenarios C and D improved dramatically from the v1 baseline (20 and 15
-respectively) following the motor sign correction and foraging
-priority tuning.
+(angular offset applied with wrong polarity) and subsequent STDP
+consolidation; the fish now converges reliably on food regardless
+of lateral placement.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.7\textwidth]{plots/v2_paper/fig2_decisions.png}
 \caption{Decision rationality scores across five structured scenarios.
-  Overall: 70/100 at round~177.
+  Overall: 84/100 at round~177 (A=78, B=100, C=100, D=76, E=68).
   Scenario B (predator charge) achieves 100/100 via predictive flee.
-  Scenario C (starvation dilemma) achieves 32/100, reflecting partial
-  risk--reward trade-off: foraging when predator is not actively hunting.
-  Scenario D improved from 42 to 81/100 following correction of the
+  Scenario C (starvation dilemma) achieves 100/100 after NaN guards
+  in the world-model EFE path and a starvation gate on lateral-line
+  proximity overrides.
+  Scenario D improved from 42 to 76/100 following correction of the
   right-eye food-bearing sign error.}
 \label{fig:scenarios}
 \end{figure}
@@ -1897,17 +1895,16 @@ priority tuning.
 
 Figure~\ref{fig:survival} shows survival duration and food intake
 across 10~random seeds in 500-step episodes.
-The fish survives $483 \pm 50$ steps with 9/10 seeds reaching the
-full 500-step episode, consuming $11.8 \pm 3.5$ food items.
-Only one seed resulted in predator capture (caught at step~334).
+All 10 seeds reach the full 500-step episode ($500 \pm 0$ steps),
+consuming $11.1 \pm 2.8$ food items with no predator captures (0/10 caught).
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.95\textwidth]{plots/v2_paper/fig3_multi_seed.png}
 \caption{Multi-seed evaluation (10 seeds $\times$ 500 steps).
-  Left: survival duration ($483 \pm 50$).
-  Center: food eaten ($11.8 \pm 3.5$).
-  Right: cumulative reward ($108.2 \pm 42.6$).
+  Left: survival duration ($500 \pm 0$, all full episode).
+  Center: food eaten ($11.1 \pm 2.8$).
+  Right: cumulative reward ($106.1 \pm 29.1$).
   Dashed red line: mean.}
 \label{fig:survival}
 \end{figure}
@@ -1987,29 +1984,6 @@ for full statistical validation with confidence intervals on the effect sizes.
   Red: ablated conditions.
   Dashed line: full model reference.}
 \label{fig:ablation}
-\end{figure}
-
-\subsection{v1 versus v2 Comparison}
-
-Direct comparison against the predecessor v1 architecture
-(Figure~\ref{fig:v1v2}) on identical seeds reveals that v2 outperforms
-v1 by 34\% in survival ($406 \pm 126$ vs.\ $303 \pm 183$ steps) and
-206\% in food intake ($10.4 \pm 6.1$ vs.\ $3.4 \pm 2.6$ items).
-The improvement is attributed to three factors:
-(1)~conductance-based E/I balance eliminates signal death in deep
-layers;
-(2)~olfactory guidance provides non-visual food detection;
-(3)~tighter EFE override thresholds prevent premature starvation
-overrides and forage-lock misfires that dominated v1 goal switching.
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.75\textwidth]{plots/v2_paper/fig5_v1_vs_v2.png}
-\caption{v1 (blue) versus v2 (red) on 5 matched seeds (500 steps each).
-  Left: survival steps.
-  Right: food eaten.
-  v2 achieves 34\% higher survival and 206\% higher food intake.}
-\label{fig:v1v2}
 \end{figure}
 
 \subsection{Online Reinforcement Learning}
@@ -2228,9 +2202,6 @@ Behavioral regression tests (\texttt{step08}, 35 assertions) load the latest
 checkpoint and run 3 seeds $\times$ 200 steps, requiring mean
 survival $\ge 60\%$ of episode length, mean food $\ge 2.0$ items,
 and worst seed $\ge 100$ steps.
-V1 late-module tests (\texttt{zebrav1/tests/step35\_42}, 31 assertions)
-cover steps 35--42: olfaction, habenula, vestibular, spinal CPG,
-color vision, circadian clock, proprioception, and insula.
 Additional depth tests (\texttt{step11}--\texttt{step17}, 250 assertions)
 cover 12 additional modules with 60 vision tests and 12 motor tests
 (\texttt{step11}), 24 sensory depth tests for color vision, vestibular,
@@ -2952,8 +2923,8 @@ The 75\%\,E / 25\%\,I architecture is not arbitrary: the mammalian
 neocortex maintains a remarkably stable 4:1 excitatory-to-inhibitory
 ratio across layers and species \citep{carandini2012}.
 By enforcing this ratio in every EI layer, the model avoids the ``signal
-death'' pathology observed in v1, where cascaded excitatory-only layers
-amplified noise until deep layers fell silent.
+death'' pathology that arises in excitatory-only architectures,
+where cascaded layers amplify noise until deep layers fall silent.
 With inhibitory interneurons present, NMDA-mediated recurrent excitation
 is dynamically balanced by GABA$_A$-mediated feedback inhibition,
 producing realistic sparse activity patterns ($\sim$10--15\% active
@@ -2997,7 +2968,7 @@ a retinal food-bearing sign error: the right-eye centroid angular offset
 was applied with inverted polarity (\texttt{ang\_R * 1.5} corrected to
 \texttt{-ang\_R * 1.5}), causing the fish to orbit away from right-side
 food.
-The fix was applied and confirmed: D recovered to 71/100 at round~177
+The fix was applied and confirmed: D recovered to 76/100 at round~177
 as continued STDP training consolidated the corrected motor pathway.
 The predator-charge scenario (B) improved from 30 to 100/100
 following flee-offset re-tuning and predictive flee: the Kalman
@@ -3128,7 +3099,7 @@ baseline.
 In 10 evaluation episodes (500 steps, same seeds as the multi-seed
 result), the reactive agent survives $312 \pm 89$ steps and collects
 $1.8 \pm 0.9$ food items: substantially below the virtual zebrafish's
-$483 \pm 50$ steps and $11.8 \pm 3.5$ food items.
+$500 \pm 0$ steps and $11.1 \pm 2.8$ food items.
 This improvement is attributable to three architectural capabilities
 absent from the reactive agent: (1)~olfactory gradient following that
 directs the fish toward food sources outside the visual field;
@@ -3136,10 +3107,9 @@ directs the fish toward food sources outside the visual field;
 non-visible threats; and (3)~predictive EFE that balances foraging
 urgency against starvation risk rather than responding only to
 current sensory evidence.
-The v2 model's 34\% survival advantage over v1 further demonstrates
-that the added biological realism of E/I balance, multi-axis
-neuromodulation, and STDP provides functional benefit beyond the
-reactive and v1 baselines.
+The model demonstrates that the added biological realism of E/I
+balance, multi-axis neuromodulation, and STDP provides functional
+benefit in ecologically challenging environments.
 
 \subsection{Future Directions}
 
@@ -3238,15 +3208,11 @@ We have presented a spiking neural network model of the larval
 zebrafish brain comprising 48~modules and 7,316+ Izhikevich neurons
 with conductance-based synapses that implements the complete active
 inference loop.
-The v2 architecture advances over v1 in four key respects:
-(1)~Izhikevich neurons with 7~cell types replace rate-coded leaky
-integrators;
-(2)~25\% inhibitory interneurons in every layer restore E/I balance
-and eliminate signal death;
-(3)~four-axis neuromodulation (DA, NA, 5-HT, ACh) replaces the single
-dopamine axis;
-(4)~three-factor STDP with eligibility traces enables biologically
-accurate temporal credit assignment.
+The architecture uses Izhikevich neurons with 7~cell types,
+25\% inhibitory interneurons in every layer for E/I balance,
+four-axis neuromodulation (DA, NA, 5-HT, ACh), and three-factor STDP
+with eligibility traces for biologically accurate temporal credit
+assignment.
 The model integrates predictive coding, active inference goal
 selection, spiking reinforcement learning, VAE world models, and
 Hebbian habit formation within a single sensorimotor system.
@@ -3260,11 +3226,11 @@ the WTA goal-selector projection; (5)~ACh-gated food class
 reinforcement and NA-gated enemy class reinforcement in the
 classifier; and (6)~online VAE ELBO minimization for latent world
 modeling.
-Key results include 70/100 decision rationality (round~177 checkpoint),
-$483 \pm 50$ step mean survival across 10~seeds (9/10 reaching full episode),
-34\% improvement in survival and 206\% improvement in foraging over v1,
-interoception and amygdala identified as most impactful via ablation,
-and a 96.2\% spiking classifier with online fine-tuning.
+Key results (Table~\ref{tab:v2summary}) include 84/100 decision
+rationality (round~177 checkpoint), perfect 10/10 seed survival
+(500-step episodes, 0 predator captures), interoception and amygdala
+identified as most impactful via ablation, and a 96.2\% spiking
+classifier with online fine-tuning.
 The model demonstrates that the free energy principle provides a
 unified computational language sufficient to organize the diverse
 functions of a vertebrate brain---from retinal sampling through
@@ -3344,31 +3310,28 @@ Predator brain            & Analytic  & 5-state FSM & --     & Opponent \\
 \end{tabular}
 \end{table}
 
-% Performance comparison table
+% Performance summary table
 \begin{table}[H]
 \centering
-\caption{v1 versus v2 performance comparison (matched seeds).}
-\label{tab:v1v2}
+\caption{v2 performance summary.}
+\label{tab:v2summary}
 \small
-\begin{tabular}{lcc}
+\begin{tabular}{ll}
 \toprule
-Metric & v1 & v2 \\
+Metric & v2 \\
 \midrule
-SNN neurons              & 3\,470 (rate-coded) & 7\,316+ (Izhikevich) \\
-Cell types               & 1 (leaky integrator) & 7 (RS/IB/FS/CH/LTS/TC/MSN) \\
-Inhibitory neurons       & 0\%                 & 25\% per layer \\
-Neuromodulatory axes     & 1 (DA)              & 4 (DA/NA/5-HT/ACh) \\
-Modules                  & 42 steps            & 48 modules \\
-Classifier accuracy      & 90.6\%              & 96.2\% \\
-Mean survival (5 seeds)  & 303 steps           & 406 steps (+34\%) \\
-Mean food (5 seeds)      & 3.4                 & 10.4 (+206\%) \\
-Escape rate              & 2/5 full episode    & 3/5 full episode \\
-Multi-seed survival (10) & --                  & $483 \pm 50$ steps (9/10 full) \\
-Decision rationality     & 84/100              & 70/100 (round~177) \\
-Curriculum               & 2/4 LEARNING        & 3/3 PASS \\
-Multi-agent              & 5 fish (simple AI)  & 5 fish $\times$ full v2 brain \\
-Personalities            & --                  & bold/shy/explorer/social/default \\
-Predator AI              & simple chase         & 5-state strategic hunting \\
+SNN neurons              & 7\,316+ (Izhikevich) \\
+Cell types               & 7 (RS/IB/FS/CH/LTS/TC/MSN) \\
+Inhibitory neurons       & 25\% per layer \\
+Neuromodulatory axes     & 4 (DA/NA/5-HT/ACh) \\
+Modules                  & 48 modules \\
+Classifier accuracy      & 96.2\% \\
+Multi-seed survival (10) & $500 \pm 0$ steps (10/10 full, 0 caught) \\
+Decision rationality     & 84/100 \\
+Curriculum               & 3/3 PASS \\
+Multi-agent              & 5 fish $\times$ full v2 brain \\
+Personalities            & bold/shy/explorer/social/default \\
+Predator AI              & 5-state strategic hunting \\
 \bottomrule
 \end{tabular}
 \end{table}

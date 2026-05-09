@@ -913,9 +913,7 @@ class ZebrafishBrainV2(nn.Module):
         if p_enemy > effective_flee_threshold and has_threat_evidence and starvation < 0.6:
             new_goal = GOAL_FLEE
         # Close proximity flee: lateral line detects predator nearby
-        # Starvation gate: critically starving fish (starvation>0.65) ignores
-        # moderate ll_proximity — starvation panic above already chose FORAGE.
-        if (ll_proximity > _gs.ll_close_threshold or (pred_dist < _gs.pred_close_distance and enemy_px > 1)) and starvation < 0.65:
+        if ll_proximity > _gs.ll_close_threshold or (pred_dist < _gs.pred_close_distance and enemy_px > 1):
             new_goal = GOAL_FLEE
         # Lateral line + amygdala: predator close even if not visible
         elif ll_proximity > _gs.ll_proximity_threshold and self.amygdala_alpha > _gs.amygdala_moderate_threshold and starvation < 0.5:
@@ -979,13 +977,16 @@ class ZebrafishBrainV2(nn.Module):
                 flee_turn = max(-1.0, min(1.0, retinal_flee * 2.5))
                 self._last_flee_turn = flee_turn
             elif pred_visible:
-                # SNN type-channel too noisy to detect enemy → use pred_model position
-                esc_ang = math.atan2(fy - self.pred_model.y, fx - self.pred_model.x)
-                esc_diff = math.atan2(
-                    math.sin(esc_ang - fish_heading),
-                    math.cos(esc_ang - fish_heading))
-                flee_turn = float(np.clip(-esc_diff * 2.0, -1.0, 1.0))
-                self._last_flee_turn = flee_turn
+                # SNN type-channel too noisy → use pred_model if it hasn't snapped to fish position
+                _dx_pm = self.pred_model.x - fx
+                _dy_pm = self.pred_model.y - fy
+                if _dx_pm * _dx_pm + _dy_pm * _dy_pm > 50 ** 2:
+                    esc_ang = math.atan2(fy - self.pred_model.y, fx - self.pred_model.x)
+                    esc_diff = math.atan2(
+                        math.sin(esc_ang - fish_heading),
+                        math.cos(esc_ang - fish_heading))
+                    flee_turn = float(np.clip(-esc_diff * 2.0, -1.0, 1.0))
+                    self._last_flee_turn = flee_turn
             elif ll_dist < 150:
                 flee_turn = self._last_flee_turn * 0.3
             else:

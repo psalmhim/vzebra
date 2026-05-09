@@ -111,7 +111,7 @@ def eval_decision_scenarios():
             brain.pred_model.vy = 0.0
             brain.pred_model.pos_var = 60.0 ** 2
             brain.pred_model.intent = 0.0
-            brain.pred_model.steps_since_seen = 5  # pred_visible=True
+            brain.pred_model.steps_since_seen = 5  # pred_visible=True for first 5 steps
         goals, positions = [], []
         for t in range(T):
             if hasattr(env, 'set_flee_active'):
