@@ -368,6 +368,7 @@ biological grounding.
 
 \paragraph{Reinforcement Learning and Dopamine}
 
+\begin{sloppypar}
 The correspondence between temporal-difference (TD) learning
 \citep{sutton2018} and dopamine neuron firing patterns
 \citep{schultz1997} established a foundational link between
@@ -375,13 +376,13 @@ computational reinforcement learning and neurobiology.
 Actor-critic architectures map naturally onto basal ganglia circuits,
 with the ventral striatum encoding state values and the dorsal
 striatum implementing action selection \citep{oquist2004}.
-\citet{dabney2020} demonstrated that distributional reinforcement
-learning provides a better account of dopamine neuron diversity than
-scalar TD error.
-The integration of model-free RL (habitual behavior) with model-based
+\citet{dabney2020} showed that distributional RL provides a
+better account of dopamine neuron diversity than scalar TD error.
+The interplay of model-free RL (habitual behavior) and model-based
 planning (goal-directed behavior) has been extensively studied
-\citep{daw2011}, with evidence that these systems compete and
-cooperate depending on uncertainty and computational cost.
+\citep{daw2011}, with evidence that the two systems compete and
+cooperate depending on uncertainty and cost.
+\end{sloppypar}
 
 \paragraph{Gap in the Literature}
 
@@ -421,11 +422,12 @@ thalamocortical (TC), and medium-spiny (MSN).
 
 \paragraph{Excitatory--Inhibitory Layers}
 
-Each cortical-like region uses an EI layer with 75\%\,excitatory
-and 25\%\,inhibitory neurons, connected by four conductance-based
-synapse classes (AMPA, NMDA, GABA$_A$):
+Each cortical-like region uses an EI layer with 75\% excitatory
+and 25\% inhibitory neurons, connected via four
+conductance-based synapse classes (AMPA, NMDA, GABA$_A$):
 \begin{equation}
-  I_\text{syn} = g_\text{AMPA}(E_E - v) + g_\text{NMDA}\frac{(E_E - v)}{1 + 0.28\,e^{-0.062v}}
+  I_\text{syn} = g_\text{AMPA}(E_E - v)
+    + g_\text{NMDA}\frac{(E_E - v)}{1 + 0.28\,e^{-0.062v}}
     + g_\text{GABA}(E_I - v).
 \end{equation}
 Each behavioral step runs 50 substeps ($\times 1$\,ms), yielding
@@ -1093,8 +1095,10 @@ bout-glide swimming pattern of larval zebrafish
 
 \paragraph{Reticulospinal Voluntary Motor Pathway}
 
+\begin{sloppypar}
 The reticulospinal system contains 21 named neurons per side
-(Mauthner, MiD2, MiD3, RoM2a-d, MeM1-8, CaD1-6).
+(Mauthner, MiD2, MiD3, RoM2a--d, MeM1--8, CaD1--6).
+\end{sloppypar}
 For voluntary movement, the RoM2 group generates a turn command
 from the left/right asymmetry of the pallium-D population gated by
 the basal ganglia:
@@ -1315,18 +1319,15 @@ Four discrete goals $\mathcal{G} = \{\text{FORAGE}, \text{FLEE},
 \text{EXPLORE}, \text{SOCIAL}\}$ are scored by expected free energy:
 \begin{equation}\label{eq:efe}
 \begin{aligned}
-  G_\text{FORAGE} &= 0.2\,\mathcal{U} - 0.8\,p_\text{food}
-    + 0.15 - 0.6\,s^* + 0.15\,p_\text{enemy}
-    - 0.075\,\phi_\text{circ}, \\
-  G_\text{FLEE} &= 0.1\,\text{CMS} - 0.8\,p_\text{enemy} + 0.20
-    + 0.4\,s^*, \\
-  G_\text{EXPLORE} &= 0.3\,\mathcal{U}
-    - 0.5\,(p_\emptyset + p_\text{env})
-    + 0.1\,\text{CMS} + 0.20 + 0.2\,s^*
-    - 0.15\,\phi_\text{circ}
+  G_\text{FORAGE} &= 0.2\,\mathcal{U} - 0.8\,p_\text{food} + 0.15
+    - 0.6\,s^* + 0.15\,p_\text{enemy} - 0.075\,\phi_\text{circ}, \\
+  G_\text{FLEE} &= 0.1\,\text{CMS} - 0.8\,p_\text{enemy}
+    + 0.20 + 0.4\,s^*, \\
+  G_\text{EXPLORE} &= 0.3\,\mathcal{U} - 0.5\,(p_\emptyset + p_\text{env})
+    + 0.1\,\text{CMS} + 0.20 + 0.2\,s^* \\
+    &\quad - 0.15\,\phi_\text{circ}
     - 0.15\,\max(0,\,\Sigma_{t-1} - 0.1), \\
-  G_\text{SOCIAL} &= 0.2\,\mathcal{U}
-    - 0.6\,p_\text{colleague}
+  G_\text{SOCIAL} &= 0.2\,\mathcal{U} - 0.6\,p_\text{colleague}
     + 0.15\,p_\text{enemy} + 0.25 + 0.15\,s^*,
 \end{aligned}
 \end{equation}
@@ -1455,10 +1456,9 @@ pallium \citep{broglio2015}.
 \paragraph{Predator Model}
 
 A Kalman filter maintains beliefs over predator state
-$\mathbf{s} = [x, y, v_x, v_y, \text{intent}]$ with object
-permanence: when the predator leaves the visual field, beliefs
-propagate forward with growing uncertainty rather than dropping
-to zero.
+($x, y, v_x, v_y$, intent) with object permanence: when the predator
+leaves the visual field, beliefs propagate forward with growing
+uncertainty rather than resetting to zero.
 Hunting intent is inferred from velocity direction toward the fish.
 
 \paragraph{Internal State Model}
@@ -1515,6 +1515,7 @@ where $[\cdot]^{\pm}$ denote rectified positive/negative components,
 $r_\text{LHb}$ is the lateral habenula mean firing rate (disappointment
 signal, GABAergic suppression \citep{matsumoto2007}),
 and $\alpha_\text{stress}$ is amygdala chronic stress.
+\begin{sloppypar}
 Population mean rate is linearly mapped to the DA output:
 $\text{DA} = \text{clamp}(0.4 + 10\,\bar{r}_\text{DA},\,0,1)$,
 then multiplied by the HPA cortisol suppression factor
@@ -1522,6 +1523,7 @@ $\eta_\text{HPA} \in [0,1]$ (anhedonia under chronic stress).
 The spiking VTA overrides the scalar DA computation whenever the module
 is active, preserving full backward compatibility via the shared
 \texttt{neuromod.DA} buffer.
+\end{sloppypar}
 
 \paragraph{Spiking Dorsal Raphe (5-HT)}
 
@@ -1540,7 +1542,7 @@ The net synaptic drive is
 \end{equation}
 where $\phi_\text{circ} \in [0.3,1.0]$ is the circadian activity drive,
 $r_\text{IPN}$ is the excitatory IPN relay, $r_\text{LHb}$ is the habenular
-disappointment signal (Tye et al.\ 2012 LHb→DRN GABA circuit), and
+disappointment signal (Tye et al.\ 2012 LHb$\to$DRN GABA circuit), and
 $\mathbb{1}[\text{flee}]$ suppresses 5-HT during escape to allow rapid
 threat response.
 Population mean rate is converted to 5-HT level via
@@ -1588,14 +1590,18 @@ flee burst scaling.
 
 \paragraph{HPA/HPI Axis (Cortisol)}
 
+\begin{sloppypar}
 The hypothalamic--pituitary--interrenal (HPI) axis---the teleost
 homologue of the mammalian HPA axis \citep{wendelaar1997}---models
 chronic stress via cortisol, the primary glucocorticoid in zebrafish.
+\end{sloppypar}
 A \emph{stress load} accumulates amygdala activation above a threshold
 $\theta_\text{HPA} = 0.25$ with decay $\tau_\sigma \approx 100$\,steps;
-cortisol rises slowly from stress load with decay $\tau_c \approx 300$\,steps:
+cortisol rises slowly from stress load
+with decay $\tau_c \approx 300$ steps:
 \begin{equation}\label{eq:cortisol}
-  \ell(t) = 0.99\,\ell(t{-}1) + \max(0,\;\alpha(t) - \theta_\text{HPA}), \quad
+  \ell(t) = 0.99\,\ell(t{-}1) + \max(0,\;\alpha(t) - \theta_\text{HPA}),
+\quad
   c(t) = c(t{-}1) + 0.003\,\ell(t)\,\mathbb{1}[\ell > 0.1].
 \end{equation}
 Downstream effects of $c$: (1)~\emph{hippocampal shrinkage}---place-cell
@@ -1867,11 +1873,13 @@ full checkpoint to overlay updated world knowledge onto stable NN weights.
 
 \paragraph{Curriculum Training}
 
+\begin{sloppypar}
 Progressive difficulty scaling through four stages: FORAGE\_EASY
 (no predator), FORAGE\_HARD (occluded food), SURVIVE\_EASY (slow
 predator), and SURVIVE\_HARD (full environment).
 Each stage runs multiple episodes with advancement requiring minimum
 food eaten and survival steps.
+\end{sloppypar}
 
 \subsection{Multi-Agent Dynamics}\label{sec:multiagent}
 
@@ -2119,7 +2127,7 @@ latent representations with encoder sparsity $\sim22\%$ and finite
 prediction surprise throughout closed-loop simulation.
 Sparsity is maintained by the homeostatic gain controller in
 each TwoCompColumn, which suppresses neurons whose mean firing rate
-exceeds 15\,Hz — consistent with the $\sim$5--25\,Hz sparse coding
+exceeds 15\,Hz --- consistent with the $\sim$5--25\,Hz sparse coding
 regime reported for zebrafish pallium \citep{bhatt2007}.
 
 Across training rounds the anti-Hebbian STDP rule (Eq.~\ref{eq:feedback})
@@ -2371,6 +2379,7 @@ Details and quantitative results are reported in the technical report
 (\texttt{zebrav2/technical\_report\_v2.tex}, Appendix: Vision System Evaluation).
 
 \paragraph{Module interaction tests.}
+\begin{sloppypar}
 Cross-module integration tests validate cascading effects across the
 neuromodulatory and hormonal systems: HPA axis cortisol accumulation
 from sustained amygdala activation ($\to$ DA suppression, place cell
@@ -2380,20 +2389,19 @@ social trust boost, SOCIAL goal bias), serotonin patience dynamics
 learning (goal bias bounded $[-0.5, 0.5]$, fitness-EMA tracking),
 SocialMemory precision-EMA alarm learning, and all eight disorder
 phenotype presets (wildtype through PTSD).
+\end{sloppypar}
 
 \paragraph{Spatial atlas validation.}
-Six tests verify that the spatial neuron registry
-(\texttt{spatial\_registry.py}) and the web demo 3D atlas
-(\texttt{generate\_brain\_atlas.py}) share the same 72-region bilateral
-coordinate system derived from the subject-12 calcium-imaging atlas
-(47{,}010 cells, regions 0--35 left hemisphere, 36--71 right).
+Six tests verify that the spatial neuron registry and the web demo
+3D atlas share the same 72-region bilateral coordinate system derived
+from the subject-12 calcium-imaging atlas (47{,}010 cells,
+regions 0--35 left hemisphere, 36--71 right).
 Tests confirm: (i)~atlas CSV loads correctly with matched cell/label
 counts; (ii)~every \texttt{label\_map} region has cells in the atlas;
 (iii)~centroids fall within valid voxel ranges; (iv)~generated neuron
 positions have correct shape and dtype; (v)~distance-dependent weight
-masks are non-degenerate; (vi)~canonical region numbers (tectum
-$\to$29/65, cerebellum $\to$1/37, pallium $\to$22/58, etc.) agree between
-both code paths.
+masks are non-degenerate; (vi)~canonical region numbers (tectum 29/65,
+cerebellum 1/37, pallium 22/58, etc.) agree between both code paths.
 
 \paragraph{Spiking--rate-coded structural agreement.}
 Thirty-two cross-validation tests compare the spiking brain
@@ -2424,11 +2432,11 @@ activity scaling with speed, and CPG activation correlating with swim
 effort.  Escape kinematics tests verify C-start speed burst ($>2.0$),
 escape direction away from predator (opposite heading changes for left
 vs.\ right threats), trigger latency ($\le 3$ steps), and flee speed
-exceeding forage speed.  Goal-specific motor program tests confirm the
-speed hierarchy FLEE\,$>$\,FORAGE\,$>$\,EXPLORE\,$>$\,SOCIAL\,$>$\,SLEEP
-(3.0, 1.2, 1.0, 0.9, 0.3 base speeds), FORAGE approach turning toward
-food, EXPLORE sinusoidal scanning, SOCIAL steering toward conspecifics,
-and SLEEP shelter-seeking.  Energy--motor coupling tests validate the
+exceeding forage speed.  Goal-specific motor program tests confirm the speed hierarchy
+(FLEE $>$ FORAGE $>$ EXPLORE $>$ SOCIAL $>$ SLEEP;
+base speeds 3.0, 1.2, 1.0, 0.9, 0.3), along with
+FORAGE approach turning, EXPLORE sinusoidal scanning,
+SOCIAL conspecific steering, and SLEEP shelter-seeking.  Energy--motor coupling tests validate the
 inverted-U motility curve $4e(1{-}e)$ with floor 0.15, and speed
 reduction at both low and high energy.  Cerebellum forward-model tests
 confirm high PE on first step (1.22), adaptation over time (early 0.92
@@ -2604,7 +2612,7 @@ Pallium $\to$ Tectum (top-down) & 150 & 0.2 \\
 \end{table}
 
 % =====================================================================
-\section{Virtual Laboratory: Experimental Protocols and Disorder Modeling}
+\section[Virtual Laboratory]{Virtual Laboratory: Protocols and Disorder Modeling}
 \label{sec:virtual_lab}
 
 The virtual zebrafish is designed not only as a neural model but as a
@@ -2636,23 +2644,24 @@ and Table~\ref{tab:disorders} lists the eight disorder phenotype profiles.
 \caption{Virtual laboratory manipulation levers and biological
 interpretations.}
 \label{tab:manipulations}
-\begin{tabular}{lll}
+\resizebox{\linewidth}{!}{%
+\small\begin{tabular}{lll}
 \toprule
 \textbf{Parameter} & \textbf{Python handle} & \textbf{Biological analog} \\
 \midrule
 DA baseline & \texttt{brain.neuromod.DA.fill\_(v)} & Dopamine tone (mesolimbic) \\
 5-HT baseline & \texttt{brain.neuromod.HT5.fill\_(v)} & Serotonin tone (raphe) \\
-NA baseline & \texttt{brain.neuromod.NA.fill\_(v)} & Noradrenaline (locus coeruleus) \\
-ACh baseline & \texttt{brain.neuromod.ACh.fill\_(v)} & Acetylcholine (basal forebrain) \\
+NA baseline & \texttt{brain.neuromod.NA.fill\_(v)} & Noradrenaline (LC) \\
+ACh baseline & \texttt{brain.neuromod.ACh.fill\_(v)} & Acetylcholine (BF) \\
 Amygdala gain & \texttt{brain.amygdala.retinal\_gain *= f} & Fear sensitivity \\
 Flee threshold & \texttt{brain.\_flee\_threshold = v} & Anxiety trait \\
 Social bias & \texttt{personality['social\_bias'] = v} & Sociality drive \\
-E/I ratio & \texttt{IzhikevichLayer(frac\_e=v)} & Excitation--inhibition balance \\
-Region ablation & \texttt{brain.\_ablated.add('region')} & Optogenetic silencing / lesion \\
+E/I ratio & \texttt{IzhikevichLayer(frac\_e=v)} & E/I balance \\
+Region ablation & \texttt{brain.\_ablated.add('region')} & Optogenetic silencing \\
 CPG noise & \texttt{brain.cpg.noise = v} & Motor variability \\
 Habenula threshold & \texttt{brain.habenula.threshold = v} & Frustration tolerance \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{table}
 
 \begin{table}[h]
@@ -2660,25 +2669,28 @@ Habenula threshold & \texttt{brain.habenula.threshold = v} & Frustration toleran
 \caption{Four standardized behavioral assays implemented in
 \texttt{zebrav2/gym\_env/assay\_arenas.py}.}
 \label{tab:assays}
-\begin{tabular}{llll}
+\resizebox{\linewidth}{!}{%
+\small\begin{tabular}{llll}
 \toprule
-\textbf{Assay} & \textbf{Arena} & \textbf{Key metrics} & \textbf{Lab protocol} \\
+\textbf{Assay} & \textbf{Arena} & \textbf{Key metrics} & \textbf{Protocol} \\
 \midrule
-Novel Tank Test & 400$\times$600 portrait & top\_fraction, freezing\_bouts, thigmotaxis & NTT (Levin et al. 2007) \\
-Light-Dark Test & 800$\times$300 landscape & dark\_fraction, dark\_preference\_index & LD (Maximino et al. 2010) \\
-Social Preference & 900$\times$300, 3-chamber & social\_preference\_index & SPT (Dreosti et al. 2015) \\
-Open Field & 600$\times$600 & center\_fraction, path\_entropy, distance & OFT (Egan et al. 2009) \\
+Novel Tank Test & $400{\times}600$ portrait & \texttt{top\_fraction}, \texttt{freezing\_bouts}, \texttt{thigmotaxis} & NTT \citep{levin2007} \\
+Light--Dark Test & $800{\times}300$ landscape & \texttt{dark\_fraction}, \texttt{dark\_preference\_index} & LD \citep{maximino2010} \\
+Social Preference & $900{\times}300$, 3-chamber & \texttt{social\_preference\_index} & SPT \citep{dreosti2015} \\
+Open Field & $600{\times}600$ & \texttt{center\_fraction}, \texttt{path\_entropy}, \texttt{distance} & OFT \citep{egan2009} \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{table}
 
 % ------------------------------------------------------------------
 \subsection{Experimental Scenario Protocols}
 
+\begin{sloppypar}
 Five scenario-based protocols are implemented in
 \texttt{zebrav2/tests/scenario\_suite.py}.
 Each scenario isolates one learning subsystem by holding all others at
 pretrained values.
+\end{sloppypar}
 
 \paragraph{Scenario 1 --- Tabula Rasa.}
 A fresh brain with no prior knowledge enters the environment.
@@ -2846,10 +2858,10 @@ prepulse inhibition \citep{kronenberg2005,irons2010}, consistent with these
 predictions.
 
 \paragraph{Disorder API.}
-All eight disorder profiles are accessible via a single call
-\texttt{apply\_disorder(brain, name, intensity=1.0)}, where
-\texttt{intensity} $\in [0,1]$ interpolates linearly between
-wildtype and full disorder, enabling dose-response simulations
+All eight disorder profiles are accessible via
+\texttt{apply\_disorder(brain, name, intensity=1.0)},
+where \texttt{intensity}$\in[0,1]$ interpolates between
+wildtype and full disorder for dose-response simulations
 (Table~\ref{tab:disorders}).
 \begin{table}[h]
 \centering
@@ -2857,6 +2869,7 @@ wildtype and full disorder, enabling dose-response simulations
 $\gamma_\text{ceil}$/$\gamma_\text{floor}$ constrain the learnable precision parameter $\gamma$
 via structural bounds on the two-compartment column (Lee et~al.\ 2026).}
 \label{tab:disorders}
+\resizebox{\linewidth}{!}{%
 \small
 \begin{tabular}{llll}
 \toprule
@@ -2864,15 +2877,14 @@ via structural bounds on the two-compartment column (Lee et~al.\ 2026).}
 \midrule
 \texttt{wildtype}      & baseline               & $\gamma \in [-3, 3]$  & control \\
 \texttt{hypodopamine}  & DA=0.05, no phasic     & ---                   & MPTP, reserpine \\
-\texttt{asd}           & 5-HT=0.85, OXT$\downarrow$ & sensory $\gamma_\text{floor}$=+1.2, & shank3, SERT mutant \\
-                       & social avoidance       & integrative $\gamma_\text{ceil}$=$-$0.5 & \\
+\texttt{asd}           & 5-HT=0.85, OXT$\downarrow$ & s. $\gamma_\text{floor}$=+1.2; i. $\gamma_\text{ceil}$=$-$0.5 & shank3, SERT \\
 \texttt{schizophrenia} & NMDA$\times$0.3, DA=0.85 & $\gamma_\text{ceil}$=$-$1.5 ($\pi\!\approx\!0.18$) & DISC1, ketamine \\
-\texttt{anxiety}       & NA=0.75, flee thr=0.12 & $\gamma_\text{floor}$=+1.0 ($\pi\!\geq\!0.73$) & CRF overexpression \\
+\texttt{anxiety}       & NA=0.75, flee thr=0.12 & $\gamma_\text{floor}$=+1.0 ($\pi\!\geq\!0.73$) & CRF overexpr. \\
 \texttt{depression}    & DA=0.15, 5-HT=0.2     & $\gamma_\text{ceil}$=$-$0.8 ($\pi\!\leq\!0.31$) & CMS model \\
-\texttt{adhd}          & DA=0.35, ACh=0.25      & ---                   & DA deficit model \\
+\texttt{adhd}          & DA=0.35, ACh=0.25      & ---                   & DA deficit \\
 \texttt{ptsd}          & amygdala$\times$2, cortisol & $\gamma_\text{floor}$=+0.8 ($\pi\!\geq\!0.69$) & trauma model \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{table}
 
 \paragraph{Precision-based disorder modeling.}
@@ -2930,22 +2942,22 @@ pair registered in a central species registry; a single call to
 \texttt{run\_full\_validation(species)} executes all four tiers
 and returns a structured report.
 
-\paragraph{Tier 1 — Behavioural battery.}
+\paragraph{Tier 1 --- Behavioural battery.}
 Species-specific behavioural tests check that the avatar reproduces
 the defining locomotor or learning signature of the biological model
 organism (pass threshold $>0.5$ on each metric).
 
-\paragraph{Tier 2 — Atlas correspondence.}
+\paragraph{Tier 2 --- Atlas correspondence.}
 Population-level firing rates are compared to synthetic reference
 templates encoding the expected relative activation ordering across
 conditions, using Spearman rank correlation (pass threshold $r_s > 0.5$).
 
-\paragraph{Tier 3 — Lesion replication.}
+\paragraph{Tier 3 --- Lesion replication.}
 Known biological interventions (region ablations) are applied
 and the resulting directional change in the target metric is verified
 against the published phenotype.
 
-\paragraph{Tier 4 — Robustness (graceful degradation).}
+\paragraph{Tier 4 --- Robustness (graceful degradation).}
 Biological neural circuits tolerate substantial cell loss without
 catastrophic failure \citep{rakic2002}.
 We simulate neuron death by applying independent Bernoulli dropout
@@ -2987,15 +2999,15 @@ sensory input, the CPG generates rhythm independently of ongoing sensory
 signals.
 \textit{C.~elegans} shows $\ge 96\%$ retention even at 50\% dropout
 because crawl speed is driven by internal motor neuron tone, while only
-the \emph{direction} of chemotaxis is impaired — consistent with the
+the \emph{direction} of chemotaxis is impaired --- consistent with the
 observation that sensory-deprived worms continue locomoting but lose
 chemotactic precision.
 \textit{Drosophila} is most sensitive (RI $= 0.946$) because odour-guided
 approach requires sustained PN input to KC activity; this matches the
 known APL-dependent fragility of the mushroom body to olfactory deprivation.
-Critically, the zebrafish sensory cascade — from photoreceptor and
+Critically, the zebrafish sensory cascade --- from photoreceptor and
 chemosensory signals through tectum, amygdala, and EFE goal selection
-to motor output — retains full behavioral coherence at all tested
+to motor output --- retains full behavioral coherence at all tested
 dropout levels (RI $= 1.0$), supporting the claim that the cells-to-behavior
 hierarchy is inherently fault-tolerant.
 
@@ -3264,8 +3276,10 @@ $N \ge 10$ random seeds and reports mean $\pm$ SD alongside Cohen's $d$
 effect sizes between experimental and control conditions.
 
 \paragraph{Disorder modeling extensions.}
+\begin{sloppypar}
 The three disorder profiles presented---hypodopaminergic, ASD-like, and
 schizophrenia-like---represent first-pass parameter perturbations.
+\end{sloppypar}
 More biologically grounded implementations would introduce
 (1)~dynamic DA depletion simulating nigrostriatal degeneration
 (progressive STDP failure across training rounds);
@@ -3290,20 +3304,22 @@ cognitive capacities emerge---a question directly testable with
 calcium imaging across zebrafish development.
 
 \paragraph{Cross-species scaling.}
+\begin{sloppypar}
 The vzlab multi-species platform (Section~\ref{sec:vzlab}) already
 demonstrates that the same active inference framework generalises
 to \textit{C.~elegans}, \textit{Drosophila melanogaster}, and
 \textit{Xenopus laevis} tadpole, all achieving Grade A validation
 under the same three-tier protocol.
-Future extensions include mouse ($\sim$70M neurons, partial connectome)
+Future extensions include mouse (${\sim}$70M neurons, partial connectome)
 and human cortical organoids, testing whether the same computational
-architecture scales across orders-of-magnitude differences in brain
-size and whether disorder phenotypes exhibit homologous behavioral
+architecture scales across many orders of magnitude in brain size
+and whether disorder phenotypes exhibit homologous behavioral
 signatures across species.
 The current data (35 rounds, Table~\ref{tab:training}) show the
-expected non-monotonic early trajectory; FLEE time dropped from 60\%
-(round~20) to 29\% (round~35) following EFE re-tuning, and food intake
-remained above 2 items for post-fix rounds despite high variance.
+expected non-monotonic early trajectory: FLEE time dropped from 60\%
+at round~20 to 29\% at round~35 following EFE re-tuning,
+and food intake remained above 2 items per round despite high variance.
+\end{sloppypar}
 
 Integration with real zebrafish whole-brain calcium imaging data
 \citep{ahrens2013,portugues2014} could constrain the connectivity
@@ -3435,7 +3451,7 @@ Binocular depth           & Analytic  & --          & --     & Sensory \\
 Personality system        & Analytic  & --          & --     & Modulation \\
 Predator brain            & Analytic  & 5-state FSM & --     & Opponent \\
 \midrule
-\textbf{Total}            &           &             & \textbf{7\,316+ SNN + rate} & \textbf{48 modules} \\
+\textbf{Total}            &           &             & \textbf{7\,316+} & \textbf{48 modules} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -3557,6 +3573,11 @@ Dunn, T.~W., Gebhardt, C., Naumann, E.~A., Rieber, C., et~al. (2016).
 Neural circuits underlying visually evoked escapes in larval zebrafish.
 \textit{Neuron}, 89(3):613--628.
 
+\bibitem[Egan et~al., 2009]{egan2009}
+Egan, R.~J., Bergner, C.~L., Hart, P.~C., Cachat, J.~M., et~al. (2009).
+Understanding behavioral and physiological phenotypes of stress and anxiety in zebrafish.
+\textit{Behavioural Brain Research}, 205(1):38--44.
+
 \bibitem[Eliasmith et~al., 2012]{eliasmith2012}
 Eliasmith, C., Stewart, T.~C., Choo, X., Bekolay, T., DeWolf, T., Tang, Y., and Rasmussen, D. (2012).
 A large-scale model of the functioning brain.
@@ -3616,6 +3637,11 @@ Behavioral decisions made under the risk of predation: a review and prospectus.
 Marques, J.~C., Lackber, S., Orger, M.~B., et~al. (2018).
 Structure of the zebrafish locomotor repertoire revealed with unsupervised behavioral clustering.
 \textit{Current Biology}, 28(2):181--195.
+
+\bibitem[Maximino et~al., 2010]{maximino2010}
+Maximino, C., de~Brito, T.~M., da~Silva Batista, A.~W., Herculano, A.~M., Morato, S., and Gouveia, A. (2010).
+Measuring anxiety in zebrafish: a critical review.
+\textit{Behavioural Brain Research}, 214(2):157--171.
 
 \bibitem[McNaughton et~al., 2006]{mcnaughton2006}
 McNaughton, B.~L., Battaglia, F.~P., Jensen, O., Moser, E.~I., and Moser, M.-B. (2006).
@@ -3935,6 +3961,11 @@ Fovea-like photoreceptor specializations underlie single UV cone driven prey-cap
 Li, W.-C., Soffe, S.~R., Wolf, E., and Roberts, A. (2006).
 Persistent responses to brief stimuli: feedback excitation among brainstem neurons.
 \textit{Journal of Neuroscience}, 26(15):4026--4035.
+
+\bibitem[Levin et~al., 2007]{levin2007}
+Levin, E.~D., Bencan, Z., and Cerutti, D.~T. (2007).
+Anxiolytic effects of nicotine in zebrafish.
+\textit{Physiology \& Behavior}, 90(1):54--58.
 
 \bibitem[Lin et~al., 2014]{lin2014}
 Lin, A.~C., Bygrave, A.~M., de~Calignon, A., Lee, T., and Miesenb{\"o}ck, G. (2014).

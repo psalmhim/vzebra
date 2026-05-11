@@ -1798,6 +1798,7 @@ class ZebrafishBrainV2(nn.Module):
             'exploration_phase': self._exploration_phase,
             # Action-perception cycle diagnostics
             'ai_free_energy': ai_motor['free_energy'],
+            'ai_fe_per_pass': ai_motor.get('fe_per_pass', []),
             'ai_blend': _blend,
             'ai_convergence': ai_motor.get('inference_convergence', 0.0),
             'fe_gradient': self._fe_gradient,

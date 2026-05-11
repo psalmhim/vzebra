@@ -20,7 +20,7 @@ class EFEConfig:
     # Base offsets per goal
     forage_offset: float = 0.15
     flee_offset: float = 0.42
-    explore_offset: float = 0.20
+    explore_offset: float = 0.12
     social_offset: float = 0.10
 
     # Prediction weights (negative = suppress when predicted)
@@ -70,7 +70,7 @@ class EFEConfig:
 
     # 5-HT patrol suppression
     ht5_forage_suppression: float = 0.15
-    safe_explore_boost: float = 0.1
+    safe_explore_boost: float = -0.08
 
     # World model coupling
     world_model_efe_scale: float = 0.15

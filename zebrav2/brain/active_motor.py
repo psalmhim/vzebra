@@ -303,6 +303,7 @@ class ActiveInferenceMotor(nn.Module):
             'cpg_bias': max(-1.0, min(1.0, ai_cpg_bias)),
             'gaze_pe': pe_gaze,
             'free_energy': col_out['free_energy'],
+            'fe_per_pass': list(self._fe_per_pass),
             'precision': col_out['precision'].detach().cpu().tolist(),
             'prediction_error': pe.detach().cpu().tolist(),
             'pred_rate': float(rate.mean()),
