@@ -155,10 +155,10 @@ class ActiveInferenceMotor(nn.Module):
                 mu[CH_GAZE] = explore_phase * 0.3
 
         elif goal == GOAL_EXPLORE:
-            mu[CH_HEADING] = explore_phase * 0.3
-            mu[CH_SPEED] = 0.3
-            mu[CH_TAIL_L] = 0.2
-            mu[CH_TAIL_R] = 0.2
+            mu[CH_HEADING] = explore_phase * 0.4
+            mu[CH_SPEED] = 0.5
+            mu[CH_TAIL_L] = 0.3
+            mu[CH_TAIL_R] = 0.3
             mu[CH_GAZE] = explore_phase * 0.4
 
         else:  # SOCIAL
