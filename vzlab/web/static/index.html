@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>vzlab — Virtual Laboratory Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Menlo', 'Consolas', monospace; background: #0d1117; color: #c9d1d9; height: 100vh; display: flex; flex-direction: column; }
+
+    /* ── Top bar ── */
+    #topbar {
+      display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+      background: #161b22; border-bottom: 1px solid #30363d; flex-wrap: wrap;
+    }
+    #topbar h1 { font-size: 14px; color: #58a6ff; letter-spacing: 1px; margin-right: 8px; }
+    select, button, input[type=number] {
+      background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+      padding: 4px 8px; border-radius: 4px; font-family: inherit; font-size: 12px;
+    }
+    button { cursor: pointer; }
+    button:hover { background: #30363d; }
+    #btn-start { background: #238636; border-color: #2ea043; }
+    #btn-start:hover { background: #2ea043; }
+    #btn-stop { background: #b62324; border-color: #da3633; }
+    #btn-stop:hover { background: #da3633; }
+    #counter { color: #8b949e; font-size: 11px; margin-left: auto; }
+    #status-dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; display: inline-block; }
+    #status-dot.idle { background: #6e7681; }
+    #status-dot.running { background: #3fb950; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    /* ── Main layout ── */
+    #main { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Left panel — arena ── */
+    #arena-panel { width: 60%; display: flex; flex-direction: column; border-right: 1px solid #30363d; }
+    #arena-title { padding: 6px 12px; font-size: 11px; color: #8b949e; background: #161b22; border-bottom: 1px solid #30363d; }
+    #arena-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #0d1117; }
+    #arena { display: block; }
+
+    /* ── Right panel — neural ── */
+    #neural-panel { width: 40%; display: flex; flex-direction: column; overflow: hidden; }
+
+    /* Section header */
+    .section-hdr {
+      padding: 6px 12px; font-size: 11px; color: #8b949e;
+      background: #161b22; border-bottom: 1px solid #30363d;
+      display: flex; justify-content: space-between;
+    }
+
+    /* Circuit / bar chart */
+    #circuit-wrap { flex: 1; padding: 8px; overflow: hidden; min-height: 0; }
+    #circuit-canvas-wrap { position: relative; height: 100%; }
+    #circuitChart { max-height: 100%; }
+
+    /* Side controls */
+    #controls { border-top: 1px solid #30363d; padding: 8px 12px; overflow-y: auto; max-height: 220px; }
+    .ctrl-section { margin-bottom: 10px; }
+    .ctrl-label { font-size: 10px; color: #8b949e; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px; }
+    .ablation-grid { display: flex; flex-wrap: wrap; gap: 4px; }
+    .abl-chip {
+      font-size: 10px; padding: 2px 6px; border-radius: 3px;
+      border: 1px solid #30363d; cursor: pointer; user-select: none;
+      background: #21262d; transition: background 0.15s;
+    }
+    .abl-chip.ablated { background: #b62324; border-color: #da3633; }
+    .param-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .param-row label { font-size: 10px; flex: 1; color: #8b949e; }
+    .param-row input[type=range] { flex: 2; accent-color: #58a6ff; }
+    .param-row .val { font-size: 10px; min-width: 30px; text-align: right; }
+
+    /* Behaviour bar */
+    #behaviour-bar {
+      padding: 6px 12px; font-size: 11px; background: #161b22;
+      border-top: 1px solid #30363d; display: flex; gap: 16px; align-items: center;
+    }
+    .bstat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .bstat-label { font-size: 9px; color: #6e7681; text-transform: uppercase; }
+    .bstat-val { font-size: 12px; font-weight: bold; }
+    .goal-badge {
+      padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: bold;
+      background: #21262d; border: 1px solid #30363d;
+    }
+    .goal-FORAGE { background: #1a4a1f; border-color: #3fb950; color: #3fb950; }
+    .goal-FLEE   { background: #4a1a1a; border-color: #f85149; color: #f85149; }
+    .goal-EXPLORE{ background: #1a2e4a; border-color: #58a6ff; color: #58a6ff; }
+    .goal-SOCIAL { background: #3a2a50; border-color: #bc8cff; color: #bc8cff; }
+    .goal-SLEEP  { background: #2a2a2a; border-color: #8b949e; color: #8b949e; }
+    .goal-DEAD   { background: #3a1a1a; border-color: #da3633; color: #da3633; }
+
+    /* Log overlay */
+    #log { position: fixed; bottom: 8px; right: 8px; font-size: 9px; color: #6e7681; max-width: 300px; text-align: right; }
+  </style>
+</head>
+<body>
+
+<!-- ── Top bar ── -->
+<div id="topbar">
+  <h1>vzlab</h1>
+  <span id="status-dot" class="idle"></span>
+
+  <label style="font-size:11px">Species</label>
+  <select id="sel-species">
+    <option value="c_elegans">C. elegans</option>
+    <option value="danio_rerio">Danio rerio</option>
+  </select>
+
+  <label style="font-size:11px">Protocol</label>
+  <select id="sel-protocol">
+    <option value="chemotaxis">Chemotaxis</option>
+    <option value="predator_avoidance">Predator Avoidance</option>
+    <option value="alarm_propagation">Alarm Propagation</option>
+    <option value="exploration">Exploration</option>
+    <option value="two_spot_assay">Two-Spot Assay</option>
+    <option value="thermotaxis">Thermotaxis</option>
+  </select>
+
+  <label style="font-size:11px">Episodes</label>
+  <input id="inp-episodes" type="number" value="3" min="1" max="100" style="width:50px">
+
+  <label style="font-size:11px">Seed</label>
+  <input id="inp-seed" type="number" value="0" min="0" style="width:50px">
+
+  <button id="btn-start">▶ Start</button>
+  <button id="btn-stop">■ Stop</button>
+
+  <span id="counter">ep 0 / step 0</span>
+</div>
+
+<!-- ── Main content ── -->
+<div id="main">
+
+  <!-- Left: arena canvas -->
+  <div id="arena-panel">
+    <div id="arena-title">Arena — <span id="arena-species-label">—</span></div>
+    <div id="arena-wrap">
+      <canvas id="arena" width="600" height="450"></canvas>
+    </div>
+  </div>
+
+  <!-- Right: neural + controls -->
+  <div id="neural-panel">
+
+    <div class="section-hdr">
+      <span>Neural State — <span id="neural-label">waiting</span></span>
+      <span id="ci-label" style="color:#3fb950"></span>
+    </div>
+
+    <div id="circuit-wrap">
+      <div id="circuit-canvas-wrap">
+        <canvas id="circuitChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Behaviour summary -->
+    <div id="behaviour-bar">
+      <div class="bstat">
+        <span class="bstat-label">Goal</span>
+        <span id="beh-goal" class="goal-badge">—</span>
+      </div>
+      <div class="bstat">
+        <span class="bstat-label">Speed</span>
+        <span class="bstat-val" id="beh-speed">—</span>
+      </div>
+      <div class="bstat">
+        <span class="bstat-label">Turn</span>
+        <span class="bstat-val" id="beh-turn">—</span>
+      </div>
+      <div class="bstat">
+        <span class="bstat-label" id="beh-extra-lbl">CI</span>
+        <span class="bstat-val" id="beh-extra">—</span>
+      </div>
+    </div>
+
+    <!-- Ablation + parameter controls -->
+    <div id="controls">
+      <div class="ctrl-section">
+        <div class="ctrl-label">Ablation</div>
+        <div class="ablation-grid" id="ablation-grid"></div>
+      </div>
+      <div class="ctrl-section" id="params-section">
+        <div class="ctrl-label">Parameters</div>
+        <div id="params-grid"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="log"></div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════
+// State
+// ════════════════════════════════════════════════════════════════════════
+let ws = null;
+let running = false;
+let currentSpecies = null;
+let currentFrame = null;
+
+const ablatedRegions = new Set();
+
+// Species-specific config
+const SPECIES_CONFIG = {
+  c_elegans: {
+    arenaW: 100, arenaH: 100,    // mm
+    arenaColor: '#f5f0e8',
+    agentColor: '#c0392b',
+    circuitKeys: ['AWC-L', 'AWC-R', 'AIY', 'AIZ', 'AIB', 'RIM', 'RIA', 'AVA', 'AVB'],
+    hierPath: ['L3_circuit', 'awcl_v', 'awcr_v', 'aiy_v', 'aiz_v', 'aib_v', 'rim_v', 'ria_v', 'ava_v', 'avb_v'],
+    ablationRegions: ['AWC', 'AWB', 'AIY', 'AIZ', 'AIB', 'AVA', 'AVB', 'RIM', 'RIA', 'sensory', 'interneuron', 'motor'],
+    params: [
+      { path: 'chemotaxis.gain', label: 'Chem Gain', min: 0, max: 5, step: 0.1, def: 1.0 },
+      { path: 'neuromod.serotonin_tone', label: 'Serotonin', min: 0, max: 1, step: 0.05, def: 0.0 },
+      { path: 'circuit.tau', label: 'Membrane τ', min: 5, max: 50, step: 1, def: 20 },
+      { path: 'sensory.adaptation_rate', label: 'Adaptation', min: 0, max: 0.2, step: 0.01, def: 0.02 },
+    ],
+    extraLabel: 'CI',
+    extraPath: ['extras', 'chemotaxis_index'],
+  },
+  danio_rerio: {
+    arenaW: 800, arenaH: 600,   // px
+    arenaColor: '#1a3a5c',
+    agentColor: '#ffd700',
+    circuitKeys: ['sensory', 'motor', 'tectum', 'pallium', 'amygdala', 'energy'],
+    ablationRegions: ['amygdala', 'cerebellum', 'tectum', 'pallium', 'habenula', 'basal_ganglia', 'olfaction', 'lateral_line'],
+    params: [
+      { path: 'efe.beta_epistemic', label: 'Epistemic β', min: 0, max: 5, step: 0.1, def: 1.0 },
+      { path: 'tectum.na_gain', label: 'NA Gain', min: 0, max: 3, step: 0.1, def: 1.0 },
+      { path: 'efe.beta_flee', label: 'Flee β', min: 0, max: 5, step: 0.1, def: 1.0 },
+      { path: 'shoaling.gamma_s', label: 'Shoal γ', min: 0, max: 2, step: 0.1, def: 0.5 },
+    ],
+    extraLabel: 'Energy',
+    extraPath: ['hier', 'L5_behaviour', 'energy'],
+  },
+};
+
+// ════════════════════════════════════════════════════════════════════════
+// Chart.js — neural bar chart
+// ════════════════════════════════════════════════════════════════════════
+let circuitChart = null;
+
+function initChart(labels) {
+  if (circuitChart) { circuitChart.destroy(); circuitChart = null; }
+  const ctx = document.getElementById('circuitChart').getContext('2d');
+  circuitChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Voltage / Activity',
+        data: new Array(labels.length).fill(0),
+        backgroundColor: labels.map((_, i) =>
+          `hsl(${200 + i * 20},70%,55%)`
+        ),
+        borderWidth: 0,
+        borderRadius: 3,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 80 },
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+        y: {
+          ticks: { color: '#8b949e', font: { size: 10 } },
+          grid: { color: '#21262d' },
+          min: 0, max: 1,
+          suggestedMax: 1,
+        },
+      },
+    },
+  });
+}
+
+function updateChart(values, max) {
+  if (!circuitChart) return;
+  circuitChart.data.datasets[0].data = values;
+  if (max > 0) circuitChart.options.scales.y.max = max + 0.1;
+  circuitChart.update('none');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Arena rendering
+// ════════════════════════════════════════════════════════════════════════
+const arenaCanvas = document.getElementById('arena');
+const arenaCtx = arenaCanvas.getContext('2d');
+
+function resizeArena(species) {
+  const wrap = document.getElementById('arena-wrap');
+  const ww = wrap.clientWidth - 16;
+  const wh = wrap.clientHeight - 16;
+  const cfg = SPECIES_CONFIG[species] || SPECIES_CONFIG.c_elegans;
+  const arenaAspect = cfg.arenaW / cfg.arenaH;
+  let cw = ww, ch = Math.round(ww / arenaAspect);
+  if (ch > wh) { ch = wh; cw = Math.round(ch * arenaAspect); }
+  arenaCanvas.width = cw;
+  arenaCanvas.height = ch;
+}
+
+function drawIdle(species) {
+  const cfg = SPECIES_CONFIG[species] || SPECIES_CONFIG.c_elegans;
+  const W = arenaCanvas.width, H = arenaCanvas.height;
+  const ctx = arenaCtx;
+  ctx.fillStyle = cfg.arenaColor;
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '13px Menlo, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('Idle — press ▶ Start', W / 2, H / 2);
+}
+
+// Map world coords → canvas coords
+function worldToCanvas(wx, wy, arenaW, arenaH) {
+  const sx = (wx / arenaW) * arenaCanvas.width;
+  const sy = (wy / arenaH) * arenaCanvas.height;
+  return [sx, sy];
+}
+
+function drawTriangle(ctx, x, y, heading, size, color) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(heading);
+  ctx.beginPath();
+  ctx.moveTo(size, 0);
+  ctx.lineTo(-size * 0.6, size * 0.5);
+  ctx.lineTo(-size * 0.6, -size * 0.5);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawCircle(ctx, x, y, r, color) {
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function renderArena(frame, species) {
+  const cfg = SPECIES_CONFIG[species] || SPECIES_CONFIG.c_elegans;
+  const W = arenaCanvas.width, H = arenaCanvas.height;
+  const aW = cfg.arenaW, aH = cfg.arenaH;
+  const ctx = arenaCtx;
+
+  // Background
+  ctx.fillStyle = cfg.arenaColor;
+  ctx.fillRect(0, 0, W, H);
+
+  if (species === 'c_elegans') {
+    // Agar plate: draw attractant gradient (green glow at top-right)
+    const gx = (0.8 * aW / aW) * W;
+    const gy = (0.5 * aH / aH) * H;
+    const grad = ctx.createRadialGradient(gx, gy, 0, gx, gy, W * 0.6);
+    grad.addColorStop(0, 'rgba(0,180,0,0.25)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Attractant dot
+    ctx.beginPath();
+    ctx.arc(gx, gy, 8, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,220,60,0.8)';
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = '9px Menlo';
+    ctx.textAlign = 'left';
+    ctx.fillText('attractant', gx + 10, gy + 3);
+
+    // Plate border
+    ctx.strokeStyle = '#aaa';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, W - 2, H - 2);
+
+    // Agents (worms = small circles)
+    if (frame.agents) {
+      for (const a of frame.agents) {
+        const [cx, cy] = worldToCanvas(a.x, a.y, aW, aH);
+        drawCircle(ctx, cx, cy, Math.max(4, W * 0.02), a.alive !== false ? cfg.agentColor : '#888');
+        // Heading indicator
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(a.heading);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(W * 0.02, 0);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+  } else {
+    // Aquatic arena
+    // Food items
+    if (frame.food) {
+      for (const [fx, fy] of frame.food) {
+        const [cx, cy] = worldToCanvas(fx, fy, aW, aH);
+        const gr = ctx.createRadialGradient(cx, cy, 0, cx, cy, 6);
+        gr.addColorStop(0, 'rgba(80,220,80,0.9)');
+        gr.addColorStop(1, 'rgba(80,220,80,0)');
+        ctx.fillStyle = gr;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Predators (red triangles)
+    if (frame.predators) {
+      for (const [px, py] of frame.predators) {
+        const [cx, cy] = worldToCanvas(px, py, aW, aH);
+        drawTriangle(ctx, cx, cy, 0, 10, '#f85149');
+      }
+    }
+
+    // Agents (gold triangles)
+    if (frame.agents) {
+      for (const a of frame.agents) {
+        const [cx, cy] = worldToCanvas(a.x, a.y, aW, aH);
+        const color = a.alive !== false ? cfg.agentColor : '#555';
+        const sz = Math.max(6, W * 0.012);
+        drawTriangle(ctx, cx, cy, a.heading, sz, color);
+      }
+    }
+
+    // Border
+    ctx.strokeStyle = 'rgba(88,166,255,0.2)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, W - 2, H - 2);
+  }
+
+  // Extras overlay (top-left)
+  ctx.fillStyle = 'rgba(13,17,23,0.7)';
+  ctx.fillRect(4, 4, 130, 18);
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '9px Menlo';
+  ctx.textAlign = 'left';
+  const t_label = `t=${frame.t}  ep=${frame.episode}`;
+  ctx.fillText(t_label, 8, 16);
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Ablation chips
+// ════════════════════════════════════════════════════════════════════════
+function buildAblationGrid(species) {
+  const cfg = SPECIES_CONFIG[species] || SPECIES_CONFIG.c_elegans;
+  const grid = document.getElementById('ablation-grid');
+  grid.innerHTML = '';
+  for (const region of cfg.ablationRegions) {
+    const chip = document.createElement('span');
+    chip.className = 'abl-chip' + (ablatedRegions.has(region) ? ' ablated' : '');
+    chip.textContent = region;
+    chip.dataset.region = region;
+    chip.addEventListener('click', () => toggleAblation(region, chip));
+    grid.appendChild(chip);
+  }
+}
+
+async function toggleAblation(region, chip) {
+  const isAblated = ablatedRegions.has(region);
+  try {
+    const resp = await fetch('/api/ablate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ region, enabled: isAblated }),  // enabled=true → restore
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      if (isAblated) {
+        ablatedRegions.delete(region);
+        chip.classList.remove('ablated');
+      } else {
+        ablatedRegions.add(region);
+        chip.classList.add('ablated');
+      }
+    } else {
+      log('Ablation: ' + (data.message || 'error'));
+    }
+  } catch (e) {
+    log('Ablation error: ' + e);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Parameter sliders
+// ════════════════════════════════════════════════════════════════════════
+function buildParamsGrid(species) {
+  const cfg = SPECIES_CONFIG[species] || SPECIES_CONFIG.c_elegans;
+  const grid = document.getElementById('params-grid');
+  grid.innerHTML = '';
+  for (const p of cfg.params) {
+    const row = document.createElement('div');
+    row.className = 'param-row';
+    const lbl = document.createElement('label');
+    lbl.textContent = p.label;
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = p.min; slider.max = p.max; slider.step = p.step; slider.value = p.def;
+    const valSpan = document.createElement('span');
+    valSpan.className = 'val';
+    valSpan.textContent = p.def;
+    slider.addEventListener('input', () => { valSpan.textContent = parseFloat(slider.value).toFixed(2); });
+    slider.addEventListener('change', () => sendParam(p.path, parseFloat(slider.value)));
+    row.appendChild(lbl); row.appendChild(slider); row.appendChild(valSpan);
+    grid.appendChild(row);
+  }
+}
+
+async function sendParam(path, value) {
+  try {
+    const resp = await fetch('/api/param', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, value }),
+    });
+    const data = await resp.json();
+    if (data.status !== 'ok') log('Param error: ' + (data.message || ''));
+  } catch (e) {
+    log('Param error: ' + e);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Frame processing
+// ════════════════════════════════════════════════════════════════════════
+function processFrame(frame) {
+  if (!frame || frame.type === 'status') return;
+  currentFrame = frame;
+
+  const species = frame.species || currentSpecies || document.getElementById('sel-species').value;
+  const cfg = SPECIES_CONFIG[species] || SPECIES_CONFIG.c_elegans;
+
+  // Render arena
+  if (species !== currentSpecies) {
+    currentSpecies = species;
+    resizeArena(species);
+    document.getElementById('arena-species-label').textContent =
+      species === 'c_elegans' ? 'C. elegans agar plate (100×100 mm)' : 'Danio rerio aquatic arena (800×600 px)';
+    buildAblationGrid(species);
+    buildParamsGrid(species);
+    initChart(cfg.circuitKeys);
+    document.getElementById('neural-label').textContent = species;
+    document.getElementById('beh-extra-lbl').textContent = cfg.extraLabel;
+  }
+  renderArena(frame, species);
+
+  // Update neural chart
+  let chartVals = [];
+  let chartMax = 0;
+
+  if (species === 'c_elegans') {
+    const L3 = (frame.hier || {}).L3_circuit || {};
+    const keys = ['awcl_v', 'awcr_v', 'aiy_v', 'aiz_v', 'aib_v', 'rim_v', 'ria_v', 'ava_v', 'avb_v'];
+    chartVals = keys.map(k => Math.max(0, parseFloat(L3[k]) || 0));
+    chartMax = Math.max(1, ...chartVals);
+  } else {
+    const L4 = (frame.hier || {}).L4_region || {};
+    const L5 = (frame.hier || {}).L5_behaviour || {};
+    const rr = L4.region_rates || {};
+    chartVals = [
+      parseFloat(rr.sensory || 0) || 0,
+      parseFloat(rr.motor || 0) || 0,
+      parseFloat(rr.tectum || 0) || 0,
+      parseFloat(rr.pallium || 0) || 0,
+      parseFloat(rr.amygdala || 0) || 0,
+      parseFloat(L5.energy || 0) || 0,
+    ];
+    chartMax = Math.max(1, ...chartVals);
+  }
+  updateChart(chartVals, chartMax);
+
+  // CI / chemotaxis_index label (top right of neural panel)
+  if (species === 'c_elegans') {
+    const ci = frame.extras && frame.extras.chemotaxis_index != null
+      ? frame.extras.chemotaxis_index.toFixed(3) : '—';
+    document.getElementById('ci-label').textContent = `CI: ${ci}`;
+  } else {
+    document.getElementById('ci-label').textContent = '';
+  }
+
+  // Behaviour bar
+  const L5 = (frame.hier || {}).L5_behaviour || {};
+  const goalName = L5.goal_name || '—';
+  const goalEl = document.getElementById('beh-goal');
+  goalEl.textContent = goalName;
+  goalEl.className = 'goal-badge goal-' + goalName;
+
+  document.getElementById('beh-speed').textContent =
+    L5.speed != null ? parseFloat(L5.speed).toFixed(2) : '—';
+  document.getElementById('beh-turn').textContent =
+    L5.turn != null ? parseFloat(L5.turn).toFixed(3) : '—';
+
+  // Extra stat
+  let extraVal = '—';
+  const [domain, ...keyPath] = cfg.extraPath;
+  let node = domain === 'extras' ? frame.extras : (frame.hier || {})[domain] || {};
+  for (const k of keyPath) { node = node ? node[k] : undefined; }
+  if (node != null && !isNaN(node)) extraVal = parseFloat(node).toFixed(3);
+  document.getElementById('beh-extra').textContent = extraVal;
+
+  // Counter
+  document.getElementById('counter').textContent =
+    `ep ${frame.episode + 1} / step ${frame.t}`;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// WebSocket
+// ════════════════════════════════════════════════════════════════════════
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/live`);
+
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'status') {
+        running = !!msg.running;
+        updateStatusDot(running);
+      } else if (msg.type === 'step') {
+        processFrame(msg);
+      } else if (msg.type === 'done') {
+        log(`Done: ${msg.n_episodes} episodes`);
+        running = false;
+        updateStatusDot(false);
+      } else if (msg.type === 'error') {
+        log('Error: ' + msg.message);
+      }
+    } catch (e) { /* ignore */ }
+  };
+
+  ws.onclose = () => {
+    setTimeout(connect, 2000);
+  };
+  ws.onerror = () => { ws.close(); };
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// UI helpers
+// ════════════════════════════════════════════════════════════════════════
+function updateStatusDot(isRunning) {
+  const dot = document.getElementById('status-dot');
+  dot.className = 'idle';
+  if (isRunning) dot.classList.add('running');
+}
+
+function log(msg) {
+  const el = document.getElementById('log');
+  el.textContent = msg;
+  setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 5000);
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// API helpers
+// ════════════════════════════════════════════════════════════════════════
+async function loadProtocols() {
+  try {
+    const resp = await fetch('/api/protocols');
+    const data = await resp.json();
+    const sel = document.getElementById('sel-protocol');
+    sel.innerHTML = '';
+    for (const [name, info] of Object.entries(data)) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      sel.appendChild(opt);
+    }
+  } catch (e) { /* keep defaults */ }
+}
+
+async function loadSpecies() {
+  try {
+    const resp = await fetch('/api/species');
+    const data = await resp.json();
+    if (data.species && data.species.length > 0) {
+      const sel = document.getElementById('sel-species');
+      sel.innerHTML = '';
+      for (const sp of data.species) {
+        const opt = document.createElement('option');
+        opt.value = sp;
+        opt.textContent = sp === 'c_elegans' ? 'C. elegans' : sp === 'danio_rerio' ? 'Danio rerio' : sp;
+        sel.appendChild(opt);
+      }
+    }
+  } catch (e) { /* keep defaults */ }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Start / Stop
+// ════════════════════════════════════════════════════════════════════════
+document.getElementById('btn-start').addEventListener('click', async () => {
+  const species = document.getElementById('sel-species').value;
+  const protocol = document.getElementById('sel-protocol').value;
+  const n_episodes = parseInt(document.getElementById('inp-episodes').value) || 3;
+  const seed = parseInt(document.getElementById('inp-seed').value) || 0;
+
+  ablatedRegions.clear();
+
+  try {
+    const resp = await fetch('/api/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ species, protocol, n_episodes, seed }),
+    });
+    const data = await resp.json();
+    if (data.status === 'started') {
+      running = true;
+      updateStatusDot(true);
+      log(`Started: ${species} / ${protocol} × ${n_episodes}`);
+    } else {
+      log('Start error: ' + (data.message || JSON.stringify(data)));
+    }
+  } catch (e) {
+    log('Start error: ' + e);
+  }
+});
+
+document.getElementById('btn-stop').addEventListener('click', async () => {
+  try {
+    await fetch('/api/stop', { method: 'POST' });
+    running = false;
+    updateStatusDot(false);
+    log('Stopped.');
+  } catch (e) {
+    log('Stop error: ' + e);
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// Init
+// ════════════════════════════════════════════════════════════════════════
+(async () => {
+  const defaultSpecies = document.getElementById('sel-species').value;
+  resizeArena(defaultSpecies);
+  buildAblationGrid(defaultSpecies);
+  buildParamsGrid(defaultSpecies);
+  initChart(SPECIES_CONFIG[defaultSpecies].circuitKeys);
+  drawIdle(defaultSpecies);
+
+  await Promise.all([loadSpecies(), loadProtocols()]);
+
+  connect();
+})();
+
+window.addEventListener('resize', () => {
+  const sp = currentSpecies || document.getElementById('sel-species').value;
+  resizeArena(sp);
+  if (!currentFrame) drawIdle(sp);
+  else renderArena(currentFrame, sp);
+});
+</script>
+</body>
+</html>
