@@ -95,10 +95,10 @@ motor output alongside the primary retinal turn signal.
 Ablation reveals that olfaction is the only module whose removal reduces
 survival ($-7\%$), while habenula and olfaction each reduce food intake by
 $-35\%$, followed by RL critic ($-28\%$) and amygdala ($-25\%$).
-The system achieves 84/100 on a five-scenario decision rationality
+The system achieves 86/100 on a five-scenario decision rationality
 benchmark: safe food selection (A=78/100), predator-charge detection
 perfect (B=100/100), starvation dilemma (C=100/100), easy foraging
-(D=76/100), and exploration (E=68/100).
+(D=76/100), and exploration (E=77/100).
 Across 10~seeds, all reach the full 500-step episode (mean
 $500 \pm 0$ steps), consuming $11.1 \pm 2.8$ food items (0/10 caught).
 A multi-agent configuration with 5~fish---each with a full v2 brain
@@ -248,7 +248,7 @@ The key contributions of this work are:
     cells-to-social-behavior hierarchy is inherently fault-tolerant.
 \end{enumerate}
 
-The model achieves 84/100 on a decision rationality benchmark (round~177 checkpoint),
+The model achieves 86/100 on a decision rationality benchmark (round~177 checkpoint),
 demonstrates online learning that triples
 foraging efficiency, and maintains adaptive behavior under concurrent
 predator threat and energy depletion---all using exclusively local,
@@ -288,7 +288,7 @@ goal policies (FORAGE, FLEE, EXPLORE, SOCIAL), a winner-take-all
 attractor selects the active goal, and the resulting motor command
 closes the sensorimotor loop.
 \textbf{(D)}~Decision rationality benchmark across five structured
-scenarios (A--E), with average 84/100 (dashed line) and summary
+scenarios (A--E), with average 86/100 (dashed line) and summary
 statistics from 10-seed evaluation.}
 \label{fig:overview}
 \end{figure}
@@ -3372,7 +3372,7 @@ the WTA goal-selector projection; (5)~ACh-gated food class
 reinforcement and NA-gated enemy class reinforcement in the
 classifier; and (6)~online VAE ELBO minimization for latent world
 modeling.
-Key results (Table~\ref{tab:v2summary}) include 84/100 decision
+Key results (Table~\ref{tab:v2summary}) include 86/100 decision
 rationality (round~177 checkpoint), perfect 10/10 seed survival
 (500-step episodes, 0 predator captures), olfaction and habenula
 identified as most impactful via ablation ($-35\%$ food each), and
@@ -3473,7 +3473,7 @@ Neuromodulatory axes     & 4 (DA/NA/5-HT/ACh) \\
 Modules                  & 48 modules \\
 Classifier accuracy      & 96.2\% \\
 Multi-seed survival (10) & $500 \pm 0$ steps (10/10 full, 0 caught) \\
-Decision rationality     & 84/100 \\
+Decision rationality     & 86/100 \\
 Curriculum               & 3/3 PASS \\
 Multi-agent              & 5 fish $\times$ full v2 brain \\
 Personalities            & bold/shy/explorer/social/default \\
