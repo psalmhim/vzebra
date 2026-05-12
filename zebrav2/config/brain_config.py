@@ -24,7 +24,7 @@ class EFEConfig:
     social_offset: float = 0.10
 
     # Prediction weights (negative = suppress when predicted)
-    forage_food_weight: float = -0.8
+    forage_food_weight: float = -1.0
     forage_uncertainty_weight: float = 0.2
     flee_enemy_weight: float = -0.8
     flee_cms_weight: float = 0.1
@@ -70,7 +70,7 @@ class EFEConfig:
 
     # 5-HT patrol suppression
     ht5_forage_suppression: float = 0.15
-    safe_explore_boost: float = -0.08
+    safe_explore_boost: float = -0.05
 
     # World model coupling
     world_model_efe_scale: float = 0.15
@@ -79,7 +79,7 @@ class EFEConfig:
     efe_bias_amplitude: float = -2.0
 
     # Place cell bonus
-    place_cell_forage_weight: float = 1.0  # subtracted from G_forage
+    place_cell_forage_weight: float = 1.5  # subtracted from G_forage
 
 
 @dataclass
@@ -90,11 +90,11 @@ class GoalSelectionConfig:
 
     # Food-visible reflex
     food_pixels_threshold: int = 1
-    food_reflex_threat_gate: float = 0.12
-    forage_lock_duration: int = 20
+    food_reflex_threat_gate: float = 0.20
+    forage_lock_duration: int = 35
 
     # Forage persistence
-    forage_exit_threat: float = 0.12
+    forage_exit_threat: float = 0.20
 
     # Starvation overrides
     starvation_panic_threshold_1: float = 0.45
@@ -112,7 +112,7 @@ class GoalSelectionConfig:
     amygdala_moderate_threshold: float = 0.18
 
     # Stuck detection → force explore
-    no_food_timeout: int = 30
+    no_food_timeout: int = 50
     starvation_explore_gate: float = 0.4
     force_explore_duration: int = 15
 
@@ -132,7 +132,7 @@ class NeuromodConfig:
     """Neuromodulator dynamics and coupling."""
     # Reward computation
     survival_reward: float = 0.01
-    food_reward_gain: float = 10.0
+    food_reward_gain: float = 13.0
     forage_lock_on_food: int = 25
     da_phasic_burst_duration: int = 6
 
@@ -178,7 +178,7 @@ class PlasticityConfig:
     enemy_class_eta: float = 6e-6
 
     # Goal selector reinforcement
-    goal_selector_eta: float = 1e-4
+    goal_selector_eta: float = 2e-4
 
     # Top-down attention
     top_down_gain: float = 0.05
@@ -187,7 +187,7 @@ class PlasticityConfig:
     da_consolidation_threshold: float = 0.45
 
     # STDP consolidation frequency
-    stdp_consolidation_every: int = 5
+    stdp_consolidation_every: int = 3
 
     # Synaptic dropout during STDP consolidation (0 = off, 0.1 = 10% synapses
     # silenced per step).  Builds fault-tolerant distributed representations.
@@ -259,7 +259,7 @@ class NoveltyConfig:
 @dataclass
 class AblationConfig:
     """Enable/disable individual brain modules for ablation studies."""
-    habenula: bool = False     # ablated by default (performance gain)
+    habenula: bool = True      # re-enabled: ablation shows −35% food without it
     insula: bool = False       # ablated by default (performance gain)
     cerebellum: bool = True
     amygdala: bool = True
