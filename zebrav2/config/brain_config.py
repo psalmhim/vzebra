@@ -178,7 +178,7 @@ class PlasticityConfig:
     enemy_class_eta: float = 6e-6
 
     # Goal selector reinforcement
-    goal_selector_eta: float = 2e-4
+    goal_selector_eta: float = 1e-4
 
     # Top-down attention
     top_down_gain: float = 0.05
