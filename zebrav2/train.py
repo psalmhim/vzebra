@@ -50,11 +50,16 @@ def main():
                         help='Episodes per round (averaged for stable fitness, default: 3)')
     parser.add_argument('--device',          type=str, default=None,
                         help='Compute device: cpu, mps, cuda (default: auto)')
+    parser.add_argument('--fresh',           action='store_true',
+                        help='Start from scratch, ignore all checkpoints')
     args = parser.parse_args()
 
     ckpt_dir = os.path.join(PROJECT_ROOT, 'zebrav2', 'checkpoints')
     checkpoint = args.checkpoint
-    if checkpoint is None:
+    if args.fresh:
+        checkpoint = None
+        print("  Fresh start: no checkpoint loaded")
+    elif checkpoint is None:
         # Prefer ckpt_best.pt if it exists, else latest numbered checkpoint
         best = os.path.join(ckpt_dir, 'ckpt_best.pt')
         if os.path.exists(best):
