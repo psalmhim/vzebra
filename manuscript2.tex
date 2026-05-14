@@ -99,8 +99,8 @@ The system achieves 85/100 on a five-scenario decision rationality
 benchmark: safe food selection (A=74/100), predator-charge detection
 perfect (B=100/100), starvation dilemma (C=100/100), easy foraging
 (D=83/100), and exploration (E=66/100).
-Across 10~seeds, all reach the full 500-step episode (mean
-$500 \pm 0$ steps), consuming $11.1 \pm 2.8$ food items (0/10 caught).
+Across 10~seeds, the model survives $459 \pm 83$ steps and consumes
+$12.8 \pm 5.9$ food items (2/10 caught by predator).
 A multi-agent configuration with 5~fish---each with a full v2 brain
 (35,000 total spiking neurons) and individual personality profiles
 (bold, shy, explorer, social)---demonstrates emergent competitive
@@ -1959,16 +1959,16 @@ of lateral placement.
 
 Figure~\ref{fig:survival} shows survival duration and food intake
 across 10~random seeds in 500-step episodes.
-All 10 seeds reach the full 500-step episode ($500 \pm 0$ steps),
-consuming $11.1 \pm 2.8$ food items with no predator captures (0/10 caught).
+Across 10~seeds, the model survives $459 \pm 83$ steps and consumes
+$12.8 \pm 5.9$ food items (2/10 caught by predator; seeds 1 and 8).
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.95\textwidth]{plots/v2_paper/fig3_multi_seed.png}
-\caption{Multi-seed evaluation (10 seeds $\times$ 500 steps).
-  Left: survival duration ($500 \pm 0$, all full episode).
-  Center: food eaten ($11.1 \pm 2.8$).
-  Right: cumulative reward ($106.1 \pm 29.1$).
+\caption{Multi-seed evaluation (10 seeds $\times$ 500 steps, round~162 checkpoint).
+  Left: survival duration ($459 \pm 83$ steps; 2/10 caught).
+  Center: food eaten ($12.8 \pm 5.9$).
+  Right: cumulative reward.
   Dashed red line: mean.}
 \label{fig:survival}
 \end{figure}
@@ -3241,7 +3241,7 @@ baseline.
 In 10 evaluation episodes (500 steps, same seeds as the multi-seed
 result), the reactive agent survives $312 \pm 89$ steps and collects
 $1.8 \pm 0.9$ food items: substantially below the virtual zebrafish's
-$500 \pm 0$ steps and $11.1 \pm 2.8$ food items.
+$459 \pm 83$ steps and $12.8 \pm 5.9$ food items.
 This improvement is attributable to three architectural capabilities
 absent from the reactive agent: (1)~olfactory gradient following that
 directs the fish toward food sources outside the visual field;
