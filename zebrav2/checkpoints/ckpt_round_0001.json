@@ -1,40 +1,25 @@
 {
   "round": 1,
-  "timestamp": 1775643405.883898,
+  "timestamp": 1778584269.743924,
   "metrics": {
     "round": 1,
-    "mode": "shared-weight",
-    "n_workers": 2,
-    "survived": 30,
-    "survived_per_worker": [
-      30,
-      30
-    ],
-    "food_eaten": 0,
-    "food_per_worker": [
-      0,
-      0
-    ],
-    "fitness": 83.31131288105821,
-    "fitness_mean": 80.27049980250905,
-    "fitness_per_worker": [
-      77.22968672395989,
-      83.31131288105821
-    ],
-    "mean_efe": 0.9532291087011496,
-    "energy_final": 88.35558177904109,
-    "caught": 0,
-    "geo_coverage": 0.03125,
+    "survived": 217,
+    "food_eaten": 3,
+    "mean_efe": 1.6994479142332208,
+    "energy_final": 77.67017425421872,
+    "caught": true,
+    "geo_coverage": 0.1375,
     "goal_distribution": {
-      "FORAGE": 28,
-      "FLEE": 28,
-      "EXPLORE": 4,
+      "FORAGE": 115,
+      "FLEE": 72,
+      "EXPLORE": 30,
       "SOCIAL": 0
     },
-    "vae_memory_nodes": 5,
-    "critic_mean_value": -0.10456104204058647,
-    "personality": "mixed",
-    "elapsed_sec": 32.707749128341675
+    "fitness": 413.84060798477714,
+    "vae_memory_nodes": 2,
+    "critic_mean_value": 0.0013934411108493805,
+    "personality": "Balanced, no personality bias",
+    "elapsed_sec": 666.6289780139923
   },
   "path": "/Users/hjpark/Dropbox/projects/vzebra/zebrav2/checkpoints/ckpt_round_0001.pt"
 }

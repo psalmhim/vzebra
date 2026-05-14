@@ -1,25 +1,25 @@
 {
   "round": 50,
-  "timestamp": 1775606856.2881432,
+  "timestamp": 1778733920.8601768,
   "metrics": {
     "round": 50,
-    "survived": 500,
-    "food_eaten": 7,
-    "mean_efe": 0.0005091309020644985,
-    "energy_final": 59.259925991710425,
-    "caught": false,
-    "geo_coverage": 0.175,
+    "survived": 261,
+    "food_eaten": 2,
+    "mean_efe": 1.8648926197797402,
+    "energy_final": 72.7526284124861,
+    "caught": true,
+    "geo_coverage": 0.1375,
     "goal_distribution": {
-      "FORAGE": 154,
-      "FLEE": 217,
-      "EXPLORE": 129,
+      "FORAGE": 112,
+      "FLEE": 65,
+      "EXPLORE": 84,
       "SOCIAL": 0
     },
-    "fitness": 904.6248716868346,
-    "vae_memory_nodes": 7,
-    "critic_mean_value": -0.014345684088766575,
+    "fitness": 403.7273880084457,
+    "vae_memory_nodes": 6,
+    "critic_mean_value": 0.00368332676589489,
     "personality": "Balanced, no personality bias",
-    "elapsed_sec": 585.9524910449982
+    "elapsed_sec": 131.35800409317017
   },
   "path": "/Users/hjpark/Dropbox/projects/vzebra/zebrav2/checkpoints/ckpt_round_0050.pt"
 }
