@@ -70,7 +70,7 @@ class EFEConfig:
 
     # 5-HT patrol suppression
     ht5_forage_suppression: float = 0.15
-    safe_explore_boost: float = -0.05
+    safe_explore_boost: float = -0.10
 
     # World model coupling
     world_model_efe_scale: float = 0.15
@@ -191,7 +191,7 @@ class PlasticityConfig:
 
     # Synaptic dropout during STDP consolidation (0 = off, 0.1 = 10% synapses
     # silenced per step).  Builds fault-tolerant distributed representations.
-    stdp_dropout_p: float = 0.10
+    stdp_dropout_p: float = 0.05
 
     # VAE training frequency
     vae_training_every: int = 10

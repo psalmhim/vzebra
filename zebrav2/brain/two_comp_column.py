@@ -328,7 +328,12 @@ class TwoCompColumn(nn.Module):
         self.rate_ch.zero_()
         self.m_att.zero_()
         self.prev_pe_mag.zero_()
-        # Keep v_a (learned beliefs), gamma (learned precision)
+        # Keep v_a (learned beliefs), gamma (learned precision).
+        # Add tiny noise to prevent exact-zero v_a after catastrophic episodes
+        # (silent pallium → v_a→0 → pe=0 → EFE=0 collapse).
+        with torch.no_grad():
+            self.v_a.add_(torch.randn_like(self.v_a) * 0.01)
+            self.v_a.clamp_(-2.0, 2.0)
         self.free_energy = 0.0
 
     def hard_reset(self):
