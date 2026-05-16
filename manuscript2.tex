@@ -3110,7 +3110,7 @@ a retinal food-bearing sign error: the right-eye centroid angular offset
 was applied with inverted polarity (\texttt{ang\_R * 1.5} corrected to
 \texttt{-ang\_R * 1.5}), causing the fish to orbit away from right-side
 food.
-The fix was applied and confirmed: D recovered to 76/100 at round~177
+The fix was applied and confirmed: D recovered to 83/100 at round~162
 as continued STDP training consolidated the corrected motor pathway.
 The predator-charge scenario (B) improved from 30 to 100/100
 following flee-offset re-tuning and predictive flee: the Kalman
@@ -3373,8 +3373,8 @@ reinforcement and NA-gated enemy class reinforcement in the
 classifier; and (6)~online VAE ELBO minimization for latent world
 modeling.
 Key results (Table~\ref{tab:v2summary}) include 85/100 decision
-rationality (round~162 checkpoint), perfect 10/10 seed survival
-(500-step episodes, 0 predator captures), olfaction and habenula
+rationality (round~162 checkpoint), 8/10 seed full survival
+(459$\pm$83 steps, 2/10 caught), olfaction and habenula
 identified as most impactful via ablation ($-35\%$ food each), and
 a 96.2\% spiking classifier with online fine-tuning.
 The model demonstrates that the free energy principle provides a
@@ -3472,7 +3472,7 @@ Inhibitory neurons       & 25\% per layer \\
 Neuromodulatory axes     & 4 (DA/NA/5-HT/ACh) \\
 Modules                  & 48 modules \\
 Classifier accuracy      & 96.2\% \\
-Multi-seed survival (10) & $500 \pm 0$ steps (10/10 full, 0 caught) \\
+Multi-seed survival (10) & $459 \pm 83$ steps (8/10 full, 2/10 caught) \\
 Decision rationality     & 85/100 \\
 Curriculum               & 3/3 PASS \\
 Multi-agent              & 5 fish $\times$ full v2 brain \\
