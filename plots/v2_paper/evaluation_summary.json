@@ -1,14 +1,82 @@
 {
-  "checkpoint": "ckpt_round_0162.pt",
-  "checkpoint_round": 162,
   "decision_scores": {
-    "A_safe_vs_risky": 74,
-    "B_predator_charge": 100,
-    "C_starvation_dilemma": 100,
-    "D_easy_foraging": 83,
-    "E_explore_unknown": 66,
-    "average": 84.6,
-    "reported": 85
+    "A": 78,
+    "B": 100,
+    "C": 67,
+    "D": 60,
+    "E": 68
   },
-  "evaluation_date": "2026-05-14"
+  "decision_avg": 74.6,
+  "multi_seed": {
+    "survival_mean": 377.3,
+    "survival_std": 157.52082402019107,
+    "food_mean": 10.7,
+    "food_std": 5.532630477449222
+  },
+  "v1_vs_v2": {
+    "v1_survival": 229.2,
+    "v2_survival": 453.8,
+    "v1_food": 2.0,
+    "v2_food": 12.0
+  },
+  "ablation": {
+    "Full model": {
+      "survival_mean": 300.0,
+      "survival_std": 0.0,
+      "food_mean": 6.333333333333333,
+      "food_std": 1.247219128924647
+    },
+    "No cerebellum": {
+      "survival_mean": 300.0,
+      "survival_std": 0.0,
+      "food_mean": 8.333333333333334,
+      "food_std": 0.4714045207910317
+    },
+    "No habenula": {
+      "survival_mean": 300.0,
+      "survival_std": 0.0,
+      "food_mean": 8.666666666666666,
+      "food_std": 4.4969125210773475
+    },
+    "No RL critic": {
+      "survival_mean": 271.0,
+      "survival_std": 31.016124838541646,
+      "food_mean": 8.0,
+      "food_std": 2.8284271247461903
+    },
+    "No amygdala": {
+      "survival_mean": 289.0,
+      "survival_std": 15.556349186104045,
+      "food_mean": 9.333333333333334,
+      "food_std": 2.8674417556808756
+    },
+    "No predictive": {
+      "survival_mean": 300.0,
+      "survival_std": 0.0,
+      "food_mean": 7.333333333333333,
+      "food_std": 1.699673171197595
+    },
+    "No interoception": {
+      "survival_mean": 273.6666666666667,
+      "survival_std": 37.2409571424915,
+      "food_mean": 8.0,
+      "food_std": 1.632993161855452
+    },
+    "No VAE": {
+      "survival_mean": 300.0,
+      "survival_std": 0.0,
+      "food_mean": 9.666666666666666,
+      "food_std": 0.4714045207910317
+    },
+    "No olfaction": {
+      "survival_mean": 300.0,
+      "survival_std": 0.0,
+      "food_mean": 6.666666666666667,
+      "food_std": 1.699673171197595
+    }
+  },
+  "total_snn_neurons": 7006,
+  "total_modules": 29,
+  "classifier_accuracy": 0.962,
+  "curriculum_pass": "3/3"
 }
